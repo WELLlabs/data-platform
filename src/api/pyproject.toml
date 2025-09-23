@@ -1,0 +1,16 @@
+[project]
+name = "data-welllabs-api"
+version = "0.1.0"
+description = "API infrastructure for Data Portal of WELL Labs"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.116.2",
+    "fastapi-users>=14.0.1",
+    "uvicorn>=0.35.0",
+    "SQLAlchemy>=2.0.36",
+    "asyncpg>=0.30.0",
+    "redis>=5.0.8",
+    "fastapi-users-db-sqlalchemy>=6.0.0",
+    "pydantic-settings>=2.6.1",
+]

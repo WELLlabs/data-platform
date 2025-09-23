@@ -1,0 +1,86 @@
+volumes:
+  pg_data:
+
+services:
+  backend:
+    build:
+      context: ./src/api
+      dockerfile: Dockerfile
+    #expose:
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./.env
+    networks:
+      - appnet
+      - dbnet
+      - redisnet
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    
+  frontend:
+    build:
+      context: ./src/web
+      # args:
+        # REACT_APP_API_HOST: ${REACT_APP_API_HOST}
+      dockerfile: Dockerfile
+    networks:
+      - appnet
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      backend:
+        condition: service_healthy
+    # restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+  
+  db:
+    image: postgres
+    environment:
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+      - POSTGRES_DB
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      # - dbnet
+      - appnet
+    # restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}", "-d", "${POSTGRES_DB}"]
+
+  redis:
+    image: redis:latest
+    networks:
+      # - redisnet
+      - appnet
+    ports:
+      - "6379:6379"
+    # restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "-e", "QUIT"]
+
+networks:
+  appnet:
+  # dbnet:
+    # internal: true
+  # redisnet:
+    # internal: true

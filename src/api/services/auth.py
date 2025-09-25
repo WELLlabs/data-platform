@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-from datetime import timedelta
 from typing import Any, Optional, Tuple
+from uuid import UUID
 
 from fastapi import Depends
-from fastapi_users import FastAPIUsers
-from fastapi_users.authentication import CookieTransport, AuthenticationBackend
+from fastapi_users.authentication import CookieTransport
 from fastapi_users.password import PasswordHelper
 from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
-from sqlalchemy.ext.asyncio import AsyncSession
 from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.config import settings
-from src.api.db.session import get_session
-from src.api.models.user import User
+from core.config import settings
+from db.session import get_session
+from models.user import User
 
 
 class RedisStrategy:
@@ -39,7 +38,9 @@ async def get_redis() -> Redis:
 
 
 class AuthService:
-    def __init__(self, user_db: SQLAlchemyUserDatabase[User], redis: Redis) -> None:
+    def __init__(
+        self, user_db: SQLAlchemyUserDatabase[User, UUID], redis: Redis
+    ) -> None:
         self.user_db = user_db
         self.redis = redis
         self.password_helper = PasswordHelper()
@@ -51,7 +52,9 @@ class AuthService:
             cookie_httponly=True,
         )
 
-    async def sign_in(self, email: str, password: str) -> Tuple[Optional[User], Optional[dict[str, Any]]]:
+    async def sign_in(
+        self, email: str, password: str
+    ) -> Tuple[Optional[User], Optional[dict[str, Any]]]:
         # Avoid timing attacks: always hash
         user = await self.user_db.get_by_email(email)
         if user is None:
@@ -72,10 +75,17 @@ class AuthService:
         }
         return user, cookie
 
-    async def sign_up(self, name: str, email: str, password: str) -> None:
+    async def sign_up(self, name: str, email: str, password: str) -> User:
         hashed_password = self.password_helper.hash(password)
-        user = User(email=email, hashed_password=hashed_password, full_name=name, is_active=True, is_superuser=False)
+        user = User(
+            email=email,
+            hashed_password=hashed_password,
+            full_name=name,
+            is_active=True,
+            is_superuser=False,
+        )
         await self.user_db.create(user)
+        return user
 
     async def forgot_password(self, email: str) -> None:
         # Placeholder: in real app, send email with token
@@ -83,14 +93,14 @@ class AuthService:
         return None
 
 
-async def get_user_db(session: AsyncSession = Depends(get_session)) -> SQLAlchemyUserDatabase[User]:
+async def get_user_db(
+    session: AsyncSession = Depends(get_session),
+) -> SQLAlchemyUserDatabase[User, UUID]:
     yield SQLAlchemyUserDatabase(session, User)
 
 
 async def get_auth_service(
-    user_db: SQLAlchemyUserDatabase[User] = Depends(get_user_db),
+    user_db: SQLAlchemyUserDatabase[User, UUID] = Depends(get_user_db),
     redis: Redis = Depends(get_redis),
 ) -> AuthService:
     return AuthService(user_db=user_db, redis=redis)
-
-

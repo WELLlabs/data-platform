@@ -10,8 +10,7 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = ".env"
+        extra = "ignore"  # ignores unexpected variables
 
 
 settings = Settings()  # type: ignore[call-arg]
-
-

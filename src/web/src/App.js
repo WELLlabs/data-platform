@@ -7,6 +7,8 @@ import './App.css';
 import SiteNavbar from "./components/SiteNavbar";
 import Home from "./pages/Home";
 import SignIn from "./pages/SignIn";
+import SignUp from "./pages/SignUp";
+import OrgSearch from "./pages/OrgSearch";
 
 // Simple placeholders for routes that will be implemented later
 const Datasets = () => (
@@ -46,6 +48,8 @@ function App() {
           <Route path="/" element={<Home />} />
           <Route path="/datasets" element={<Datasets />} />
           <Route path="/signin" element={<SignIn />} />
+          <Route path="/signup" element={<SignUp />} />
+          <Route path="/orgsearch" element={<OrgSearch />} />
           <Route path="/faq" element={<FAQ />} />
           <Route path="/terms" element={<Terms />} />
           <Route path="/api" element={<ApiDocs />} />

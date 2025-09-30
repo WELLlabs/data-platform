@@ -3,16 +3,18 @@ from __future__ import annotations
 from typing import Any, Optional, Tuple
 from uuid import UUID
 
-from fastapi import Depends
+from core.config import settings
+from db.session import get_session
+from fastapi import Depends, HTTPException, status
 from fastapi_users.authentication import CookieTransport
 from fastapi_users.password import PasswordHelper
 from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
-from redis.asyncio import Redis
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from core.config import settings
-from db.session import get_session
 from models.user import User
+from redis.asyncio import Redis
+from schemas.user import UserCreate, UserRead
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+from utils.security import generate_unique_api_key, sanitize_input
 
 
 class RedisStrategy:
@@ -75,17 +77,120 @@ class AuthService:
         }
         return user, cookie
 
-    async def sign_up(self, name: str, email: str, password: str) -> User:
-        hashed_password = self.password_helper.hash(password)
-        user = User(
-            email=email,
-            hashed_password=hashed_password,
-            full_name=name,
-            is_active=True,
-            is_superuser=False,
+    def _user_to_user_read(self, user: User) -> UserRead:
+        """
+        Convert User model to UserRead schema.
+
+        Args:
+            user: User model instance
+
+        Returns:
+            UserRead schema instance
+        """
+        return UserRead(
+            id=user.id,
+            email=user.email,
+            is_active=user.is_active,
+            is_superuser=user.is_superuser,
+            is_verified=user.is_verified,
+            full_name=user.full_name,
+            student=user.student,
+            designation=user.designation,
+            team=user.team,
+            organization=user.organization,
+            role=user.role,
+            bio=user.bio,
+            phone=user.phone,
+            created_at=user.created_at,
+            verified=user.verified,
+            apikey=user.apikey,
+            contributions=user.contributions,
         )
-        await self.user_db.create(user)
-        return user
+
+    async def sign_up(self, user_data: UserCreate) -> User:
+        """
+        Create a new user with all required fields and generate a unique API key.
+
+        Args:
+            user_data: User creation data from request
+
+        Returns:
+            Created user object
+
+        Raises:
+            HTTPException: If user creation fails due to validation or database errors
+        """
+        try:
+            # Sanitize input data
+            sanitized_data = {
+                "full_name": sanitize_input(user_data.full_name),
+                "designation": sanitize_input(user_data.designation),
+                "team": sanitize_input(user_data.team),
+                "organization": sanitize_input(user_data.organization),
+                "bio": sanitize_input(user_data.bio),
+            }
+
+            # Validate required fields after sanitization
+            if not sanitized_data["full_name"]:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Full name is required and cannot be empty",
+                )
+            if not sanitized_data["organization"]:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Organization is required and cannot be empty",
+                )
+
+            # Hash password
+            hashed_password = self.password_helper.hash(user_data.password)
+
+            # Generate unique API key
+            api_key = await generate_unique_api_key(self.user_db.session)
+
+            # Create user object
+            user = User(
+                email=user_data.email,
+                hashed_password=hashed_password,
+                full_name=sanitized_data["full_name"],
+                student=user_data.student,
+                designation=sanitized_data["designation"],
+                team=sanitized_data["team"],
+                organization=sanitized_data["organization"],
+                role=user_data.role,
+                bio=sanitized_data["bio"],
+                phone=user_data.phone,
+                apikey=api_key,
+                is_active=True,
+                is_superuser=False,
+                is_verified=False,
+                verified=False,
+                contributions=0,
+            )
+
+            await self.user_db.create(user)
+            return user
+
+        except IntegrityError as e:
+            if "apikey" in str(e):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="API key conflict. Please try again.",
+                )
+            elif "email" in str(e):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT, detail="Email already exists"
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="User creation failed due to data validation error",
+                )
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Internal server error during user creation",
+            )
 
     async def forgot_password(self, email: str) -> None:
         # Placeholder: in real app, send email with token

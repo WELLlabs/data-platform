@@ -1,61 +1,183 @@
 from fastapi import APIRouter, Depends, Form, HTTPException, status
 from fastapi.responses import JSONResponse
-
+from fastapi.security import HTTPBearer
 from schemas.user import UserCreate, UserRead
 from services.auth import AuthService, get_auth_service
+from utils.security import sanitize_input
+
+# Security scheme for API key authentication
+security = HTTPBearer()
 
 router = APIRouter()
 
 
+class AuthController:
+    """
+    Class-based authentication controller with security measures.
+    """
+
+    def __init__(self, auth_service: AuthService):
+        self.auth_service = auth_service
+
+    async def sign_in(self, email: str, password: str) -> JSONResponse:
+        """
+        Handle user sign in with security validation.
+
+        Args:
+            email: User's email address
+            password: User's password
+
+        Returns:
+            JSONResponse with user data and authentication cookie
+
+        Raises:
+            HTTPException: If authentication fails
+        """
+        # Sanitize inputs
+        sanitized_email = sanitize_input(email)
+        if not sanitized_email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid email format"
+            )
+
+        # Validate password is not empty
+        if not password or not password.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Password is required"
+            )
+
+        try:
+            user, cookie = await self.auth_service.sign_in(
+                email=sanitized_email, password=password
+            )
+
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid credentials",
+                )
+
+            # Convert user to UserRead schema
+            user_read = self.auth_service._user_to_user_read(user)
+
+            # Create response with user data
+            response = JSONResponse(
+                content=user_read.model_dump(), status_code=status.HTTP_200_OK
+            )
+
+            # Set authentication cookie if provided
+            if cookie is not None:
+                response.set_cookie(**cookie)
+
+            return response
+
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Authentication service error",
+            )
+
+    async def sign_up(self, user_data: UserCreate) -> JSONResponse:
+        """
+        Handle user registration with comprehensive validation.
+
+        Args:
+            user_data: User creation data
+
+        Returns:
+            JSONResponse with created user data
+
+        Raises:
+            HTTPException: If registration fails
+        """
+        try:
+            # Create user using auth service
+            user = await self.auth_service.sign_up(user_data)
+
+            # Convert to UserRead schema
+            user_read = self.auth_service._user_to_user_read(user)
+
+            return JSONResponse(
+                content=user_read.model_dump(), status_code=status.HTTP_201_CREATED
+            )
+
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="User registration service error",
+            )
+
+    async def forgot_password(self, email: str) -> JSONResponse:
+        """
+        Handle password reset request.
+
+        Args:
+            email: User's email address
+
+        Returns:
+            JSONResponse with confirmation message
+        """
+        # Sanitize email input
+        sanitized_email = sanitize_input(email)
+        if not sanitized_email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid email format"
+            )
+
+        try:
+            await self.auth_service.forgot_password(email=sanitized_email)
+            return JSONResponse(
+                content={"detail": "Password reset request submitted"},
+                status_code=status.HTTP_200_OK,
+            )
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Password reset service error",
+            )
+
+
+# Dependency to get auth controller
+async def get_auth_controller(
+    auth_service: AuthService = Depends(get_auth_service),
+) -> AuthController:
+    return AuthController(auth_service)
+
+
+# Route handlers
 @router.post("/signin", response_model=UserRead)
 async def signin(
     email: str = Form(...),
     password: str = Form(...),
-    auth: AuthService = Depends(get_auth_service),
+    controller: AuthController = Depends(get_auth_controller),
 ):
-    user, cookie = await auth.sign_in(email=email, password=password)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
-        )
-    user_read = UserRead(
-        id=user.id,
-        email=user.email,
-        is_active=user.is_active,
-        is_superuser=user.is_superuser,
-        is_verified=user.is_verified,
-        full_name=user.full_name,
-    )
-    response = JSONResponse(user_read.model_dump())
-    if cookie is not None:
-        response.set_cookie(**cookie)
-    return response
+    """
+    User sign in endpoint with security validation.
+    """
+    return await controller.sign_in(email, password)
 
 
 @router.post("/signup", response_model=UserRead)
 async def signup(
-    user_in: UserCreate,
-    auth: AuthService = Depends(get_auth_service),
+    user_data: UserCreate,
+    controller: AuthController = Depends(get_auth_controller),
 ):
-    user = await auth.sign_up(
-        name=(user_in.full_name or ""),
-        email=user_in.email,
-        password=user_in.password,
-    )
-    return UserRead(
-        id=user.id,
-        email=user.email,
-        is_active=user.is_active,
-        is_superuser=user.is_superuser,
-        is_verified=user.is_verified,
-        full_name=user.full_name,
-    )
+    """
+    User registration endpoint with comprehensive validation.
+    """
+    return await controller.sign_up(user_data)
 
 
 @router.post("/forgotpassword")
 async def forgot_password(
     email: str = Form(...),
-    auth: AuthService = Depends(get_auth_service),
+    controller: AuthController = Depends(get_auth_controller),
 ):
-    await auth.forgot_password(email=email)
-    return {"detail": "reset_requested"}
+    """
+    Password reset request endpoint.
+    """
+    return await controller.forgot_password(email)

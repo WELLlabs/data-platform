@@ -5,8 +5,7 @@ Security middleware for the FastAPI application
 import time
 
 from fastapi import Request
-from fastapi.middleware.base import BaseHTTPMiddleware
-from starlette.middleware.base import RequestResponseEndpoint
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response as StarletteResponse
 
 

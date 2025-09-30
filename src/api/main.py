@@ -13,7 +13,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="WELL Labs Data Portal API",
         version=__version__,
-        description="Secure data portal API with authentication and user management",
+        description="Open data portal API from WELL Labs",
         docs_url="/docs",
         redoc_url="/redoc",
     )

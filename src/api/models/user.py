@@ -3,10 +3,10 @@ from typing import Optional
 
 from fastapi_users_db_sqlalchemy import SQLAlchemyBaseUserTableUUID
 from sqlalchemy import Boolean, DateTime, Integer, String, Text
-from sqlalchemy.orm import Mapped, declarative_base, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
-Base = declarative_base()
+from .base import Base
 
 
 class User(SQLAlchemyBaseUserTableUUID, Base):

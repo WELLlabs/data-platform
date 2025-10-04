@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional, Tuple
 from uuid import UUID
 
@@ -46,6 +47,7 @@ class AuthService:
         self.user_db = user_db
         self.redis = redis
         self.password_helper = PasswordHelper()
+        self.logger = logging.getLogger(__name__)
 
         self.cookie_transport = CookieTransport(
             cookie_name=settings.COOKIE_NAME,
@@ -121,6 +123,15 @@ class AuthService:
             HTTPException: If user creation fails due to validation or database errors
         """
         try:
+            # Log incoming request (exclude sensitive fields)
+            self.logger.info(
+                "Sign up attempt: email=%s, full_name=%s, student=%s, org=%s, role=%s",
+                user_data.email,
+                user_data.full_name,
+                user_data.student,
+                user_data.organization,
+                user_data.role,
+            )
             # Sanitize input data
             sanitized_data = {
                 "full_name": sanitize_input(user_data.full_name),
@@ -148,30 +159,32 @@ class AuthService:
             # Generate unique API key
             api_key = await generate_unique_api_key(self.user_db.session)
 
-            # Create user object
-            user = User(
-                email=user_data.email,
-                hashed_password=hashed_password,
-                full_name=sanitized_data["full_name"],
-                student=user_data.student,
-                designation=sanitized_data["designation"],
-                team=sanitized_data["team"],
-                organization=sanitized_data["organization"],
-                role=user_data.role,
-                bio=sanitized_data["bio"],
-                phone=user_data.phone,
-                apikey=api_key,
-                is_active=True,
-                is_superuser=False,
-                is_verified=False,
-                verified=False,
-                contributions=0,
-            )
+            # Build create dict for adapter (expects a mapping)
+            create_dict = {
+                "email": user_data.email,
+                "hashed_password": hashed_password,
+                "full_name": sanitized_data["full_name"],
+                "student": user_data.student,
+                "designation": sanitized_data["designation"],
+                "team": sanitized_data["team"],
+                "organization": sanitized_data["organization"],
+                "role": user_data.role,
+                "bio": sanitized_data["bio"],
+                "phone": user_data.phone,
+                "apikey": api_key,
+                "is_active": True,
+                "is_superuser": False,
+                "is_verified": False,
+                "verified": False,
+                "contributions": 0,
+            }
 
-            await self.user_db.create(user)
+            user = await self.user_db.create(create_dict)
+            self.logger.info("User created successfully: user_id=%s email=%s", user.id, user.email)
             return user
 
         except IntegrityError as e:
+            self.logger.exception("Integrity error during user creation: %s", e)
             if "apikey" in str(e):
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
@@ -187,6 +200,7 @@ class AuthService:
                     detail="User creation failed due to data validation error",
                 )
         except Exception:
+            self.logger.exception("Unexpected error during user creation")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Internal server error during user creation",

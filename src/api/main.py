@@ -1,3 +1,5 @@
+import logging
+import sys
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,6 +12,14 @@ __version__ = "0.1.0"
 
 
 def create_app() -> FastAPI:
+    # Basic logging configuration if not already configured by the host
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+            stream=sys.stdout,
+        )
+
     app = FastAPI(
         title="WELL Labs Data Portal API",
         version=__version__,

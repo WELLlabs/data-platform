@@ -1,4 +1,6 @@
+import logging
 from fastapi import APIRouter, Depends, Form, HTTPException, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer
 from schemas.user import UserCreate, UserRead
@@ -18,6 +20,7 @@ class AuthController:
 
     def __init__(self, auth_service: AuthService):
         self.auth_service = auth_service
+        self.logger = logging.getLogger(__name__)
 
     async def sign_in(self, email: str, password: str) -> JSONResponse:
         """
@@ -60,9 +63,10 @@ class AuthController:
             # Convert user to UserRead schema
             user_read = self.auth_service._user_to_user_read(user)
 
-            # Create response with user data
+            # Create response with user data (ensure UUID/datetime are JSON-serializable)
             response = JSONResponse(
-                content=user_read.model_dump(), status_code=status.HTTP_200_OK
+                content=jsonable_encoder(user_read.model_dump()),
+                status_code=status.HTTP_200_OK,
             )
 
             # Set authentication cookie if provided
@@ -93,6 +97,15 @@ class AuthController:
             HTTPException: If registration fails
         """
         try:
+            # Log request details excluding sensitive fields
+            self.logger.info(
+                "Sign up request received: email=%s, full_name=%s, student=%s, org=%s, role=%s",
+                user_data.email,
+                user_data.full_name,
+                user_data.student,
+                user_data.organization,
+                user_data.role,
+            )
             # Create user using auth service
             user = await self.auth_service.sign_up(user_data)
 
@@ -100,12 +113,14 @@ class AuthController:
             user_read = self.auth_service._user_to_user_read(user)
 
             return JSONResponse(
-                content=user_read.model_dump(), status_code=status.HTTP_201_CREATED
+                content=jsonable_encoder(user_read.model_dump()),
+                status_code=status.HTTP_201_CREATED,
             )
 
         except HTTPException:
             raise
-        except Exception:
+        except Exception as e:
+            self.logger.exception("Unexpected error in sign_up controller: %s", e)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="User registration service error",

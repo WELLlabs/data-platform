@@ -8,6 +8,7 @@ import SiteNavbar from "./components/SiteNavbar";
 import Home from "./pages/Home";
 import SignIn from "./pages/SignIn";
 import SignUp from "./pages/SignUp";
+import SignupSuccess from "./pages/SignupSuccess";
 import OrgSearch from "./pages/OrgSearch";
 
 // Simple placeholders for routes that will be implemented later
@@ -49,6 +50,7 @@ function App() {
           <Route path="/datasets" element={<Datasets />} />
           <Route path="/signin" element={<SignIn />} />
           <Route path="/signup" element={<SignUp />} />
+          <Route path="/signupsuccess" element={<SignupSuccess />} />
           <Route path="/orgsearch" element={<OrgSearch />} />
           <Route path="/faq" element={<FAQ />} />
           <Route path="/terms" element={<Terms />} />

@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useEffect } from "react";
 import axios from "axios";
+import { useNavigate } from "react-router-dom";
 import { signup_endpoint } from "../api/endpoints";
 
 function SignUp() {
@@ -16,6 +17,7 @@ function SignUp() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const navigate = useNavigate();
 
   // When student is true, force designation to "student" and lock the field
   useEffect(() => {
@@ -82,10 +84,18 @@ function SignUp() {
       });
 
       if (resp.status === 201 || resp.status === 200) {
-        setSuccess("Account created successfully. You can now sign in.");
+        // Extract returned user fields robustly (API may use snake_case or camelCase)
+        const user = resp.data || {};
+        const returnedEmail = user.email || email;
+        const returnedFullName = user.full_name || user.fullName || fullName;
+
         // clear sensitive fields
         setPassword("");
         setConfirmPassword("");
+
+        // Navigate to signup success page and pass user info via location state
+        navigate("/signupsuccess", { state: { email: returnedEmail, fullName: returnedFullName } });
+        return;
       }
     } catch (err) {
       const msg = err?.response?.data?.detail || "Sign up failed. Please try again.";

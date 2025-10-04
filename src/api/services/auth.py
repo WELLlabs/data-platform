@@ -185,14 +185,19 @@ class AuthService:
 
         except IntegrityError as e:
             self.logger.exception("Integrity error during user creation: %s", e)
-            if "apikey" in str(e):
+            error_str = str(e).lower()
+            
+            # Check for email constraint violation
+            if "email" in error_str or "ix_users_email" in error_str:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Email already exists. Please Sign In.",
+                )
+            # Check for apikey constraint violation  
+            elif "apikey" in error_str or "unique constraint" in error_str and "apikey" in error_str:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="API key conflict. Please try again.",
-                )
-            elif "email" in str(e):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT, detail="Email already exists"
                 )
             else:
                 raise HTTPException(

@@ -1,10 +1,13 @@
 import logging
-from fastapi import APIRouter, Depends, Form, HTTPException, status
+from uuid import UUID
+
+from core.config import settings
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer
 from schemas.user import UserCreate, UserRead
-from services.auth import AuthService, get_auth_service
+from services.auth import AuthService, RedisStrategy, get_auth_service
 from utils.security import sanitize_input
 
 # Security scheme for API key authentication
@@ -126,6 +129,108 @@ class AuthController:
                 detail="User registration service error",
             )
 
+    async def get_current_user(self, request) -> JSONResponse:
+        """
+        Get current authenticated user information.
+
+        Args:
+            request: FastAPI request object to access cookies
+
+        Returns:
+            JSONResponse with current user data
+
+        Raises:
+            HTTPException: If user is not authenticated
+        """
+        try:
+            # Get the session token from cookies
+            session_token = request.cookies.get(settings.COOKIE_NAME)
+            if not session_token:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="No authentication token found",
+                )
+
+            # Verify the session token with Redis
+            strategy = RedisStrategy(
+                self.auth_service.redis, settings.COOKIE_MAX_AGE_SECONDS
+            )
+            user_id = await strategy.read_token(session_token)
+
+            if not user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid or expired session",
+                )
+
+            # Get user from database
+            user = await self.auth_service.user_db.get(UUID(user_id))
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found"
+                )
+
+            # Convert to UserRead schema
+            user_read = self.auth_service._user_to_user_read(user)
+
+            return JSONResponse(
+                content=jsonable_encoder(user_read.model_dump()),
+                status_code=status.HTTP_200_OK,
+            )
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.exception("Error getting current user: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Authentication service error",
+            )
+
+    async def sign_out(self, request) -> JSONResponse:
+        """
+        Handle user sign out and clear session.
+
+        Args:
+            request: FastAPI request object to access cookies
+
+        Returns:
+            JSONResponse with confirmation message
+        """
+        try:
+            # Get the session token from cookies
+            session_token = request.cookies.get(settings.COOKIE_NAME)
+            if session_token:
+                # Clear the session from Redis
+                strategy = RedisStrategy(
+                    self.auth_service.redis, settings.COOKIE_MAX_AGE_SECONDS
+                )
+                await strategy.destroy_token(session_token)
+
+            # Create response with cookie clearing
+            response = JSONResponse(
+                content={"detail": "Successfully signed out"},
+                status_code=status.HTTP_200_OK,
+            )
+
+            # Clear the cookie
+            response.set_cookie(
+                key=settings.COOKIE_NAME,
+                value="",
+                max_age=0,
+                httponly=True,
+                samesite="lax",
+            )
+
+            return response
+
+        except Exception as e:
+            self.logger.exception("Error during sign out: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Sign out service error",
+            )
+
     async def forgot_password(self, email: str) -> JSONResponse:
         """
         Handle password reset request.
@@ -185,6 +290,28 @@ async def signup(
     User registration endpoint with comprehensive validation.
     """
     return await controller.sign_up(user_data)
+
+
+@router.get("/me", response_model=UserRead)
+async def get_current_user(
+    request: Request,
+    controller: AuthController = Depends(get_auth_controller),
+):
+    """
+    Get current authenticated user information.
+    """
+    return await controller.get_current_user(request)
+
+
+@router.post("/signout")
+async def signout(
+    request: Request,
+    controller: AuthController = Depends(get_auth_controller),
+):
+    """
+    User sign out endpoint.
+    """
+    return await controller.sign_out(request)
 
 
 @router.post("/forgotpassword")

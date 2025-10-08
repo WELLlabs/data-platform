@@ -13,8 +13,8 @@ services:
       - ./.env
     networks:
       - appnet
-      - dbnet
-      - redisnet
+      # - dbnet
+      # - redisnet
     depends_on:
       db:
         condition: service_healthy

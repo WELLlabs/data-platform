@@ -1,11 +1,18 @@
 import React, { useState } from "react";
 import { Navbar, NavbarBrand, Nav, NavItem, NavbarToggler, Collapse } from "reactstrap";
 import { Link } from "react-router-dom";
+import { useAuth } from "../contexts/AuthContext";
 
 function SiteNavbar() {
   const [isOpen, setIsOpen] = useState(false);
+  const { isAuthenticated, user, signOut } = useAuth();
 
   const toggle = () => setIsOpen(!isOpen);
+
+  const handleSignOut = () => {
+    signOut();
+    setIsOpen(false);
+  };
 
   return (
     <Navbar expand="md" light className="navbar-custom px-3">
@@ -17,20 +24,63 @@ function SiteNavbar() {
       
       <Collapse isOpen={isOpen} navbar>
         <Nav className="ms-auto" navbar>
-          <NavItem>
-            <Link className="nav-link" to="/datasets" onClick={() => setIsOpen(false)}>
-              Datasets
-            </Link>
-          </NavItem>
-          <NavItem className="ms-2">
-            <Link 
-              className="btn btn-outline-light" 
-              to="/signin"
-              onClick={() => setIsOpen(false)}
-            >
-              <i className="bi bi-person-plus me-1" /> Sign In
-            </Link>
-          </NavItem>
+          {isAuthenticated ? (
+            <>
+              <NavItem>
+                <Link 
+                  className="nav-link" 
+                  to={`/dashboard?userId=${user?.id}`} 
+                  onClick={() => setIsOpen(false)}
+                >
+                  Dashboard
+                </Link>
+              </NavItem>
+              <NavItem>
+                <Link className="nav-link" to="/datasets" onClick={() => setIsOpen(false)}>
+                  Datasets
+                </Link>
+              </NavItem>
+              <NavItem>
+                <Link className="nav-link" to="/organisation" onClick={() => setIsOpen(false)}>
+                  Organisation
+                </Link>
+              </NavItem>
+              <NavItem>
+                <Link 
+                  className="nav-link" 
+                  to={`/profile?userId=${user?.id}`} 
+                  onClick={() => setIsOpen(false)}
+                >
+                  Profile
+                </Link>
+              </NavItem>
+              <NavItem className="ms-2">
+                <button 
+                  className="btn btn-outline-light" 
+                  onClick={handleSignOut}
+                >
+                  <i className="bi bi-box-arrow-right me-1" /> Sign Out
+                </button>
+              </NavItem>
+            </>
+          ) : (
+            <>
+              <NavItem>
+                <Link className="nav-link" to="/datasets" onClick={() => setIsOpen(false)}>
+                  Datasets
+                </Link>
+              </NavItem>
+              <NavItem className="ms-2">
+                <Link 
+                  className="btn btn-outline-light" 
+                  to="/signin"
+                  onClick={() => setIsOpen(false)}
+                >
+                  <i className="bi bi-person-plus me-1" /> Sign In
+                </Link>
+              </NavItem>
+            </>
+          )}
         </Nav>
       </Collapse>
     </Navbar>

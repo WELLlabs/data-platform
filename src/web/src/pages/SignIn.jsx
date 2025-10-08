@@ -1,13 +1,52 @@
 import React, { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { useAuth } from "../contexts/AuthContext";
+import { signin_endpoint } from "../api/endpoints";
 
 function SignIn() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const { signIn } = useAuth();
+  const navigate = useNavigate();
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    // Placeholder submit; integrate API later
+    setError("");
+    setLoading(true);
+
+    try {
+      // Create form data for the API call
+      const formData = new FormData();
+      formData.append('email', email);
+      formData.append('password', password);
+
+      // Make API call to signin endpoint
+      const response = await fetch(signin_endpoint, {
+        method: 'POST',
+        body: formData,
+        credentials: 'include' // Important for cookies
+      });
+
+      if (response.ok) {
+        const userData = await response.json();
+        
+        // Store user data in context and localStorage
+        signIn(userData);
+        
+        // Navigate to dashboard with user ID
+        navigate(`/dashboard?userId=${userData.id}`);
+      } else {
+        const errorData = await response.json();
+        setError(errorData.detail || 'Sign in failed. Please check your credentials.');
+      }
+    } catch (error) {
+      console.error('Sign in error:', error);
+      setError('Network error. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -19,6 +58,11 @@ function SignIn() {
               <h2 className="mb-3 text-center auth-title">Sign In</h2>
               <p className="text-muted text-center mb-4">Welcome back! Please sign in to continue.</p>
               <form onSubmit={handleSubmit}>
+                {error && (
+                  <div className="alert alert-danger" role="alert">
+                    {error}
+                  </div>
+                )}
                 <div className="mb-3">
                   <label htmlFor="email" className="form-label">Email</label>
                   <input
@@ -29,6 +73,7 @@ function SignIn() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
+                    disabled={loading}
                   />
                 </div>
                 <div className="mb-3">
@@ -41,9 +86,23 @@ function SignIn() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
+                    disabled={loading}
                   />
                 </div>
-                <button type="submit" className="btn btn-primary w-100 auth-submit-btn">Sign In</button>
+                <button 
+                  type="submit" 
+                  className="btn btn-primary w-100 auth-submit-btn"
+                  disabled={loading}
+                >
+                  {loading ? (
+                    <>
+                      <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                      Signing In...
+                    </>
+                  ) : (
+                    'Sign In'
+                  )}
+                </button>
               </form>
 
               <div className="text-center mt-4">

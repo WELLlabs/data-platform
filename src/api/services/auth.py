@@ -199,10 +199,24 @@ class AuthService:
 
             # Set user as creator of organization if organization doesn't have a creator yet
             try:
-                await self.org_service.set_organization_creator(org_id, user.id)
-                self.logger.info(
-                    "Set user %s as creator of organization %s", user.id, org_id
+                creator_set = await self.org_service.set_organization_creator(
+                    org_id, user.id
                 )
+                if creator_set:
+                    # Update user role to 1 (creator/admin) since they became the organization creator
+                    await self.user_db.update(user, {"role": 1})
+                    self.logger.info(
+                        "Set user %s as creator of organization %s and updated role to 1",
+                        user.id,
+                        org_id,
+                    )
+                else:
+                    self.logger.info(
+                        "Organization %s already has a creator, user %s role remains %s",
+                        org_id,
+                        user.id,
+                        user.role,
+                    )
             except Exception as e:
                 self.logger.warning(
                     "Failed to set creator for organization %s: %s", org_id, e

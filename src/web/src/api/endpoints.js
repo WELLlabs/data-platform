@@ -8,5 +8,3 @@ export const signout_endpoint = "/api/auth/signout";
 // Organization endpoints
 export const organizations_endpoint = "/api/organizations";
 export const organization_validate_endpoint = "/api/organizations/validate";
-
-

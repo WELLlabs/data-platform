@@ -1,11 +1,13 @@
 import logging
 import sys
+
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from middleware.security import RequestLoggingMiddleware, SecurityHeadersMiddleware
 from routers.auth import router as auth_router
+from routers.organization import router as organization_router
 from starlette.responses import JSONResponse
 
 __version__ = "0.1.0"
@@ -63,6 +65,9 @@ def create_app() -> FastAPI:
     # API routes
     app.include_router(
         auth_router, prefix="/auth", tags=["Authentication"], include_in_schema=False
+    )
+    app.include_router(
+        organization_router, prefix="/organizations", tags=["Organizations"]
     )
 
     return app

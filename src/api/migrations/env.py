@@ -13,8 +13,8 @@ from sqlalchemy.ext.asyncio import create_async_engine
 BASE_DIR = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 )  # points to open-data-portal/
-# print(f"Base Dir: {BASE_DIR}")
 load_dotenv(os.path.join(BASE_DIR, ".env"))
+# print(f"env file: {os.path.join(BASE_DIR, '.env')}")
 
 # --- Add src/ to sys.path so Alembic can import models ---
 sys.path.append(os.path.join(BASE_DIR, "src"))
@@ -28,6 +28,7 @@ config = context.config
 
 # Get database URL from .env
 DATABASE_URL = os.getenv("POSTGRES_URL")
+# print(DATABASE_URL)
 if not DATABASE_URL:
     raise RuntimeError("POSTGRES_URL is not set in .env")
 

@@ -10,7 +10,7 @@ from routers.auth import router as auth_router
 from routers.organization import router as organization_router
 from starlette.responses import JSONResponse
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
 def create_app() -> FastAPI:

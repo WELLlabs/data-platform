@@ -264,13 +264,13 @@ function CreateOrg() {
                 <Alert color="danger" className="mb-4">
                   {error}
                 </Alert>
-                <Button 
+                {/*<Button 
                   color="primary" 
                   onClick={() => navigate("/signin")}
                   className="me-2"
                 >
                   Sign In
-                </Button>
+                </Button>*/}
                 <Button 
                   color="outline-primary" 
                   onClick={() => navigate("/")}
@@ -319,9 +319,9 @@ function CreateOrg() {
                     required
                     className={formData.name.length > 100 ? "is-invalid" : ""}
                   />
-                  <FormText>
+                  {/* <FormText>
                     {formData.name.length}/100 characters
-                  </FormText>
+                  </FormText> */}
                   {formData.name.length > 100 && (
                     <div className="invalid-feedback">
                       Organization name must be 100 characters or less
@@ -345,9 +345,9 @@ function CreateOrg() {
                     rows={3}
                     className={formData.description.length > 1000 ? "is-invalid" : ""}
                   />
-                  <FormText>
+                  {/* <FormText>
                     {formData.description.length}/1000 characters
-                  </FormText>
+                  </FormText> */}
                   {formData.description.length > 1000 && (
                     <div className="invalid-feedback">
                       Description must be 1000 characters or less
@@ -388,9 +388,9 @@ function CreateOrg() {
                     maxLength={100}
                     className={formData.contact.length > 100 ? "is-invalid" : ""}
                   />
-                  <FormText>
+                  {/* <FormText>
                     {formData.contact.length}/100 characters
-                  </FormText>
+                  </FormText> */}
                   {formData.contact.length > 100 && (
                     <div className="invalid-feedback">
                       Contact information must be 100 characters or less
@@ -413,9 +413,9 @@ function CreateOrg() {
                     maxLength={200}
                     className={formData.website.length > 200 ? "is-invalid" : ""}
                   />
-                  <FormText>
+                  {/* <FormText>
                     {formData.website.length}/200 characters
-                  </FormText>
+                  </FormText> */}
                   {formData.website.length > 200 && (
                     <div className="invalid-feedback">
                       Website URL must be 200 characters or less
@@ -461,7 +461,7 @@ function CreateOrg() {
                 {/* Focus Areas */}
                 <FormGroup className="mb-3">
                   <Label for="focus" className="form-label">
-                    Focus Areas
+                    Focus Areas (multi-select)
                   </Label>
                   <Select
                     id="focus"
@@ -480,7 +480,7 @@ function CreateOrg() {
                 {/* States */}
                 <FormGroup className="mb-4">
                   <Label for="roi_states" className="form-label">
-                    States
+                    States working in(multi-select)
                   </Label>
                   <Select
                     id="roi_states"

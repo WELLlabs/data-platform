@@ -203,19 +203,20 @@ class AuthService:
                     org_id, user.id
                 )
                 if creator_set:
-                    # Update user role to 1 (creator/admin) since they became the organization creator
-                    await self.user_db.update(user, {"role": 1})
+                    # Update user role to 1 (creator/admin) and mark as verified since they became the organization creator
+                    await self.user_db.update(user, {"role": 1, "verified": True})
                     self.logger.info(
-                        "Set user %s as creator of organization %s and updated role to 1",
+                        "Set user %s as creator of organization %s, updated role to 1, and marked as verified",
                         user.id,
                         org_id,
                     )
                 else:
                     self.logger.info(
-                        "Organization %s already has a creator, user %s role remains %s",
+                        "Organization %s already has a creator, user %s role remains %s and verified remains %s",
                         org_id,
                         user.id,
                         user.role,
+                        user.verified,
                     )
             except Exception as e:
                 self.logger.warning(

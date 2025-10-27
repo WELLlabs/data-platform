@@ -15,6 +15,7 @@ import Dashboard from "./pages/Dashboard";
 import Profile from "./pages/Profile";
 import CreateOrg from "./pages/CreateOrg";
 import CreateOrgSuccess from "./pages/CreateOrgSuccess";
+import Organization from "./pages/Organization";
 
 // Simple placeholders for routes that will be implemented later
 const Datasets = () => (
@@ -62,7 +63,7 @@ function App() {
             <Route path="/profile" element={<Profile />} />
             <Route path="/createorg" element={<CreateOrg />} />
             <Route path="/createorgsuccess" element={<CreateOrgSuccess />} />
-            <Route path="/organisation" element={<div className="container py-5"><h2>Organisation</h2><p>Coming soon...</p></div>} />
+            <Route path="/organisation" element={<Organization />} />
             <Route path="/faq" element={<FAQ />} />
             <Route path="/terms" element={<Terms />} />
             <Route path="/api" element={<ApiDocs />} />

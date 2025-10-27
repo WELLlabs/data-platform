@@ -13,6 +13,7 @@ from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 from models.user import User
 from redis.asyncio import Redis
 from schemas.user import UserCreate, UserRead
+from services.organization import OrganizationService, get_organization_service
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from utils.security import generate_unique_api_key, sanitize_input
@@ -42,10 +43,14 @@ async def get_redis() -> Redis:
 
 class AuthService:
     def __init__(
-        self, user_db: SQLAlchemyUserDatabase[User, UUID], redis: Redis
+        self,
+        user_db: SQLAlchemyUserDatabase[User, UUID],
+        redis: Redis,
+        org_service: OrganizationService,
     ) -> None:
         self.user_db = user_db
         self.redis = redis
+        self.org_service = org_service
         self.password_helper = PasswordHelper()
         self.logger = logging.getLogger(__name__)
 
@@ -153,6 +158,14 @@ class AuthService:
                     detail="Organization is required and cannot be empty",
                 )
 
+            # Validate organization ID exists
+            org_id = sanitized_data["organization"]
+            if not await self.org_service.validate_organization_id(org_id):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Organisation ID is invalid",
+                )
+
             # Hash password
             hashed_password = self.password_helper.hash(user_data.password)
 
@@ -180,21 +193,55 @@ class AuthService:
             }
 
             user = await self.user_db.create(create_dict)
-            self.logger.info("User created successfully: user_id=%s email=%s", user.id, user.email)
+            self.logger.info(
+                "User created successfully: user_id=%s email=%s", user.id, user.email
+            )
+
+            # Set user as creator of organization if organization doesn't have a creator yet
+            try:
+                creator_set = await self.org_service.set_organization_creator(
+                    org_id, user.id
+                )
+                if creator_set:
+                    # Update user role to 1 (creator/admin) and mark as verified since they became the organization creator
+                    await self.user_db.update(user, {"role": 1, "verified": True})
+                    self.logger.info(
+                        "Set user %s as creator of organization %s, updated role to 1, and marked as verified",
+                        user.id,
+                        org_id,
+                    )
+                else:
+                    self.logger.info(
+                        "Organization %s already has a creator, user %s role remains %s and verified remains %s",
+                        org_id,
+                        user.id,
+                        user.role,
+                        user.verified,
+                    )
+            except Exception as e:
+                self.logger.warning(
+                    "Failed to set creator for organization %s: %s", org_id, e
+                )
+                # Don't fail user creation if creator setting fails
+
             return user
 
         except IntegrityError as e:
             self.logger.exception("Integrity error during user creation: %s", e)
             error_str = str(e).lower()
-            
+
             # Check for email constraint violation
             if "email" in error_str or "ix_users_email" in error_str:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Email already exists. Please Sign In.",
                 )
-            # Check for apikey constraint violation  
-            elif "apikey" in error_str or "unique constraint" in error_str and "apikey" in error_str:
+            # Check for apikey constraint violation
+            elif (
+                "apikey" in error_str
+                or "unique constraint" in error_str
+                and "apikey" in error_str
+            ):
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="API key conflict. Please try again.",
@@ -226,5 +273,6 @@ async def get_user_db(
 async def get_auth_service(
     user_db: SQLAlchemyUserDatabase[User, UUID] = Depends(get_user_db),
     redis: Redis = Depends(get_redis),
+    org_service: OrganizationService = Depends(get_organization_service),
 ) -> AuthService:
-    return AuthService(user_db=user_db, redis=redis)
+    return AuthService(user_db=user_db, redis=redis, org_service=org_service)

@@ -7,14 +7,24 @@
 API structure of Authentication can be found at `./docs/auth.md`
 
 # Alembic
-```
-uv add python-dotenv
-uv add alembic psycopg2-binary asyncpg
-```
-
 run from the open-data-portal(root of project) directory
 ```
 uv run --directory src/api alembic init migrations
 uv run --directory src/api alembic revision --autogenerate -m "init schema" # enter custom message
 uv run --directory src/api alembic upgrade head
+```
+
+# Docker Compose
+Before executing the docker compose, build the s3handler image.
+```bash
+docker build -t s3handler .
+```
+
+then run the docker compose
+```bash
+docker compose -f docker-compose.yml up -d --build
+```
+for development where database is a local instance, run
+```bash
+docker compose -f docker-compose.dev.yml up -d --build
 ```

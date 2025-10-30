@@ -119,6 +119,61 @@ class DatasetController:
                 detail="Error creating dataset",
             )
 
+    async def get_dataset_info(self, dataset_id: UUID) -> JSONResponse:
+        """
+        Get dataset and associated files by dataset_id.
+        """
+        try:
+            self.logger.info("Fetching dataset info for %s", dataset_id)
+
+            dataset, files = await self.dataset_service.get_dataset_and_files(dataset_id)
+
+            dataset_obj = {
+                "dataset_id": str(dataset.dataset_id),
+                "dataset_title": dataset.dataset_title,
+                "creator": str(dataset.creator),
+                "created_at": dataset.created_at.isoformat() if dataset.created_at else None,
+                "organization": dataset.organization,
+                "private": dataset.private,
+                "downloads": dataset.downloads,
+                "dataset_description": dataset.dataset_description,
+                "tags": dataset.tags,
+                "author": dataset.author,
+                "source_url": dataset.source_url,
+                "cite_as": dataset.cite_as,
+                "groundtruthed": dataset.groundtruthed,
+            }
+
+            files_arr = [
+                {
+                    "file_id": str(f.file_id),
+                    "file_title": f.file_title,
+                    "file_key": f.file_key,
+                    "bucket": f.bucket,
+                    "file_size": f.file_size,
+                    "file_description": f.file_description,
+                    "file_format": f.file_format,
+                    "dataset_id": str(f.dataset_id),
+                    "downloads": f.downloads,
+                    "created_at": f.created_at.isoformat() if f.created_at else None,
+                }
+                for f in files
+            ]
+
+            return JSONResponse(
+                content=jsonable_encoder({"dataset": dataset_obj, "files": files_arr}),
+                status_code=status.HTTP_200_OK,
+            )
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.exception("Unexpected error in dataset info: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error fetching dataset information",
+            )
+
 
 # Dependency to get dataset controller
 async def get_dataset_controller(
@@ -250,6 +305,35 @@ async def create_dataset(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid input data: {str(e)}",
+        )
+
+
+@router.get("/dataset-info")
+async def dataset_info(
+    dataset_id: str,
+    controller: DatasetController = Depends(get_dataset_controller),
+):
+    """
+    Get dataset info and associated files by dataset_id (query parameter).
+    """
+    try:
+        try:
+            ds_uuid = UUID(dataset_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid dataset_id UUID format",
+            )
+
+        return await controller.get_dataset_info(ds_uuid)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unexpected error in /dataset-info: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error processing dataset info request",
         )
     except Exception as e:
         logger.exception("Unexpected error in create_dataset endpoint: %s", e)

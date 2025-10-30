@@ -296,6 +296,53 @@ class DatasetService:
                 detail="Error creating dataset",
             )
 
+    async def get_dataset_and_files(self, dataset_id: UUID) -> Tuple[Dataset, list[File]]:
+        """
+        Retrieve a dataset and all of its files.
+
+        Args:
+            dataset_id: Dataset UUID
+
+        Returns:
+            Tuple of (Dataset, List[File])
+
+        Raises:
+            HTTPException: If dataset not found or on errors
+        """
+        try:
+            self.logger.info("Fetching dataset and files for dataset_id=%s", dataset_id)
+
+            # Fetch dataset
+            result_ds = await self.session.execute(
+                select(Dataset).where(Dataset.dataset_id == dataset_id)
+            )
+            dataset: Dataset | None = result_ds.scalar_one_or_none()
+
+            if dataset is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Dataset not found",
+                )
+
+            # Fetch files
+            result_files = await self.session.execute(
+                select(File).where(File.dataset_id == dataset_id)
+            )
+            files: list[File] = list(result_files.scalars().all())
+
+            return dataset, files
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.exception(
+                "Unexpected error fetching dataset/files for %s: %s", dataset_id, e
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error fetching dataset information",
+            )
+
 
 async def get_dataset_service(
     session: AsyncSession = Depends(get_session),

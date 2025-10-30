@@ -20,6 +20,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      s3handler:
+        condition: service_healthy
     # restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
@@ -77,6 +79,23 @@ services:
     # restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "-e", "QUIT"]
+  
+  s3handler:
+    image: s3handler:latest
+    networks:
+      - appnet
+    # expose at random port, internally backend fetches from 8000
+    ports:
+      - "33333:8000"
+    env_file:
+      - ./.env
+    # restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 networks:
   appnet:

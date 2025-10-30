@@ -57,8 +57,8 @@ class Dataset(Base):
         nullable=False,
     )
     organization: Mapped[str] = mapped_column(
-        ForeignKey("organizations.id", ondelete="RESTRICT"),
         String(length=100),
+        ForeignKey("organizations.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
@@ -107,5 +107,5 @@ class Dataset(Base):
         """String representation of the Dataset model."""
         return (
             f"<Dataset(dataset_id={self.dataset_id}, "
-            f"title={self.title}, creator={self.creator})>"
+            f"title={self.dataset_title}, creator={self.creator})>"
         )

@@ -90,5 +90,5 @@ class File(Base):
         """String representation of the File model."""
         return (
             f"<File(file_id={self.file_id}, "
-            f"filename={self.filename}, dataset_id={self.dataset_id})>"
+            f"filename={self.file_title}, dataset_id={self.dataset_id})>"
         )

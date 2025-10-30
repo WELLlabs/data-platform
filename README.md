@@ -7,7 +7,8 @@
 API structure of Authentication can be found at `./docs/auth.md`
 
 # Alembic
-run from the open-data-portal(root of project) directory
+run from the open-data-portal(root of project) directory,
+if running in local environment with docker for postgres, change db in POSTGRES_URL to localhost and revert back after using alembic
 ```
 uv run --directory src/api alembic init migrations
 uv run --directory src/api alembic revision --autogenerate -m "init schema" # enter custom message

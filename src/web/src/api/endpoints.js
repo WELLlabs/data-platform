@@ -9,3 +9,7 @@ export const signout_endpoint = "/api/auth/signout";
 export const organizations_endpoint = "/api/organizations";
 export const organization_validate_endpoint = "/api/organizations/validate";
 export const organization_by_id_endpoint = (id) => `/api/organizations/${id}`;
+
+// Upload/Data endpoints
+export const upload_url_endpoint = "/api/upload_url";
+export const create_dataset_endpoint = "/api/create_dataset";

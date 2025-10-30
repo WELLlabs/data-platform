@@ -54,9 +54,18 @@ function Dashboard() {
 
   return (
     <div className="container py-5">
-      <div className="row">
-        <div className="col-12">
-          <h2 className="text-start">Welcome {user.full_name}</h2>
+      <div className="row align-items-center mb-3">
+        <div className="col">
+          <h2 className="text-start m-0">Welcome {user.full_name}</h2>
+        </div>
+        <div className="col-auto">
+          <button
+            className="btn"
+            style={{ backgroundColor: '#0d983b', color: '#fff' }}
+            onClick={() => navigate('/create-dataset')}
+          >
+            upload
+          </button>
         </div>
       </div>
     </div>

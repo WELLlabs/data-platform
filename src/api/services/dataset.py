@@ -16,7 +16,7 @@ from models.user import User
 from schemas.dataset import DatasetCreate
 from services.organization import OrganizationService, get_organization_service
 from services.upload import UploadService, get_upload_service
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from utils.security import sanitize_input
@@ -249,9 +249,23 @@ class DatasetService:
                 downloads=0,
             )
 
-            # 9. Add to session and commit
+            # 9. Add to session
             self.session.add(dataset)
             self.session.add(file)
+
+            # 10. Increment contributions for user and organization
+            await self.session.execute(
+                update(User)
+                .where(User.id == dataset_data.creator)
+                .values(contributions=User.contributions + 1)
+            )
+            await self.session.execute(
+                update(Organization)
+                .where(Organization.id == dataset_data.organization)
+                .values(contributions=Organization.contributions + 1)
+            )
+
+            # 11. Commit all changes (dataset, file, and counters)
             await self.session.commit()
             await self.session.refresh(dataset)
             await self.session.refresh(file)

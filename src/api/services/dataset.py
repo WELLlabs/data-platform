@@ -3,7 +3,7 @@ Dataset service for handling dataset and file creation.
 """
 
 import logging
-from typing import Tuple
+from typing import List, Optional, Tuple
 from uuid import UUID, uuid4
 
 from core.config import settings
@@ -16,7 +16,7 @@ from models.user import User
 from schemas.dataset import DatasetCreate
 from services.organization import OrganizationService, get_organization_service
 from services.upload import UploadService, get_upload_service
-from sqlalchemy import select, update
+from sqlalchemy import desc, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from utils.security import sanitize_input
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 class DatasetService:
     """
     Service class for dataset operations with comprehensive validation and security.
-    
+
     This service handles:
     - Organization validation
     - File existence verification in S3
@@ -50,11 +50,11 @@ class DatasetService:
     async def validate_creator(self, creator_id: UUID, current_user: User) -> None:
         """
         Validate that the creator matches the authenticated user.
-        
+
         Args:
             creator_id: Creator ID from form data
             current_user: Currently authenticated user
-            
+
         Raises:
             HTTPException: If creator doesn't match authenticated user
         """
@@ -78,18 +78,16 @@ class DatasetService:
                 detail="Error validating creator",
             )
 
-    async def get_organization_with_private_status(
-        self, org_id: str
-    ) -> Organization:
+    async def get_organization_with_private_status(self, org_id: str) -> Organization:
         """
         Get organization and return with its private status.
-        
+
         Args:
             org_id: Organization ID
-            
+
         Returns:
             Organization object
-            
+
         Raises:
             HTTPException: If organization not found
         """
@@ -114,13 +112,13 @@ class DatasetService:
     async def validate_file_exists(self, file_key: str) -> int:
         """
         Validate that file exists in S3 and return its size.
-        
+
         Args:
             file_key: S3 file key
-            
+
         Returns:
             File size in bytes
-            
+
         Raises:
             HTTPException: If file doesn't exist or service error
         """
@@ -157,7 +155,7 @@ class DatasetService:
     ) -> Tuple[Dataset, File]:
         """
         Create a dataset and its associated file record.
-        
+
         This method:
         1. Validates creator matches authenticated user
         2. Validates organization exists
@@ -165,14 +163,14 @@ class DatasetService:
         4. Applies private dataset logic
         5. Creates dataset record
         6. Creates file record
-        
+
         Args:
             dataset_data: Dataset creation data from form
             current_user: Currently authenticated user
-            
+
         Returns:
             Tuple of (created Dataset, created File)
-            
+
         Raises:
             HTTPException: If validation fails or creation fails
         """
@@ -296,7 +294,9 @@ class DatasetService:
                 detail="Error creating dataset",
             )
 
-    async def get_dataset_and_files(self, dataset_id: UUID) -> Tuple[Dataset, list[File]]:
+    async def get_dataset_and_files(
+        self, dataset_id: UUID
+    ) -> Tuple[Dataset, list[File]]:
         """
         Retrieve a dataset and all of its files.
 
@@ -343,6 +343,109 @@ class DatasetService:
                 detail="Error fetching dataset information",
             )
 
+    async def get_user_datasets(
+        self,
+        user_id: UUID,
+        limit: int = 10,
+        offset: int = 0,
+        authenticated_user: Optional[User] = None,
+    ) -> List[Dataset]:
+        """
+        Get datasets created by a specific user with pagination and privacy filtering.
+
+        Privacy rules:
+        - If not authenticated: return only public datasets (private=False)
+        - If authenticated:
+          - If authenticated user's organization matches creator's organization:
+            return all datasets (no privacy filter)
+          - If organizations don't match: return only public datasets (private=False)
+
+        Args:
+            user_id: UUID of the user (creator)
+            limit: Maximum number of results (default: 10)
+            offset: Number of results to skip (default: 0)
+            authenticated_user: Optional authenticated user for privacy filtering
+
+        Returns:
+            List of Dataset objects ordered by created_at (latest first)
+
+        Raises:
+            HTTPException: If there's an error fetching datasets
+        """
+        try:
+            self.logger.info(
+                "Fetching datasets for user_id=%s, limit=%d, offset=%d, authenticated=%s",
+                user_id,
+                limit,
+                offset,
+                authenticated_user.id if authenticated_user else None,
+            )
+
+            # Build base query
+            query = (
+                select(Dataset)
+                .where(Dataset.creator == user_id)
+                .order_by(desc(Dataset.created_at))
+            )
+
+            # Apply privacy filtering based on authentication and organization match
+            if authenticated_user is None:
+                # Not authenticated: only public datasets
+                self.logger.debug("User not authenticated, filtering private=False")
+                query = query.where(Dataset.private.is_(False))
+            else:
+                # Authenticated: check organization match
+                # Fetch the creator's user record to get their organization
+                creator_user_result = await self.session.execute(
+                    select(User).where(User.id == user_id)
+                )
+                creator_user: Optional[User] = creator_user_result.scalar_one_or_none()
+
+                if creator_user is None:
+                    self.logger.warning("Creator user not found: %s", user_id)
+                    # Creator doesn't exist, return empty list
+                    return []
+
+                # Compare organizations
+                authenticated_org = authenticated_user.organization
+                creator_org = creator_user.organization
+
+                if authenticated_org != creator_org:
+                    # Organizations don't match: only public datasets
+                    self.logger.debug(
+                        "Organizations don't match (auth: %s, creator: %s), filtering private=False",
+                        authenticated_org,
+                        creator_org,
+                    )
+                    query = query.where(Dataset.private.is_(False))
+                else:
+                    # Organizations match: return all datasets (no privacy filter)
+                    self.logger.debug(
+                        "Organizations match (%s), returning all datasets",
+                        authenticated_org,
+                    )
+
+            # Apply pagination
+            query = query.limit(limit).offset(offset)
+
+            result = await self.session.execute(query)
+            datasets: List[Dataset] = list(result.scalars().all())
+
+            self.logger.info("Found %d datasets for user_id=%s", len(datasets), user_id)
+
+            return datasets
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.exception(
+                "Unexpected error fetching user datasets for %s: %s", user_id, e
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error fetching user datasets",
+            )
+
 
 async def get_dataset_service(
     session: AsyncSession = Depends(get_session),
@@ -351,14 +454,13 @@ async def get_dataset_service(
 ) -> DatasetService:
     """
     Dependency function to get DatasetService instance.
-    
+
     Args:
         session: Database session
         org_service: Organization service
         upload_service: Upload service
-        
+
     Returns:
         DatasetService instance
     """
     return DatasetService(session, org_service, upload_service)
-

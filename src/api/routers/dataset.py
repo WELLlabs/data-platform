@@ -3,21 +3,19 @@ Dataset router for handling dataset creation.
 """
 
 import logging
+from typing import Optional
 from uuid import UUID
 
 from core.config import settings
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from models.dataset import Dataset
-from models.file import File
 from models.user import User
 from routers.upload import get_current_active_user
 from schemas.dataset import DatasetCreate
 from services.auth import AuthService, RedisStrategy, get_auth_service
 from services.dataset import DatasetService, get_dataset_service
 from services.organization import OrganizationService, get_organization_service
-from utils.security import sanitize_input
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -29,11 +27,11 @@ async def get_current_active_user_optional(
     """
     Optional dependency function to get the current authenticated and active user.
     Returns None if user is not authenticated (instead of raising an exception).
-    
+
     Args:
         request: FastAPI request object to access cookies
         auth_service: Authentication service dependency
-        
+
     Returns:
         User model instance if authenticated and active, None otherwise
     """
@@ -44,9 +42,7 @@ async def get_current_active_user_optional(
             return None
 
         # Verify the session token with Redis
-        strategy = RedisStrategy(
-            auth_service.redis, settings.COOKIE_MAX_AGE_SECONDS
-        )
+        strategy = RedisStrategy(auth_service.redis, settings.COOKIE_MAX_AGE_SECONDS)
         user_id = await strategy.read_token(session_token)
 
         if not user_id:
@@ -82,14 +78,14 @@ class DatasetController:
     ) -> JSONResponse:
         """
         Create a dataset with associated file record.
-        
+
         Args:
             dataset_data: Dataset creation data from form
             user: Authenticated user making the request
-            
+
         Returns:
             JSONResponse containing created dataset and file information
-            
+
         Raises:
             HTTPException: If validation fails or creation fails
         """
@@ -171,13 +167,17 @@ class DatasetController:
         try:
             self.logger.info("Fetching dataset info for %s", dataset_id)
 
-            dataset, files = await self.dataset_service.get_dataset_and_files(dataset_id)
+            dataset, files = await self.dataset_service.get_dataset_and_files(
+                dataset_id
+            )
 
             dataset_obj = {
                 "dataset_id": str(dataset.dataset_id),
                 "dataset_title": dataset.dataset_title,
                 "creator": str(dataset.creator),
-                "created_at": dataset.created_at.isoformat() if dataset.created_at else None,
+                "created_at": dataset.created_at.isoformat()
+                if dataset.created_at
+                else None,
                 "organization": dataset.organization,
                 "private": dataset.private,
                 "downloads": dataset.downloads,
@@ -228,13 +228,13 @@ class DatasetController:
     ) -> JSONResponse:
         """
         Get datasets created by a specific user with pagination and privacy filtering.
-        
+
         Args:
             user_id: UUID of the user (creator)
             limit: Maximum number of results
             offset: Number of results to skip
             authenticated_user: Optional authenticated user for privacy filtering
-            
+
         Returns:
             JSONResponse containing list of datasets
         """
@@ -291,10 +291,10 @@ async def get_dataset_controller(
 ) -> DatasetController:
     """
     Dependency function to get DatasetController instance.
-    
+
     Args:
         dataset_service: Dataset service dependency
-        
+
     Returns:
         DatasetController instance
     """
@@ -312,7 +312,9 @@ async def create_dataset(
     author: str | None = Form(None, description="Author name"),
     source_url: str | None = Form(None, description="Source URL"),
     cite_as: str | None = Form(None, description="Citation information"),
-    groundtruthed: bool | None = Form(None, description="Whether dataset is groundtruthed"),
+    groundtruthed: bool | None = Form(
+        None, description="Whether dataset is groundtruthed"
+    ),
     private: bool = Form(False, description="Whether dataset is private"),
     filename: str = Form(..., description="File name"),
     file_key: str = Form(..., description="S3 file key"),
@@ -324,14 +326,14 @@ async def create_dataset(
 ):
     """
     Create a dataset with associated file record.
-    
+
     This endpoint:
     - Requires authentication (valid session cookie)
     - Checks if the user is active and valid
     - Validates that the organization exists in the organization table
     - Validates that file exists in S3
     - Creates records in both datasets and files tables
-    
+
     Args:
         title: Dataset title
         creator: Creator user ID (UUID)
@@ -350,10 +352,10 @@ async def create_dataset(
         user: Authenticated user (from dependency)
         controller: Dataset controller (from dependency)
         org_service: Organization service (from dependency)
-        
+
     Returns:
         JSON response containing created dataset and file information
-        
+
     Raises:
         HTTPException:
             - 401: Not authenticated
@@ -457,24 +459,24 @@ async def user_datasets(
 ):
     """
     Get datasets created by a specific user with pagination and privacy filtering.
-    
+
     Privacy rules:
     - If not authenticated: returns only public datasets (private=False)
     - If authenticated:
       - If authenticated user's organization matches creator's organization:
         returns all datasets (no privacy filter)
       - If organizations don't match: returns only public datasets (private=False)
-    
+
     Args:
         user_id: User ID (UUID) - required query parameter (creator of datasets)
         limit: Maximum number of results (default: 10, min: 1, max: 100)
         offset: Number of results to skip for pagination (default: 0, min: 0)
         controller: Dataset controller (from dependency)
         authenticated_user: Optional authenticated user (from dependency)
-        
+
     Returns:
         JSON response containing list of datasets ordered by created_at (latest first)
-        
+
     Raises:
         HTTPException:
             - 400: Invalid user_id UUID format
@@ -501,4 +503,3 @@ async def user_datasets(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error processing user datasets request",
         )
-

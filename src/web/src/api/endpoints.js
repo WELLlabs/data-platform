@@ -13,3 +13,4 @@ export const organization_by_id_endpoint = (id) => `/api/organizations/${id}`;
 // Upload/Data endpoints
 export const upload_url_endpoint = "/api/upload_url";
 export const create_dataset_endpoint = "/api/create_dataset";
+export const dataset_info_endpoint = "/api/dataset-info";

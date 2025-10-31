@@ -18,6 +18,7 @@ import CreateOrgSuccess from "./pages/CreateOrgSuccess";
 import Organization from "./pages/Organization";
 import CreateDataset from "./pages/CreateDataset";
 import DatasetSuccess from "./pages/DatasetSuccess";
+import DatasetInfo from "./pages/DatasetInfo";
 
 // Simple placeholders for routes that will be implemented later
 const Datasets = () => (
@@ -68,6 +69,7 @@ function App() {
             <Route path="/organisation" element={<Organization />} />
             <Route path="/create-dataset" element={<CreateDataset />} />
             <Route path="/dataset-success" element={<DatasetSuccess />} />
+            <Route path="/dataset-info" element={<DatasetInfo />} />
             <Route path="/faq" element={<FAQ />} />
             <Route path="/terms" element={<Terms />} />
             <Route path="/api" element={<ApiDocs />} />

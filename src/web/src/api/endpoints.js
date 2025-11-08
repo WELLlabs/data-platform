@@ -15,3 +15,4 @@ export const upload_url_endpoint = "/api/upload_url";
 export const create_dataset_endpoint = "/api/create_dataset";
 export const dataset_info_endpoint = "/api/dataset-info";
 export const user_datasets_endpoint = "/api/user_datasets";
+export const download_url_endpoint = "/api/download_url";

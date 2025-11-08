@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { dataset_info_endpoint } from "../api/endpoints";
+import { dataset_info_endpoint, download_url_endpoint } from "../api/endpoints";
 
 function DatasetInfo() {
   const navigate = useNavigate();
@@ -9,6 +9,8 @@ function DatasetInfo() {
   const [error, setError] = useState("");
   const [dataset, setDataset] = useState(null);
   const [files, setFiles] = useState([]);
+  const [downloadingFileId, setDownloadingFileId] = useState(null);
+  const [downloadError, setDownloadError] = useState("");
 
   useEffect(() => {
     const datasetId = searchParams.get("dataset_id");
@@ -64,6 +66,131 @@ function DatasetInfo() {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  };
+
+  const handleDownload = async (file) => {
+    // Validate required file properties
+    if (!file || !file.file_id || !file.file_key) {
+      setDownloadError("Invalid file information. Cannot download.");
+      console.error("Download failed: Missing file_id or file_key", file);
+      return;
+    }
+
+    // Clear any previous download errors
+    setDownloadError("");
+    setDownloadingFileId(file.file_id);
+
+    try {
+      // Build the download URL with query parameters
+      const params = new URLSearchParams({
+        file_key: file.file_key,
+        file_id: file.file_id,
+      });
+      const downloadUrl = `${download_url_endpoint}?${params.toString()}`;
+
+      // Fetch the presigned download URL
+      const response = await fetch(downloadUrl, {
+        method: "GET",
+        credentials: "include",
+      });
+
+      // Handle HTTP errors
+      if (!response.ok) {
+        let errorMessage = "Failed to get download URL";
+
+        // Try to parse error response
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.detail || errorData.message || errorMessage;
+        } catch {
+          // If JSON parsing fails, use status text
+          errorMessage = response.statusText || errorMessage;
+        }
+
+        // Provide specific error messages based on status code
+        switch (response.status) {
+          case 400:
+            errorMessage = "Invalid file information. Please try again.";
+            break;
+          case 404:
+            errorMessage = "File not found. It may have been deleted.";
+            break;
+          case 500:
+            errorMessage = "Server error. Please try again later.";
+            break;
+          case 502:
+            errorMessage = "Service temporarily unavailable. Please try again later.";
+            break;
+          case 504:
+            errorMessage = "Request timeout. Please try again.";
+            break;
+          default:
+            errorMessage = `Error ${response.status}: ${errorMessage}`;
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      // Parse the response
+      let responseData;
+      try {
+        responseData = await response.json();
+      } catch (parseError) {
+        console.error("Error parsing download URL response:", parseError);
+        throw new Error("Invalid response from server. Please try again.");
+      }
+
+      // Validate response structure
+      if (!responseData || !responseData.download_url) {
+        console.error("Invalid response structure:", responseData);
+        throw new Error(
+          "Download URL not found in response. Please try again."
+        );
+      }
+
+      // Validate download_url is a string and not empty
+      if (
+        typeof responseData.download_url !== "string" ||
+        !responseData.download_url.trim()
+      ) {
+        console.error("Invalid download_url value:", responseData.download_url);
+        throw new Error("Invalid download URL received. Please try again.");
+      }
+
+      // Open the download URL in a new tab
+      try {
+        window.open(responseData.download_url, "_blank", "noopener,noreferrer");
+      } catch (openError) {
+        console.error("Error opening download URL:", openError);
+        throw new Error(
+          "Failed to open download link. Your browser may be blocking pop-ups."
+        );
+      }
+
+      // Success - clear any errors
+      setDownloadError("");
+    } catch (err) {
+      // Handle all types of errors
+      console.error("Download error:", err);
+
+      let errorMessage = "Failed to download file. Please try again.";
+
+      if (err instanceof TypeError && err.message.includes("fetch")) {
+        errorMessage = "Network error. Please check your connection and try again.";
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+
+      setDownloadError(errorMessage);
+
+      // Clear error after 5 seconds
+      setTimeout(() => {
+        setDownloadError("");
+      }, 5000);
+    } finally {
+      // Clear downloading state
+      setDownloadingFileId(null);
+    }
   };
 
   if (loading) {
@@ -213,6 +340,18 @@ function DatasetInfo() {
         </button>
       </div>
 
+      {downloadError && (
+        <div className="alert alert-danger alert-dismissible fade show" role="alert">
+          {downloadError}
+          <button
+            type="button"
+            className="btn-close"
+            onClick={() => setDownloadError("")}
+            aria-label="Close"
+          ></button>
+        </div>
+      )}
+
       {files.length === 0 ? (
         <div className="alert alert-info" role="alert">
           No files associated with this dataset.
@@ -251,13 +390,23 @@ function DatasetInfo() {
                   </div>
                   <button
                     className="btn btn-sm btn-outline-primary"
-                    onClick={() => {
-                      // Placeholder for download functionality
-                      console.log("Download file:", file.file_id);
-                    }}
+                    onClick={() => handleDownload(file)}
+                    disabled={downloadingFileId === file.file_id}
                   >
-                    <i className="bi bi-arrow-down"></i>
-                    download
+                    {downloadingFileId === file.file_id ? (
+                      <>
+                        <span
+                          className="spinner-border spinner-border-sm me-2"
+                          role="status"
+                          aria-hidden="true"
+                        ></span>
+                        Downloading...
+                      </>
+                    ) : (
+                      <>
+                        <i className="bi bi-arrow-down"></i> download
+                      </>
+                    )}
                   </button>
                 </div>
               </div>

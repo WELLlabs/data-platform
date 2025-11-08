@@ -5,6 +5,7 @@ Upload service for handling S3 presigned URL generation and file status checks.
 import logging
 import mimetypes
 from typing import Any, Dict
+from urllib.parse import quote
 from uuid import UUID
 
 import httpx
@@ -285,6 +286,80 @@ class UploadService:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Error checking file status",
+            )
+
+    async def get_presigned_download_url(self, file_key: str) -> Dict[str, Any]:
+        """
+        Get a presigned URL for downloading a file from S3.
+
+        Args:
+            file_key: S3 file key (e.g., "user_id/filename")
+
+        Returns:
+            Dictionary containing presigned download URL information
+
+        Raises:
+            HTTPException: If the S3 handler API request fails
+        """
+        try:
+            self.logger.info(
+                "Requesting presigned download URL for file_key: %s", file_key
+            )
+
+            # Prepare query parameters
+            params = {
+                "s3_region": self.s3_region,
+                "s3_bucket": self.s3_bucket,
+            }
+
+            # Make request to S3 handler presigned download endpoint
+            # file_key is used as path parameter - encode special chars but preserve slashes
+            encoded_file_key = quote(file_key, safe="/")
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    f"{self.s3_handler_url}/presigned/download/{encoded_file_key}",
+                    params=params,
+                )
+
+                if response.status_code != 200:
+                    self.logger.error(
+                        "S3 handler presigned download endpoint returned status %d: %s",
+                        response.status_code,
+                        response.text,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        detail="S3 handler service unavailable",
+                    )
+
+                data = response.json()
+                self.logger.info(
+                    "Presigned download URL generated successfully for %s", file_key
+                )
+
+                return data
+
+        except httpx.TimeoutException:
+            self.logger.exception("Timeout while getting presigned download URL")
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="S3 handler service timeout",
+            )
+        except httpx.RequestError as e:
+            self.logger.exception(
+                "Request error while getting presigned download URL: %s", e
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="S3 handler service connection error",
+            )
+        except Exception as e:
+            self.logger.exception(
+                "Unexpected error getting presigned download URL: %s", e
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error generating presigned download URL",
             )
 
 

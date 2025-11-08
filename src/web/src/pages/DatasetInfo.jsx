@@ -332,8 +332,10 @@ function DatasetInfo() {
           className="btn"
           style={{ backgroundColor: "#1b75e0", color: "#fff" }}
           onClick={() => {
-            // Placeholder for add file functionality
-            console.log("Add file clicked");
+            const datasetId = searchParams.get("dataset_id");
+            if (datasetId) {
+              navigate(`/add-file?dataset_id=${datasetId}`);
+            }
           }}
         >
           <i className="bi bi-plus"></i> Add file

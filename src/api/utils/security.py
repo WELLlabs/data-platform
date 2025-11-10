@@ -6,6 +6,7 @@ import secrets
 import string
 from typing import Optional
 
+import bleach
 from models.user import User
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,7 +28,7 @@ def generate_api_key(length: int = 32) -> str:
 
 def sanitize_input(text: Optional[str]) -> Optional[str]:
     """
-    Sanitize user input to prevent XSS attacks.
+    Sanitize user input to prevent XSS attacks using bleach.
 
     Args:
         text: Input text to sanitize
@@ -38,12 +39,13 @@ def sanitize_input(text: Optional[str]) -> Optional[str]:
     if not text:
         return None
 
-    # Remove potentially dangerous characters
-    dangerous_chars = ["<", ">", '"', "'", "&", ";", "(", ")", "script", "javascript"]
-    sanitized = text.strip()
+    # Strip whitespace first
+    stripped = text.strip()
+    if not stripped:
+        return None
 
-    for char in dangerous_chars:
-        sanitized = sanitized.replace(char, "")
+    # Use bleach to clean HTML/script tags and prevent XSS
+    sanitized = bleach.clean(stripped, tags=[], strip=True)
 
     return sanitized if sanitized else None
 

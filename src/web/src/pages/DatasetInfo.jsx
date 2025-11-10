@@ -279,23 +279,23 @@ function DatasetInfo() {
 
           <div className="row mb-3">
             <div className="col-md-3">
-              <strong>Author:</strong>
+              <strong>Provenance:</strong>
             </div>
-            <div className="col-md-9">{dataset.author || "N/A"}</div>
+            <div className="col-md-9">{dataset.provenance || "N/A"}</div>
           </div>
 
           <div className="row mb-3">
             <div className="col-md-3">
-              <strong>Source URL:</strong>
+              <strong>Source:</strong>
             </div>
             <div className="col-md-9">
-              {dataset.source_url ? (
+              {dataset.source ? (
                 <a
-                  href={dataset.source_url}
+                  href={dataset.source}
                   target="_blank"
                   rel="noopener noreferrer"
                 >
-                  {dataset.source_url}
+                  {dataset.source}
                 </a>
               ) : (
                 "N/A"
@@ -323,6 +323,53 @@ function DatasetInfo() {
             </div>
             <div className="col-md-9">{dataset.downloads ?? "N/A"}</div>
           </div>
+
+          {dataset.permissions && (
+            <div className="row mb-3">
+              <div className="col-md-3">
+                <strong>Permissions:</strong>
+              </div>
+              <div className="col-md-9">{dataset.permissions}</div>
+            </div>
+          )}
+
+          <div className="row mb-3">
+            <div className="col-md-3">
+              <strong>Duration (years):</strong>
+            </div>
+            <div className="col-md-9">{dataset.duration ?? 0}</div>
+          </div>
+
+          {dataset.value && (
+            <div className="row mb-3">
+              <div className="col-md-3">
+                <strong>Value:</strong>
+              </div>
+              <div className="col-md-9">{dataset.value}</div>
+            </div>
+          )}
+
+          <div className="row mb-3">
+            <div className="col-md-3">
+              <strong>Approved:</strong>
+            </div>
+            <div className="col-md-9">
+              {dataset.approved ? (
+                <span className="badge bg-success">Yes</span>
+              ) : (
+                <span className="badge bg-warning">No</span>
+              )}
+            </div>
+          </div>
+
+          {dataset.approved_by && (
+            <div className="row mb-3">
+              <div className="col-md-3">
+                <strong>Approved By:</strong>
+              </div>
+              <div className="col-md-9">{dataset.approved_by}</div>
+            </div>
+          )}
         </div>
       </div>
 

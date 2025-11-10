@@ -79,11 +79,11 @@ class Dataset(Base):
         String(length=500),
         nullable=True,
     )
-    author: Mapped[Optional[str]] = mapped_column(
+    provenance: Mapped[Optional[str]] = mapped_column(
         String(length=125),
         nullable=True,
     )
-    source_url: Mapped[Optional[str]] = mapped_column(
+    source: Mapped[Optional[str]] = mapped_column(
         String(length=1000),
         nullable=True,
     )
@@ -93,6 +93,28 @@ class Dataset(Base):
     )
     groundtruthed: Mapped[Optional[bool]] = mapped_column(
         Boolean,
+        nullable=True,
+    )
+    approved: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+    )
+    approved_by: Mapped[Optional[UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    permissions: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+    )
+    duration: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False,
+    )
+    value: Mapped[Optional[str]] = mapped_column(
+        String(length=10),
         nullable=True,
     )
 

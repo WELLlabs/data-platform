@@ -22,11 +22,14 @@ function CreateDataset() {
   const [title, setTitle] = useState("");
   const [datasetDescription, setDatasetDescription] = useState("");
   const [tags, setTags] = useState("");
-  const [author, setAuthor] = useState("");
-  const [sourceUrl, setSourceUrl] = useState("");
+  const [provenance, setProvenance] = useState("");
+  const [source, setSource] = useState("");
   const [citeAs, setCiteAs] = useState("");
   const [groundtruthed, setGroundtruthed] = useState(false);
   const [isPrivate, setIsPrivate] = useState(false);
+  const [permissions, setPermissions] = useState("");
+  const [duration, setDuration] = useState(0);
+  const [value, setValue] = useState("low");
 
   const [file, setFile] = useState(null);
   const [fileTitle, setFileTitle] = useState("");
@@ -165,11 +168,14 @@ function CreateDataset() {
       form.append("dataset_description", constrained(datasetDescription, 2000));
       form.append("tags", constrained(tags, 500));
       form.append("organization", organizationId);
-      form.append("author", constrained(author, 125));
-      form.append("source_url", constrained(sourceUrl, 1000));
+      form.append("provenance", constrained(provenance, 125));
+      form.append("source", constrained(source, 1000));
       form.append("cite_as", constrained(citeAs, 1500));
       if (groundtruthed) form.append("groundtruthed", "true");
       form.append("private", orgPrivate && isPrivate ? "true" : "false");
+      form.append("permissions", constrained(permissions, 1000));
+      form.append("duration", duration.toString());
+      if (value) form.append("value", value);
 
       form.append("filename", constrained(filenameOnly, 200));
       form.append("file_key", fileKey);
@@ -253,22 +259,22 @@ function CreateDataset() {
         </div>
 
         <div className="mb-3">
-          <label className="form-label">Author</label>
+          <label className="form-label">Provenance</label>
           <input
             type="text"
             className="form-control"
-            value={author}
-            onChange={(e) => setAuthor((e.target.value || "").slice(0, 125))}
+            value={provenance}
+            onChange={(e) => setProvenance((e.target.value || "").slice(0, 125))}
           />
         </div>
 
         <div className="mb-3">
-          <label className="form-label">Source URL</label>
+          <label className="form-label">Source</label>
           <input
             type="text"
             className="form-control"
-            value={sourceUrl}
-            onChange={(e) => setSourceUrl((e.target.value || "").slice(0, 1000))}
+            value={source}
+            onChange={(e) => setSource((e.target.value || "").slice(0, 1000))}
           />
         </div>
 
@@ -280,6 +286,44 @@ function CreateDataset() {
             value={citeAs}
             onChange={(e) => setCiteAs((e.target.value || "").slice(0, 1500))}
           />
+        </div>
+
+        <div className="mb-3">
+          <label className="form-label">Permissions</label>
+          <textarea
+            className="form-control"
+            rows={3}
+            value={permissions}
+            onChange={(e) => setPermissions((e.target.value || "").slice(0, 1000))}
+            maxLength={1000}
+          />
+        </div>
+
+        <div className="mb-3">
+          <label className="form-label">Duration (years)</label>
+          <input
+            type="number"
+            className="form-control"
+            value={duration}
+            onChange={(e) => {
+              const val = parseInt(e.target.value) || 0;
+              setDuration(Math.max(0, val));
+            }}
+            min="0"
+          />
+        </div>
+
+        <div className="mb-3">
+          <label className="form-label">Value</label>
+          <select
+            className="form-select"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+          >
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+          </select>
         </div>
 
         <div className="mb-3">

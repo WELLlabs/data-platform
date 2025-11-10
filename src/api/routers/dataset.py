@@ -110,12 +110,17 @@ class DatasetController:
                     "description": dataset.dataset_description,
                     "tags": dataset.tags,
                     "organization": dataset.organization,
-                    "author": dataset.author,
-                    "source_url": dataset.source_url,
+                    "provenance": dataset.provenance,
+                    "source": dataset.source,
                     "cite_as": dataset.cite_as,
                     "groundtruthed": dataset.groundtruthed,
                     "private": dataset.private,
                     "downloads": dataset.downloads,
+                    "approved": dataset.approved,
+                    "approved_by": str(dataset.approved_by) if dataset.approved_by else None,
+                    "permissions": dataset.permissions,
+                    "duration": dataset.duration,
+                    "value": dataset.value,
                     "created_at": dataset.created_at.isoformat()
                     if dataset.created_at
                     else None,
@@ -183,10 +188,15 @@ class DatasetController:
                 "downloads": dataset.downloads,
                 "dataset_description": dataset.dataset_description,
                 "tags": dataset.tags,
-                "author": dataset.author,
-                "source_url": dataset.source_url,
+                "provenance": dataset.provenance,
+                "source": dataset.source,
                 "cite_as": dataset.cite_as,
                 "groundtruthed": dataset.groundtruthed,
+                "approved": dataset.approved,
+                "approved_by": str(dataset.approved_by) if dataset.approved_by else None,
+                "permissions": dataset.permissions,
+                "duration": dataset.duration,
+                "value": dataset.value,
             }
 
             files_arr = [
@@ -262,10 +272,15 @@ class DatasetController:
                     "downloads": ds.downloads,
                     "dataset_description": ds.dataset_description,
                     "tags": ds.tags,
-                    "author": ds.author,
-                    "source_url": ds.source_url,
+                    "provenance": ds.provenance,
+                    "source": ds.source,
                     "cite_as": ds.cite_as,
                     "groundtruthed": ds.groundtruthed,
+                    "approved": ds.approved,
+                    "approved_by": str(ds.approved_by) if ds.approved_by else None,
+                    "permissions": ds.permissions,
+                    "duration": ds.duration,
+                    "value": ds.value,
                 }
                 for ds in datasets
             ]
@@ -309,13 +324,16 @@ async def create_dataset(
     dataset_description: str | None = Form(None, description="Dataset description"),
     tags: str | None = Form(None, description="Tags for the dataset"),
     organization: str = Form(..., description="Organization ID"),
-    author: str | None = Form(None, description="Author name"),
-    source_url: str | None = Form(None, description="Source URL"),
+    provenance: str | None = Form(None, description="Provenance"),
+    source: str | None = Form(None, description="Source"),
     cite_as: str | None = Form(None, description="Citation information"),
     groundtruthed: bool | None = Form(
         None, description="Whether dataset is groundtruthed"
     ),
     private: bool = Form(False, description="Whether dataset is private"),
+    permissions: str | None = Form(None, description="Permissions"),
+    duration: int = Form(0, description="Duration in years"),
+    value: str | None = Form(None, description="Value level (high, medium, low)"),
     filename: str = Form(..., description="File name"),
     file_key: str = Form(..., description="S3 file key"),
     file_description: str | None = Form(None, description="File description"),
@@ -340,11 +358,14 @@ async def create_dataset(
         dataset_description: Dataset description (optional)
         tags: Tags for the dataset (optional, max 500 chars)
         organization: Organization ID
-        author: Author name (optional, max 125 chars)
-        source_url: Source URL (optional, max 1000 chars)
+        provenance: Provenance (optional, max 125 chars)
+        source: Source (optional, max 1000 chars)
         cite_as: Citation information (optional, max 1500 chars)
         groundtruthed: Whether dataset is groundtruthed (optional)
         private: Whether dataset is private (default: False)
+        permissions: Permissions (optional, max 1000 chars)
+        duration: Duration in years (default: 0)
+        value: Value level - high, medium, or low (optional)
         filename: File name
         file_key: S3 file key
         file_description: File description (optional)
@@ -397,11 +418,14 @@ async def create_dataset(
             dataset_description=dataset_description,
             tags=tags,
             organization=organization,
-            author=author,
-            source_url=source_url,
+            provenance=provenance,
+            source=source,
             cite_as=cite_as,
             groundtruthed=groundtruthed,
             private=private,
+            permissions=permissions,
+            duration=duration,
+            value=value,
             filename=filename,
             file_key=file_key,
             file_description=file_description,
@@ -420,7 +444,7 @@ async def create_dataset(
         )
 
 
-@router.get("/dataset-info")
+@router.get("/dataset_info")
 async def dataset_info(
     dataset_id: str,
     controller: DatasetController = Depends(get_dataset_controller),

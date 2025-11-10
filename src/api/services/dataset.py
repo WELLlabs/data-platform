@@ -211,9 +211,10 @@ class DatasetService:
             sanitized_title = sanitize_input(dataset_data.title) or ""
             sanitized_dataset_desc = sanitize_input(dataset_data.dataset_description)
             sanitized_tags = sanitize_input(dataset_data.tags)
-            sanitized_author = sanitize_input(dataset_data.author)
-            sanitized_source_url = sanitize_input(dataset_data.source_url)
+            sanitized_provenance = sanitize_input(dataset_data.provenance)
+            sanitized_source = sanitize_input(dataset_data.source)
             sanitized_cite_as = sanitize_input(dataset_data.cite_as)
+            sanitized_permissions = sanitize_input(dataset_data.permissions)
             sanitized_filename = sanitize_input(dataset_data.filename) or ""
             sanitized_file_desc = sanitize_input(dataset_data.file_description)
             sanitized_file_format = sanitize_input(dataset_data.file_format)
@@ -226,12 +227,17 @@ class DatasetService:
                 dataset_description=sanitized_dataset_desc,
                 tags=sanitized_tags,
                 organization=dataset_data.organization,
-                author=sanitized_author,
-                source_url=sanitized_source_url,
+                provenance=sanitized_provenance,
+                source=sanitized_source,
                 cite_as=sanitized_cite_as,
                 groundtruthed=dataset_data.groundtruthed,
                 private=dataset_private,
                 downloads=0,
+                approved=False,
+                approved_by=None,
+                permissions=sanitized_permissions,
+                duration=dataset_data.duration if dataset_data.duration is not None else 0,
+                value=dataset_data.value,
             )
 
             # 8. Create file record

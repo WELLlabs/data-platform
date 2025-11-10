@@ -2,7 +2,7 @@
 Dataset schemas for validation and serialization.
 """
 
-from typing import Optional
+from typing import Optional, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, validator
@@ -28,11 +28,11 @@ class DatasetCreate(BaseModel):
     organization: str = Field(
         ..., min_length=1, max_length=100, description="Organization ID"
     )
-    author: Optional[str] = Field(
-        None, max_length=125, description="Author name"
+    provenance: Optional[str] = Field(
+        None, max_length=125, description="Provenance"
     )
-    source_url: Optional[str] = Field(
-        None, max_length=1000, description="Source URL"
+    source: Optional[str] = Field(
+        None, max_length=1000, description="Source"
     )
     cite_as: Optional[str] = Field(
         None, max_length=1500, description="Citation information"
@@ -41,6 +41,13 @@ class DatasetCreate(BaseModel):
         None, description="Whether dataset is groundtruthed"
     )
     private: bool = Field(default=False, description="Whether dataset is private")
+    permissions: Optional[str] = Field(
+        None, max_length=1000, description="Permissions"
+    )
+    duration: int = Field(default=0, ge=0, description="Duration in years")
+    value: Optional[Literal["high", "medium", "low"]] = Field(
+        None, description="Value level"
+    )
 
     # File fields
     filename: str = Field(..., min_length=1, description="File name")
@@ -80,7 +87,7 @@ class DatasetCreate(BaseModel):
             return None
         return v.strip() if v else None
 
-    @validator("tags", "author", "source_url", "cite_as", "file_format")
+    @validator("tags", "provenance", "source", "cite_as", "file_format", "permissions")
     def validate_optional_strings(cls, v):
         """Validate and sanitize optional string fields."""
         if v is not None and not v.strip():
@@ -93,4 +100,13 @@ class DatasetCreate(BaseModel):
         if not v or not v.strip():
             raise ValueError("Organization ID cannot be empty")
         return v.strip()
+
+    @validator("value")
+    def validate_value(cls, v):
+        """Validate value field."""
+        if v is None or v == "":
+            return None
+        if v not in ["high", "medium", "low"]:
+            raise ValueError("Value must be one of: high, medium, low")
+        return v
 

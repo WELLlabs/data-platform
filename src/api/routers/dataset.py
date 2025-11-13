@@ -3,6 +3,7 @@ Dataset router for handling dataset creation.
 """
 
 import logging
+import re
 from typing import Optional
 from uuid import UUID
 
@@ -316,6 +317,43 @@ async def get_dataset_controller(
     return DatasetController(dataset_service)
 
 
+def process_tags(tags: str | None) -> str | None:
+    """
+    Process tags string by:
+    1. Splitting by comma
+    2. Stripping whitespace from each tag
+    3. Replacing spaces within tags with hyphens
+    4. Converting to lowercase
+    5. Joining back with commas
+    
+    Example:
+        "Open, Cold blooded, data , store, Cloud Model, test "
+        -> "open,cold-blooded,data,store,cloud-model,test"
+    
+    Args:
+        tags: Tags string (comma-separated) or None
+        
+    Returns:
+        Processed tags string or None if input is None/empty
+    """
+    if not tags or not tags.strip():
+        return None
+    
+    # Split by comma, strip whitespace, filter out empty strings
+    tag_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+    
+    if not tag_list:
+        return None
+    
+    # Process each tag: replace one or more spaces with a single hyphen and convert to lowercase
+    processed_tags = [
+        re.sub(r'\s+', '-', tag).lower() for tag in tag_list
+    ]
+    
+    # Join back with commas
+    return ",".join(processed_tags)
+
+
 # Route handlers
 @router.post("/create_dataset")
 async def create_dataset(
@@ -411,12 +449,18 @@ async def create_dataset(
                 detail=f"Organization '{organization}' not found",
             )
 
+        # Process tags: normalize format (lowercase, replace spaces with hyphens, strip whitespace)
+        processed_tags = process_tags(tags)
+        logger.debug(
+            "Tags processing: original='%s', processed='%s'", tags, processed_tags
+        )
+
         # Create DatasetCreate schema from form data
         dataset_data = DatasetCreate(
             title=title,
             creator=creator_uuid,
             dataset_description=dataset_description,
-            tags=tags,
+            tags=processed_tags,
             organization=organization,
             provenance=provenance,
             source=source,

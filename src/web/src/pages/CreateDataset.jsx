@@ -139,6 +139,10 @@ function CreateDataset() {
         throw new Error("Upload URL missing in response.");
       }
 
+      // Use the content_type from the response (matches what was used to sign the presigned URL)
+      // Fallback to file.type for backward compatibility
+      const contentType = uploadData.content_type || file.type || "application/octet-stream";
+
       // 2) Upload the file to S3 using the presigned URL (PUT)
       await new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
@@ -154,7 +158,7 @@ function CreateDataset() {
         };
         xhr.onerror = () => reject(new Error("Upload network error"));
         xhr.open("PUT", uploadUrl);
-        xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+        xhr.setRequestHeader("Content-Type", contentType);
         xhr.send(file);
       });
 
@@ -178,7 +182,7 @@ function CreateDataset() {
       form.append("duration", duration.toString());
       if (value) form.append("value", value);
 
-      form.append("filename", constrained(filenameOnly, 200));
+      form.append("filename", constrained(fileTitle, 200));
       form.append("file_key", fileKey);
       form.append("file_description", constrained(fileDescription, 1000));
       form.append("file_format", constrained(fileFormat, 20));

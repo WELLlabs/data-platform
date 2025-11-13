@@ -183,6 +183,10 @@ class UploadService:
                     "Presigned URL generated successfully for %s", file_key
                 )
 
+                # Include the content_type used to generate the presigned URL
+                # This ensures the frontend uses the exact same content type when uploading
+                data["content_type"] = content_type
+
                 return data
 
         except httpx.TimeoutException:

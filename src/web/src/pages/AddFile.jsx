@@ -112,6 +112,10 @@ function AddFile() {
         throw new Error("Upload URL missing in response.");
       }
 
+      // Use the content_type from the response (matches what was used to sign the presigned URL)
+      // Fallback to file.type for backward compatibility
+      const contentType = uploadData.content_type || file.type || "application/octet-stream";
+
       // 2) Upload the file to S3 using the presigned URL (PUT)
       await new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
@@ -127,10 +131,7 @@ function AddFile() {
         };
         xhr.onerror = () => reject(new Error("Upload network error"));
         xhr.open("PUT", uploadUrl);
-        xhr.setRequestHeader(
-          "Content-Type",
-          file.type || "application/octet-stream"
-        );
+        xhr.setRequestHeader("Content-Type", contentType);
         xhr.send(file);
       });
 

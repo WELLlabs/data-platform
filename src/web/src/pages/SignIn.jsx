@@ -1,7 +1,7 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import { signin_endpoint } from "../api/endpoints";
+import { signin_endpoint, me_endpoint } from "../api/endpoints";
 
 function SignIn() {
   const [email, setEmail] = useState("");
@@ -10,41 +10,93 @@ function SignIn() {
   const [loading, setLoading] = useState(false);
   const { signIn } = useAuth();
   const navigate = useNavigate();
+  const iframeRef = useRef(null);
+  const formRef = useRef(null);
+
+  // Create hidden iframe on mount
+  useEffect(() => {
+    const iframe = document.createElement('iframe');
+    iframe.name = 'hidden-form-submit';
+    iframe.style.display = 'none';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = 'none';
+    document.body.appendChild(iframe);
+    iframeRef.current = iframe;
+
+    return () => {
+      // Cleanup iframe on unmount
+      if (iframeRef.current && iframeRef.current.parentNode) {
+        iframeRef.current.parentNode.removeChild(iframeRef.current);
+      }
+    };
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setLoading(true);
 
+    if (!formRef.current || !iframeRef.current) {
+      setError('Form initialization error. Please refresh the page.');
+      setLoading(false);
+      return;
+    }
+
     try {
-      // Create form data for the API call
-      const formData = new FormData();
-      formData.append('email', email);
-      formData.append('password', password);
+      // Set form action and target to submit to hidden iframe
+      // This allows Chrome to detect the form submission for password saving
+      formRef.current.action = signin_endpoint;
+      formRef.current.method = 'post';
+      formRef.current.target = 'hidden-form-submit';
+      
+      // Set up iframe load handler to detect when form submission completes
+      const checkLoginStatus = async () => {
+        try {
+          // Wait a bit for the form submission to complete
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          // Check if login was successful by calling /api/auth/me
+          const verifyResponse = await fetch(me_endpoint, {
+            credentials: 'include'
+          });
+          
+          if (verifyResponse.ok) {
+            const userData = await verifyResponse.json();
+            
+            // Store user data in context and localStorage
+            signIn(userData);
+            
+            // Additional delay to allow Chrome to detect successful form submission
+            // and prompt to save password before navigation
+            await new Promise(resolve => setTimeout(resolve, 300));
+            
+            // Navigate to dashboard with user ID
+            navigate(`/dashboard?userId=${userData.id}`);
+          } else {
+            // Login failed - the /api/auth/me check failed, so login was unsuccessful
+            setError('Sign in failed. Please check your credentials.');
+            setLoading(false);
+          }
+        } catch (err) {
+          console.error('Error checking login status:', err);
+          setError('Network error. Please try again.');
+          setLoading(false);
+        }
+      };
 
-      // Make API call to signin endpoint
-      const response = await fetch(signin_endpoint, {
-        method: 'POST',
-        body: formData,
-        credentials: 'include' // Important for cookies
-      });
-
-      if (response.ok) {
-        const userData = await response.json();
-        
-        // Store user data in context and localStorage
-        signIn(userData);
-        
-        // Navigate to dashboard with user ID
-        navigate(`/dashboard?userId=${userData.id}`);
-      } else {
-        const errorData = await response.json();
-        setError(errorData.detail || 'Sign in failed. Please check your credentials.');
-      }
+      // Set up iframe load handler
+      iframeRef.current.onload = checkLoginStatus;
+      
+      // Submit the form - this will trigger Chrome's password detection
+      formRef.current.submit();
+      
+      // Also set up a timeout fallback in case iframe onload doesn't fire
+      setTimeout(checkLoginStatus, 1000);
+      
     } catch (error) {
       console.error('Sign in error:', error);
       setError('Network error. Please try again.');
-    } finally {
       setLoading(false);
     }
   };
@@ -57,7 +109,7 @@ function SignIn() {
             <div className="card auth-card p-4 p-md-5">
               <h2 className="mb-3 text-center auth-title">Sign In</h2>
               <p className="text-muted text-center mb-4">Welcome back! Please sign in to continue.</p>
-              <form onSubmit={handleSubmit}>
+              <form ref={formRef} onSubmit={handleSubmit} method="post">
                 {error && (
                   <div className="alert alert-danger" role="alert">
                     {error}
@@ -67,11 +119,13 @@ function SignIn() {
                   <label htmlFor="email" className="form-label">Email</label>
                   <input
                     id="email"
+                    name="email"
                     type="email"
                     className="form-control"
                     placeholder="Enter your email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
+                    autoComplete="username"
                     required
                     disabled={loading}
                   />
@@ -80,11 +134,13 @@ function SignIn() {
                   <label htmlFor="password" className="form-label">Password</label>
                   <input
                     id="password"
+                    name="password"
                     type="password"
                     className="form-control"
                     placeholder="Enter your password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="current-password"
                     required
                     disabled={loading}
                   />

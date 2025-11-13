@@ -195,6 +195,7 @@ function SignUp() {
                                     </label>
                                     <input
                                         id="email"
+                                        name="email"
                                         type="email"
                                         className={`form-control ${
                                             email && !emailValid
@@ -206,6 +207,7 @@ function SignUp() {
                                         onChange={(e) =>
                                             setEmail(e.target.value)
                                         }
+                                        autoComplete="email"
                                         required
                                     />
                                     {email && !emailValid && (
@@ -227,6 +229,7 @@ function SignUp() {
                                     </label>
                                     <input
                                         id="password"
+                                        name="password"
                                         type="password"
                                         className={`form-control ${
                                             password && password.length < 8
@@ -238,6 +241,7 @@ function SignUp() {
                                         onChange={(e) =>
                                             setPassword(e.target.value)
                                         }
+                                        autoComplete="new-password"
                                         required
                                         minLength={8}
                                     />
@@ -261,6 +265,7 @@ function SignUp() {
                                     </label>
                                     <input
                                         id="confirmPassword"
+                                        name="confirmPassword"
                                         type="password"
                                         className={`form-control ${
                                             confirmPassword && !passwordsMatch
@@ -272,6 +277,7 @@ function SignUp() {
                                         onChange={(e) =>
                                             setConfirmPassword(e.target.value)
                                         }
+                                        autoComplete="new-password"
                                         required
                                     />
                                     {!passwordsMatch && confirmPassword && (

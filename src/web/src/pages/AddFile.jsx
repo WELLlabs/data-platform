@@ -20,6 +20,11 @@ function AddFile() {
   const [fileDescription, setFileDescription] = useState("");
   const [fileFormat, setFileFormat] = useState("");
 
+  // Validation error states
+  const [fileTitleError, setFileTitleError] = useState(false);
+  const [fileDescriptionError, setFileDescriptionError] = useState(false);
+  const [fileFormatError, setFileFormatError] = useState(false);
+
   const datasetId = searchParams.get("dataset_id");
 
   // Check authentication and dataset_id
@@ -54,15 +59,46 @@ function AddFile() {
     const f = e.target.files && e.target.files[0] ? e.target.files[0] : null;
     setFile(f);
     if (f && !fileTitle) {
-      setFileTitle(f.name.slice(0, 200));
+      // Filter special characters from filename when auto-filling
+      const filteredName = f.name.replace(/[<>"'&;()]/g, "");
+      const title = filteredName.slice(0, 200);
+      setFileTitle(title);
+      if (title !== f.name.slice(0, 200)) {
+        setFileTitleError(true);
+      }
     }
     if (f && !fileFormat) {
       const parts = f.name.split(".");
-      if (parts.length > 1) setFileFormat(parts.pop().slice(0, 20));
+      if (parts.length > 1) {
+        const format = parts.pop().slice(0, 20);
+        // Filter special characters from format
+        const filteredFormat = format.replace(/[<>"'&;()]/g, "");
+        setFileFormat(filteredFormat);
+        if (filteredFormat !== format) {
+          setFileFormatError(true);
+        }
+      }
     }
   };
 
   const constrained = (v, max) => (v || "").slice(0, max);
+
+  // Helper function to validate and filter special characters
+  const validateAndFilterSpecialChars = (value, setValue, setError, maxLength) => {
+    // Characters to block: <, >, ", ', &, ;, (, )
+    const invalidChars = /[<>"'&;()]/g;
+    const hasInvalidChars = invalidChars.test(value);
+    
+    if (hasInvalidChars) {
+      // Filter out invalid characters
+      const filtered = value.replace(invalidChars, "");
+      setValue(constrained(filtered, maxLength));
+      setError(true);
+    } else {
+      setValue(constrained(value, maxLength));
+      setError(false);
+    }
+  };
 
   const onSubmit = async (e) => {
     e.preventDefault();
@@ -244,16 +280,21 @@ function AddFile() {
                 </label>
                 <input
                   type="text"
-                  className="form-control"
+                  className={`form-control ${fileTitleError ? "is-invalid" : ""}`}
                   id="fileTitle"
                   value={fileTitle}
                   onChange={(e) =>
-                    setFileTitle(constrained(e.target.value, 200))
+                    validateAndFilterSpecialChars(e.target.value, setFileTitle, setFileTitleError, 200)
                   }
                   required
                   maxLength={200}
                   disabled={submitting}
                 />
+                {fileTitleError && (
+                  <div className="invalid-feedback" style={{ display: "block", color: "red" }}>
+                    no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
+                  </div>
+                )}
               </div>
 
               <div className="mb-3">
@@ -261,16 +302,21 @@ function AddFile() {
                   Description
                 </label>
                 <textarea
-                  className="form-control"
+                  className={`form-control ${fileDescriptionError ? "is-invalid" : ""}`}
                   id="fileDescription"
                   rows="3"
                   value={fileDescription}
                   onChange={(e) =>
-                    setFileDescription(constrained(e.target.value, 1000))
+                    validateAndFilterSpecialChars(e.target.value, setFileDescription, setFileDescriptionError, 1000)
                   }
                   maxLength={1000}
                   disabled={submitting}
                 />
+                {fileDescriptionError && (
+                  <div className="invalid-feedback" style={{ display: "block", color: "red" }}>
+                    no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
+                  </div>
+                )}
               </div>
 
               <div className="mb-3">
@@ -279,15 +325,20 @@ function AddFile() {
                 </label>
                 <input
                   type="text"
-                  className="form-control"
+                  className={`form-control ${fileFormatError ? "is-invalid" : ""}`}
                   id="fileFormat"
                   value={fileFormat}
                   onChange={(e) =>
-                    setFileFormat(constrained(e.target.value, 20))
+                    validateAndFilterSpecialChars(e.target.value, setFileFormat, setFileFormatError, 20)
                   }
                   maxLength={20}
                   disabled={submitting}
                 />
+                {fileFormatError && (
+                  <div className="invalid-feedback" style={{ display: "block", color: "red" }}>
+                    no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
+                  </div>
+                )}
               </div>
 
               {submitting && (

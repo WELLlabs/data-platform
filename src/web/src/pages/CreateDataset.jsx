@@ -37,6 +37,18 @@ function CreateDataset() {
   const [fileDescription, setFileDescription] = useState("");
   const [fileFormat, setFileFormat] = useState("");
 
+  // Validation error states
+  const [titleError, setTitleError] = useState(false);
+  const [datasetDescriptionError, setDatasetDescriptionError] = useState(false);
+  const [tagsError, setTagsError] = useState(false);
+  const [provenanceError, setProvenanceError] = useState(false);
+  const [sourceError, setSourceError] = useState(false);
+  const [citeAsError, setCiteAsError] = useState(false);
+  const [permissionsError, setPermissionsError] = useState(false);
+  const [fileTitleError, setFileTitleError] = useState(false);
+  const [fileDescriptionError, setFileDescriptionError] = useState(false);
+  const [fileFormatError, setFileFormatError] = useState(false);
+
   // Ensure auth and populate query params with userId and organization
   useEffect(() => {
     const init = async () => {
@@ -89,15 +101,46 @@ function CreateDataset() {
     const f = e.target.files && e.target.files[0] ? e.target.files[0] : null;
     setFile(f);
     if (f && !fileTitle) {
-      setFileTitle(f.name.slice(0, 200));
+      // Filter special characters from filename when auto-filling
+      const filteredName = f.name.replace(/[<>"'&;()]/g, "");
+      const title = filteredName.slice(0, 200);
+      setFileTitle(title);
+      if (title !== f.name.slice(0, 200)) {
+        setFileTitleError(true);
+      }
     }
     if (f && !fileFormat) {
       const parts = f.name.split(".");
-      if (parts.length > 1) setFileFormat(parts.pop().slice(0, 20));
+      if (parts.length > 1) {
+        const format = parts.pop().slice(0, 20);
+        // Filter special characters from format
+        const filteredFormat = format.replace(/[<>"'&;()]/g, "");
+        setFileFormat(filteredFormat);
+        if (filteredFormat !== format) {
+          setFileFormatError(true);
+        }
+      }
     }
   };
 
   const constrained = (v, max) => (v || "").slice(0, max);
+
+  // Helper function to validate and filter special characters
+  const validateAndFilterSpecialChars = (value, setValue, setError, maxLength) => {
+    // Characters to block: <, >, ", ', &, ;, (, )
+    const invalidChars = /[<>"'&;()]/g;
+    const hasInvalidChars = invalidChars.test(value);
+    
+    if (hasInvalidChars) {
+      // Filter out invalid characters
+      const filtered = value.replace(invalidChars, "");
+      setValue(constrained(filtered, maxLength));
+      setError(true);
+    } else {
+      setValue(constrained(value, maxLength));
+      setError(false);
+    }
+  };
 
   const onSubmit = async (e) => {
     e.preventDefault();
@@ -242,11 +285,16 @@ function CreateDataset() {
           </label>
           <input
             type="text"
-            className="form-control"
+            className={`form-control ${titleError ? "is-invalid" : ""}`}
             value={title}
-            onChange={(e) => setTitle((e.target.value || "").slice(0, 200))}
+            onChange={(e) => validateAndFilterSpecialChars(e.target.value, setTitle, setTitleError, 200)}
             required
           />
+          {titleError && (
+            <div className="invalid-feedback" style={{ display: "block", color: "red" }}>
+              no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
+            </div>
+          )}
         </div>
 
         <div className="mb-3">
@@ -258,11 +306,16 @@ function CreateDataset() {
             />
           </label>
           <textarea
-            className="form-control"
+            className={`form-control ${datasetDescriptionError ? "is-invalid" : ""}`}
             rows={4}
             value={datasetDescription}
-            onChange={(e) => setDatasetDescription((e.target.value || "").slice(0, 2000))}
+            onChange={(e) => validateAndFilterSpecialChars(e.target.value, setDatasetDescription, setDatasetDescriptionError, 2000)}
           />
+          {datasetDescriptionError && (
+            <div className="invalid-feedback" style={{ display: "block", color: "red" }}>
+              no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
+            </div>
+          )}
         </div>
 
         <div className="mb-3">
@@ -275,10 +328,15 @@ function CreateDataset() {
           </label>
           <input
             type="text"
-            className="form-control"
+            className={`form-control ${tagsError ? "is-invalid" : ""}`}
             value={tags}
-            onChange={(e) => setTags((e.target.value || "").slice(0, 500))}
+            onChange={(e) => validateAndFilterSpecialChars(e.target.value, setTags, setTagsError, 500)}
           />
+          {tagsError && (
+            <div className="invalid-feedback" style={{ display: "block", color: "red" }}>
+              no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
+            </div>
+          )}
         </div>
 
         <div className="mb-3">
@@ -291,10 +349,15 @@ function CreateDataset() {
           </label>
           <input
             type="text"
-            className="form-control"
+            className={`form-control ${provenanceError ? "is-invalid" : ""}`}
             value={provenance}
-            onChange={(e) => setProvenance((e.target.value || "").slice(0, 125))}
+            onChange={(e) => validateAndFilterSpecialChars(e.target.value, setProvenance, setProvenanceError, 125)}
           />
+          {provenanceError && (
+            <div className="invalid-feedback" style={{ display: "block", color: "red" }}>
+              no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
+            </div>
+          )}
         </div>
 
         <div className="mb-3">
@@ -307,10 +370,15 @@ function CreateDataset() {
           </label>
           <input
             type="text"
-            className="form-control"
+            className={`form-control ${sourceError ? "is-invalid" : ""}`}
             value={source}
-            onChange={(e) => setSource((e.target.value || "").slice(0, 1000))}
+            onChange={(e) => validateAndFilterSpecialChars(e.target.value, setSource, setSourceError, 1000)}
           />
+          {sourceError && (
+            <div className="invalid-feedback" style={{ display: "block", color: "red" }}>
+              no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
+            </div>
+          )}
         </div>
 
         <div className="mb-3">
@@ -323,10 +391,15 @@ function CreateDataset() {
           </label>
           <input
             type="text"
-            className="form-control"
+            className={`form-control ${citeAsError ? "is-invalid" : ""}`}
             value={citeAs}
-            onChange={(e) => setCiteAs((e.target.value || "").slice(0, 1500))}
+            onChange={(e) => validateAndFilterSpecialChars(e.target.value, setCiteAs, setCiteAsError, 1500)}
           />
+          {citeAsError && (
+            <div className="invalid-feedback" style={{ display: "block", color: "red" }}>
+              no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
+            </div>
+          )}
         </div>
 
         <div className="mb-3">
@@ -338,12 +411,17 @@ function CreateDataset() {
             />
           </label>
           <textarea
-            className="form-control"
+            className={`form-control ${permissionsError ? "is-invalid" : ""}`}
             rows={3}
             value={permissions}
-            onChange={(e) => setPermissions((e.target.value || "").slice(0, 1000))}
+            onChange={(e) => validateAndFilterSpecialChars(e.target.value, setPermissions, setPermissionsError, 1000)}
             maxLength={1000}
           />
+          {permissionsError && (
+            <div className="invalid-feedback" style={{ display: "block", color: "red" }}>
+              no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
+            </div>
+          )}
         </div>
 
         <div className="mb-3">
@@ -482,31 +560,46 @@ Low: Openly downloadable in public domain`}
           <label className="form-label">File title <span style={{ color: "red" }}>(required)</span></label>
           <input
             type="text"
-            className="form-control"
+            className={`form-control ${fileTitleError ? "is-invalid" : ""}`}
             value={fileTitle}
-            onChange={(e) => setFileTitle((e.target.value || "").slice(0, 200))}
+            onChange={(e) => validateAndFilterSpecialChars(e.target.value, setFileTitle, setFileTitleError, 200)}
             required
           />
+          {fileTitleError && (
+            <div className="invalid-feedback" style={{ display: "block", color: "red" }}>
+              no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
+            </div>
+          )}
         </div>
 
         <div className="mb-3">
           <label className="form-label">File description</label>
           <textarea
-            className="form-control"
+            className={`form-control ${fileDescriptionError ? "is-invalid" : ""}`}
             rows={3}
             value={fileDescription}
-            onChange={(e) => setFileDescription((e.target.value || "").slice(0, 1000))}
+            onChange={(e) => validateAndFilterSpecialChars(e.target.value, setFileDescription, setFileDescriptionError, 1000)}
           />
+          {fileDescriptionError && (
+            <div className="invalid-feedback" style={{ display: "block", color: "red" }}>
+              no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
+            </div>
+          )}
         </div>
 
         <div className="mb-3">
           <label className="form-label">File format</label>
           <input
             type="text"
-            className="form-control"
+            className={`form-control ${fileFormatError ? "is-invalid" : ""}`}
             value={fileFormat}
-            onChange={(e) => setFileFormat((e.target.value || "").slice(0, 20))}
+            onChange={(e) => validateAndFilterSpecialChars(e.target.value, setFileFormat, setFileFormatError, 20)}
           />
+          {fileFormatError && (
+            <div className="invalid-feedback" style={{ display: "block", color: "red" }}>
+              no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
+            </div>
+          )}
         </div>
 
         {submitting && (

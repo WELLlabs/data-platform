@@ -6,6 +6,7 @@ import {
   create_dataset_endpoint,
   organization_by_id_endpoint,
 } from "../api/endpoints";
+import HelpTooltip from "../components/HelpTooltip";
 
 function CreateDataset() {
   const navigate = useNavigate();
@@ -228,7 +229,13 @@ function CreateDataset() {
 
       <form onSubmit={onSubmit}>
         <div className="mb-3">
-          <label className="form-label">Dataset title</label>
+          <label className="form-label">
+            Dataset title <span style={{ color: "red" }}>(required)</span>
+            <HelpTooltip
+              text="Name of the dataset. For example: Bangalore Rainfall Data would be dataset and you can add several datasets by year under that Title"
+              id="tooltip-dataset-title"
+            />
+          </label>
           <input
             type="text"
             className="form-control"
@@ -239,7 +246,13 @@ function CreateDataset() {
         </div>
 
         <div className="mb-3">
-          <label className="form-label">Dataset description</label>
+          <label className="form-label">
+            Dataset description
+            <HelpTooltip
+              text="What does the dataset contain."
+              id="tooltip-dataset-description"
+            />
+          </label>
           <textarea
             className="form-control"
             rows={4}
@@ -249,7 +262,13 @@ function CreateDataset() {
         </div>
 
         <div className="mb-3">
-          <label className="form-label">Tags</label>
+          <label className="form-label">
+            Tags (keywords separated by comma) <span style={{ color: "red" }}>(required)</span>
+            <HelpTooltip
+              text="Think keyword. Which all search results should this dataset appear in."
+              id="tooltip-tags"
+            />
+          </label>
           <input
             type="text"
             className="form-control"
@@ -259,7 +278,13 @@ function CreateDataset() {
         </div>
 
         <div className="mb-3">
-          <label className="form-label">Provenance</label>
+          <label className="form-label">
+            Provenance
+            <HelpTooltip
+              text="Who own the dataset?"
+              id="tooltip-provenance"
+            />
+          </label>
           <input
             type="text"
             className="form-control"
@@ -269,7 +294,13 @@ function CreateDataset() {
         </div>
 
         <div className="mb-3">
-          <label className="form-label">Source</label>
+          <label className="form-label">
+            Source
+            <HelpTooltip
+              text="Who gave you the dataset?"
+              id="tooltip-source"
+            />
+          </label>
           <input
             type="text"
             className="form-control"
@@ -279,7 +310,13 @@ function CreateDataset() {
         </div>
 
         <div className="mb-3">
-          <label className="form-label">Cite as</label>
+          <label className="form-label">
+            Cite as
+            <HelpTooltip
+              text="How should someone give credit for the data?"
+              id="tooltip-cite-as"
+            />
+          </label>
           <input
             type="text"
             className="form-control"
@@ -289,7 +326,13 @@ function CreateDataset() {
         </div>
 
         <div className="mb-3">
-          <label className="form-label">Permissions</label>
+          <label className="form-label">
+            Permissions
+            <HelpTooltip
+              text="Can this data be used by anyone, by WELL Labs Only, by Specific individuals only?"
+              id="tooltip-permissions"
+            />
+          </label>
           <textarea
             className="form-control"
             rows={3}
@@ -300,7 +343,13 @@ function CreateDataset() {
         </div>
 
         <div className="mb-3">
-          <label className="form-label">Duration (years)</label>
+          <label className="form-label">
+            Duration (years)
+            <HelpTooltip
+              text="How long will this data be valuable?"
+              id="tooltip-duration"
+            />
+          </label>
           <input
             type="number"
             className="form-control"
@@ -314,7 +363,16 @@ function CreateDataset() {
         </div>
 
         <div className="mb-3">
-          <label className="form-label">Value</label>
+          <label className="form-label">
+            Value
+            <HelpTooltip
+              text={`What is the value of the data?
+High: data has high acquisition cost or sensitive information
+Medium: data is specific to a particular organisation and hard to search online
+Low: Openly downloadable in public domain`}
+              id="tooltip-value"
+            />
+          </label>
           <select
             className="form-select"
             value={value}
@@ -327,7 +385,13 @@ function CreateDataset() {
         </div>
 
         <div className="mb-3">
-          <label className="form-label me-3">Groundtruthed</label>
+          <label className="form-label me-3">
+            Groundtruthed
+            <HelpTooltip
+              text="Has this data been groundtruthed?"
+              id="tooltip-groundtruthed"
+            />
+          </label>
           <div>
             <div className="form-check form-check-inline">
               <input
@@ -360,7 +424,13 @@ function CreateDataset() {
 
         {orgPrivate && (
           <div className="mb-3">
-            <label className="form-label me-3">Private</label>
+            <label className="form-label me-3">
+              Private
+              <HelpTooltip
+                text="Is the dataset visible to only your organisation?"
+                id="tooltip-private"
+              />
+            </label>
             <div>
               <div className="form-check form-check-inline">
                 <input
@@ -395,7 +465,7 @@ function CreateDataset() {
         <h5 className="mt-4">File upload</h5>
 
         <div className="mb-3">
-          <label className="form-label">File</label>
+          <label className="form-label">File <span style={{ color: "red" }}>(required)</span></label>
           <input
             type="file"
             className="form-control"
@@ -405,7 +475,7 @@ function CreateDataset() {
         </div>
 
         <div className="mb-3">
-          <label className="form-label">File title</label>
+          <label className="form-label">File title <span style={{ color: "red" }}>(required)</span></label>
           <input
             type="text"
             className="form-control"

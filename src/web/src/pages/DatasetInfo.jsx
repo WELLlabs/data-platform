@@ -288,19 +288,7 @@ function DatasetInfo() {
             <div className="col-md-3">
               <strong>Source:</strong>
             </div>
-            <div className="col-md-9">
-              {dataset.source ? (
-                <a
-                  href={dataset.source}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  {dataset.source}
-                </a>
-              ) : (
-                "N/A"
-              )}
-            </div>
+            <div className="col-md-9">{dataset.source || "N/A"}</div>
           </div>
 
           <div className="row mb-3">

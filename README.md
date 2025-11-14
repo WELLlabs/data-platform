@@ -26,12 +26,28 @@ run the following to generate the certificates
 sudo certbot certonly --standalone --preferred-challenges http -d data.welllabs.org
 ```
 you will recieve the following message.
-```
+```bash
 Certificate is saved at: /etc/letsencrypt/live/data.welllabs.org/fullchain.pem
 Key is saved at:         /etc/letsencrypt/live/data.welllabs.org/privkey.pem
 This certificate expires on {date}.
 These files will be updated when the certificate renews.
 Certbot has set up a scheduled task to automatically renew this certificate in the background.
+```
+create a directory in home folder to hold copy of certificates for use by docker
+```bash
+mkdir -p /home/ubuntu/.ssl-certs/data.welllabs.org/
+cd /home/ubuntu/.ssl-certs/data.welllabs.org/
+sudo cp /etc/letsencrypt/live/data.welllabs.org/fullchain.pem .
+sudo cp /etc/letsencrypt/live/data.welllabs.org/privkey.pem .
+sudo chown ubuntu:ubuntu *.pem
+sudo chmod 644 fullchain.pem
+sudo chmod 600 privkey.pem
+```
+to copy the files when ssl certificates are renewed by certbot and restart nginx, 
+copy the `copy-ssl-certs.sh` script to `/etc/letsencrypt/renewal-hooks/deploy/` directory
+```bash
+sudo cp /home/ubuntu/open-data-portal/copy-ssl-certs.sh /etc/letsencrypt/renewal-hooks/deploy/
+sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/copy-ssl-certs.sh
 ```
 
 # AWS Elastic IP address
@@ -89,12 +105,17 @@ Enter policy name: DataPortal-S3-Presigned-Policy --> Create Policy
 
 # Important Points
 1. copy `.env.template` to `.env` and make necessary changes
-2. place the SSL Certificate & Key file in the `src/web/nginx` directory as 
-`ssl.crt` & `ssl.key`
 
 # Alembic
-run from the open-data-portal(root of project) directory,
-if running in local environment with docker for postgres, change db in POSTGRES_URL to localhost and revert back after using alembic
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+then inside the `/src/api/` directory run
+```bash
+uv sync
+```
+run from the open-data-portal(root of project) directory, 
+(note: if running in local environment with docker for postgres, change db in POSTGRES_URL to localhost and revert back after using alembic)
 ```bash
 uv run --directory src/api alembic init migrations
 uv run --directory src/api alembic revision --autogenerate -m "init schema"
@@ -102,14 +123,14 @@ uv run --directory src/api alembic upgrade head
 ```
 
 # Docker Compose
-Before executing the docker compose, build the s3handler image. (run in s3-handler repo directory)
+Before executing the docker compose, build the s3handler image. (note: run in s3-handler repo directory)
 ```bash
 docker build -t s3handler .
 ```
 
 then run the docker compose
 ```bash
-docker compose -f docker-compose.yml up -d --build
+docker compose -f docker-compose.prod.yml up -d --build
 ```
 for development where database is a local instance, run
 ```bash

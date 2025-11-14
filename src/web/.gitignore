@@ -11,10 +11,6 @@
 # production
 /build
 
-# SSL
-*.crt
-*.key
-
 # misc
 .DS_Store
 .env

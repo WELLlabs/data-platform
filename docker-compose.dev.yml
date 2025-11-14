@@ -35,7 +35,7 @@ services:
       context: ./src/web
       # args:
         # REACT_APP_API_HOST: ${REACT_APP_API_HOST}
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     networks:
       - appnet
     ports:

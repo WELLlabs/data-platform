@@ -103,10 +103,8 @@ class AuthService:
             full_name=user.full_name,
             student=user.student,
             designation=user.designation,
-            team=user.team,
             organization=user.organization,
             role=user.role,
-            bio=user.bio,
             phone=user.phone,
             created_at=user.created_at,
             verified=user.verified,
@@ -141,9 +139,7 @@ class AuthService:
             sanitized_data = {
                 "full_name": sanitize_input(user_data.full_name),
                 "designation": sanitize_input(user_data.designation),
-                "team": sanitize_input(user_data.team),
                 "organization": sanitize_input(user_data.organization),
-                "bio": sanitize_input(user_data.bio),
             }
 
             # Validate required fields after sanitization
@@ -179,11 +175,9 @@ class AuthService:
                 "full_name": sanitized_data["full_name"],
                 "student": user_data.student,
                 "designation": sanitized_data["designation"],
-                "team": sanitized_data["team"],
                 "organization": sanitized_data["organization"],
                 "role": user_data.role,
-                "bio": sanitized_data["bio"],
-                "phone": user_data.phone,
+                "phone": str(user_data.phone) if user_data.phone is not None else None,
                 "apikey": api_key,
                 "is_active": True,
                 "is_superuser": False,

@@ -398,7 +398,7 @@ async def create_dataset(
         organization: Organization ID
         provenance: Provenance (optional, max 125 chars)
         source: Source (optional, max 1000 chars)
-        cite_as: Citation information (optional, max 1500 chars)
+        cite_as: Citation information (optional, validated to 1500 chars)
         groundtruthed: Whether dataset is groundtruthed (optional)
         private: Whether dataset is private (default: False)
         permissions: Permissions (optional, max 1000 chars)

@@ -88,7 +88,7 @@ class Dataset(Base):
         nullable=True,
     )
     cite_as: Mapped[Optional[str]] = mapped_column(
-        String(length=1500),
+        Text,
         nullable=True,
     )
     groundtruthed: Mapped[Optional[bool]] = mapped_column(

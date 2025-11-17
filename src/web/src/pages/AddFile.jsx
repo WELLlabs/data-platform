@@ -319,28 +319,6 @@ function AddFile() {
                 )}
               </div>
 
-              <div className="mb-3">
-                <label htmlFor="fileFormat" className="form-label">
-                  Format
-                </label>
-                <input
-                  type="text"
-                  className={`form-control ${fileFormatError ? "is-invalid" : ""}`}
-                  id="fileFormat"
-                  value={fileFormat}
-                  onChange={(e) =>
-                    validateAndFilterSpecialChars(e.target.value, setFileFormat, setFileFormatError, 20)
-                  }
-                  maxLength={20}
-                  disabled={submitting}
-                />
-                {fileFormatError && (
-                  <div className="invalid-feedback" style={{ display: "block", color: "red" }}>
-                    no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
-                  </div>
-                )}
-              </div>
-
               {submitting && (
                 <div className="mb-3">
                   <div className="progress">

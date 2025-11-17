@@ -42,7 +42,7 @@ class DatasetCreate(BaseModel):
     )
     private: bool = Field(default=False, description="Whether dataset is private")
     permissions: Optional[str] = Field(
-        None, max_length=1000, description="Permissions"
+        None, description="Permissions (CC license type)"
     )
     duration: int = Field(default=0, ge=0, description="Duration in years")
     value: Optional[Literal["high", "medium", "low"]] = Field(
@@ -87,12 +87,39 @@ class DatasetCreate(BaseModel):
             return None
         return v.strip() if v else None
 
-    @validator("tags", "provenance", "source", "cite_as", "file_format", "permissions")
+    @validator("tags", "provenance", "source", "cite_as", "file_format")
     def validate_optional_strings(cls, v):
         """Validate and sanitize optional string fields."""
         if v is not None and not v.strip():
             return None
         return v.strip() if v else None
+
+    @validator("permissions")
+    def validate_permissions(cls, v):
+        """Validate permissions field - must be one of the allowed CC license values."""
+        # Allowed CC license values
+        allowed_permissions = [
+            "CC0",
+            "CC BY",
+            "CC BY-SA",
+            "CC BY-NC",
+            "CC BY-NC-SA",
+            "CC BY-ND",
+            "CC BY-NC-ND",
+        ]
+        
+        # If None or empty, default to "CC0"
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return "CC0"
+        
+        # Strip whitespace and validate
+        v_stripped = v.strip() if isinstance(v, str) else str(v).strip()
+        
+        # If not in allowed list, default to "CC0"
+        if v_stripped not in allowed_permissions:
+            return "CC0"
+        
+        return v_stripped
 
     @validator("organization")
     def validate_organization(cls, v):

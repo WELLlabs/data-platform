@@ -10,11 +10,9 @@ class UserRead(schemas.BaseUser[UUID]):
     full_name: str
     student: bool
     designation: Optional[str] = None
-    team: Optional[str] = None
     organization: str
     role: int
-    bio: Optional[str] = None
-    phone: Optional[int] = None
+    phone: Optional[str] = None
     created_at: datetime
     verified: bool
     apikey: str
@@ -29,13 +27,11 @@ class UserCreate(schemas.BaseUserCreate):
     designation: Optional[str] = Field(
         None, max_length=25, description="User's designation"
     )
-    team: Optional[str] = Field(None, max_length=25, description="User's team")
     organization: str = Field(
         ..., min_length=1, max_length=50, description="User's organization"
     )
     role: int = Field(default=0, ge=0, description="User's role level")
-    bio: Optional[str] = Field(None, max_length=1000, description="User's bio")
-    phone: Optional[int] = Field(None, description="User's phone number")
+    phone: Optional[str] = Field(None, max_length=20, description="User's phone number")
 
     @validator("full_name", "organization")
     def validate_required_strings(cls, v):
@@ -43,7 +39,7 @@ class UserCreate(schemas.BaseUserCreate):
             raise ValueError("Field cannot be empty or just whitespace")
         return v.strip()
 
-    @validator("designation", "team", "bio")
+    @validator("designation")
     def validate_optional_strings(cls, v):
         if v is not None and not v.strip():
             return None
@@ -51,9 +47,20 @@ class UserCreate(schemas.BaseUserCreate):
 
     @validator("phone")
     def validate_phone(cls, v):
-        if v is not None and v <= 0:
-            raise ValueError("Phone number must be positive")
-        return v
+        if v is not None:
+            # Convert to string if it's not already
+            v_str = str(v).strip() if not isinstance(v, str) else v.strip()
+            # If empty after stripping, return None
+            if not v_str:
+                return None
+            # Validate it contains only digits
+            if not v_str.isdigit():
+                raise ValueError("Phone number must contain only digits")
+            # Validate length (max 20 characters as per model)
+            if len(v_str) > 20:
+                raise ValueError("Phone number must be 20 characters or less")
+            return v_str
+        return None
 
 
 class UserUpdate(schemas.BaseUserUpdate):
@@ -62,11 +69,9 @@ class UserUpdate(schemas.BaseUserUpdate):
     full_name: Optional[str] = Field(None, min_length=1, max_length=50)
     student: Optional[bool] = None
     designation: Optional[str] = Field(None, max_length=25)
-    team: Optional[str] = Field(None, max_length=25)
     organization: Optional[str] = Field(None, min_length=1, max_length=50)
     role: Optional[int] = Field(None, ge=0)
-    bio: Optional[str] = Field(None, max_length=1000)
-    phone: Optional[int] = None
+    phone: Optional[str] = None
     verified: Optional[bool] = None
 
     @validator("full_name", "organization")
@@ -75,7 +80,7 @@ class UserUpdate(schemas.BaseUserUpdate):
             raise ValueError("Field cannot be empty or just whitespace")
         return v.strip() if v else v
 
-    @validator("designation", "team", "bio")
+    @validator("designation")
     def validate_optional_strings(cls, v):
         if v is not None and not v.strip():
             return None
@@ -83,6 +88,17 @@ class UserUpdate(schemas.BaseUserUpdate):
 
     @validator("phone")
     def validate_phone(cls, v):
-        if v is not None and v <= 0:
-            raise ValueError("Phone number must be positive")
-        return v
+        if v is not None:
+            # Convert to string if it's not already
+            v_str = str(v).strip() if not isinstance(v, str) else v.strip()
+            # If empty after stripping, return None
+            if not v_str:
+                return None
+            # Validate it contains only digits
+            if not v_str.isdigit():
+                raise ValueError("Phone number must contain only digits")
+            # Validate length (max 20 characters as per model)
+            if len(v_str) > 20:
+                raise ValueError("Phone number must be 20 characters or less")
+            return v_str
+        return None

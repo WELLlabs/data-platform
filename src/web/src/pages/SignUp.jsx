@@ -10,9 +10,7 @@ function SignUp() {
     const [confirmPassword, setConfirmPassword] = useState("");
     const [isStudent, setIsStudent] = useState(false);
     const [designation, setDesignation] = useState("");
-    const [team, setTeam] = useState("");
-    const [organization, setOrganization] = useState("");
-    const [bio, setBio] = useState("");
+    const [organization, setOrganization] = useState("well-labs");
     const [phone, setPhone] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState("");
@@ -81,11 +79,9 @@ function SignUp() {
                 designation: isStudent
                     ? "student"
                     : designation?.trim() || null,
-                team: team?.trim() || null,
                 organization: organization.trim(), // backend expects string
                 role: 0,
-                bio: bio?.trim() || null,
-                phone: phone ? Number(phone) : null,
+                phone: phone ? phone.trim() : null,
             };
 
             const resp = await axios.post(signup_endpoint, payload, {
@@ -362,31 +358,6 @@ function SignUp() {
                                     {/* {!isStudent && <small className="text-muted">Max 25 characters</small>} */}
                                 </div>
 
-                                <div className="mb-3">
-                                    <label
-                                        htmlFor="team"
-                                        className="form-label"
-                                    >
-                                        {isStudent ? "Department" : "Team"}
-                                    </label>
-                                    <input
-                                        id="team"
-                                        type="text"
-                                        className="form-control"
-                                        placeholder={
-                                            isStudent
-                                                ? "Enter your department"
-                                                : "Enter your team"
-                                        }
-                                        value={team}
-                                        onChange={(e) =>
-                                            setTeam(e.target.value.slice(0, 25))
-                                        }
-                                        maxLength={25}
-                                    />
-                                    {/* <small className="text-muted">Max 25 characters</small> */}
-                                </div>
-
                                 <div className="mb-1">
                                     <label
                                         htmlFor="organization"
@@ -433,24 +404,6 @@ function SignUp() {
                                         </small>
                                     </div>
                                 )}
-
-                                <div className="mb-3">
-                                    <label htmlFor="bio" className="form-label">
-                                        Area of Work and Interest
-                                    </label>
-                                    <input
-                                        id="bio"
-                                        type="text"
-                                        className="form-control"
-                                        placeholder="Describe your area of work and interest (max 250 chars)"
-                                        value={bio}
-                                        onChange={(e) =>
-                                            setBio(e.target.value.slice(0, 250))
-                                        }
-                                        maxLength={250}
-                                    />
-                                    {/* <small className="text-muted">Max 250 characters</small> */}
-                                </div>
 
                                 <div className="mb-4">
                                     <label

@@ -119,7 +119,7 @@ function Dashboard() {
             style={{ backgroundColor: '#0d983b', color: '#fff' }}
             onClick={() => navigate('/create-dataset')}
           >
-            upload
+            Upload
           </button>
         </div>
       </div>

@@ -99,25 +99,25 @@ class DatasetCreate(BaseModel):
         """Validate permissions field - must be one of the allowed CC license values."""
         # Allowed CC license values
         allowed_permissions = [
-            "CC0",
-            "CC BY",
-            "CC BY-SA",
-            "CC BY-NC",
-            "CC BY-NC-SA",
-            "CC BY-ND",
-            "CC BY-NC-ND",
+            "CC0: Public Domain",
+            "CC BY: Attribution",
+            "CC BY-SA: Attribution-ShareAlike",
+            "CC BY-NC: Attribution-NonCommercial",
+            "CC BY-NC-SA: Attribution-NonCommercial-ShareAlike",
+            "CC BY-ND: Attribution-NoDerivatives",
+            "CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives",
         ]
         
-        # If None or empty, default to "CC0"
+        # If None or empty, default to "CC0: Public Domain"
         if v is None or (isinstance(v, str) and not v.strip()):
-            return "CC0"
+            return "CC0: Public Domain"
         
         # Strip whitespace and validate
         v_stripped = v.strip() if isinstance(v, str) else str(v).strip()
         
-        # If not in allowed list, default to "CC0"
+        # If not in allowed list, default to "CC0: Public Domain"
         if v_stripped not in allowed_permissions:
-            return "CC0"
+            return "CC0: Public Domain"
         
         return v_stripped
 

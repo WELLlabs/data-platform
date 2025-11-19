@@ -217,25 +217,25 @@ class DatasetService:
             
             # Validate and sanitize permissions - must be one of the allowed CC license values
             allowed_permissions = [
-                "CC0",
-                "CC BY",
-                "CC BY-SA",
-                "CC BY-NC",
-                "CC BY-NC-SA",
-                "CC BY-ND",
-                "CC BY-NC-ND",
+                "CC0: Public Domain",
+                "CC BY: Attribution",
+                "CC BY-SA: Attribution-ShareAlike",
+                "CC BY-NC: Attribution-NonCommercial",
+                "CC BY-NC-SA: Attribution-NonCommercial-ShareAlike",
+                "CC BY-ND: Attribution-NoDerivatives",
+                "CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives",
             ]
             permissions_value = dataset_data.permissions
             if permissions_value is None or (isinstance(permissions_value, str) and not permissions_value.strip()):
-                sanitized_permissions = "CC0"
+                sanitized_permissions = "CC0: Public Domain"
             else:
                 permissions_stripped = permissions_value.strip() if isinstance(permissions_value, str) else str(permissions_value).strip()
                 if permissions_stripped not in allowed_permissions:
                     self.logger.warning(
-                        "Invalid permissions value '%s', defaulting to 'CC0'",
+                        "Invalid permissions value '%s', defaulting to 'CC0: Public Domain'",
                         permissions_stripped
                     )
-                    sanitized_permissions = "CC0"
+                    sanitized_permissions = "CC0: Public Domain"
                 else:
                     sanitized_permissions = permissions_stripped
             

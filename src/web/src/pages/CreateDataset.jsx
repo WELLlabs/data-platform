@@ -28,7 +28,7 @@ function CreateDataset() {
     const [citeAs, setCiteAs] = useState("");
     const [groundtruthed, setGroundtruthed] = useState(false);
     const [isPrivate, setIsPrivate] = useState(false);
-    const [permissions, setPermissions] = useState("CC0");
+    const [permissions, setPermissions] = useState("CC0: Public Domain");
     const [duration, setDuration] = useState(0);
     const [value, setValue] = useState("low");
 
@@ -285,7 +285,7 @@ function CreateDataset() {
 
     return (
         <div className="container py-4">
-            <h2 className="mb-4">create a dataset</h2>
+            <h2 className="mb-4">Create a Dataset</h2>
 
             {error && (
                 <div className="alert alert-danger" role="alert">
@@ -296,7 +296,7 @@ function CreateDataset() {
             <form onSubmit={onSubmit}>
                 <div className="mb-3">
                     <label className="form-label">
-                        Dataset title{" "}
+                        Dataset Title{" "}
                         <span style={{ color: "red" }}>(required)</span>
                         <HelpTooltip
                             text="Name of the dataset. For example: Bangalore Rainfall Data would be dataset and you can add several datasets by year under that Title"
@@ -332,7 +332,7 @@ function CreateDataset() {
 
                 <div className="mb-3">
                     <label className="form-label">
-                        Dataset description
+                        Dataset Description
                         <HelpTooltip
                             text="What does the dataset contain."
                             id="tooltip-dataset-description"
@@ -493,14 +493,20 @@ function CreateDataset() {
                     <label className="form-label">
                         Permission
                         <HelpTooltip
-                            text="What type of Creative Commons license is this data under?
-CC0: Public Domain
-CC BY: Attribution
-CC BY-SA: Attribution-ShareAlike
-CC BY-NC: Attribution-NonCommercial
-CC BY-NC-SA: Attribution-NonCommercial-ShareAlike
-CC BY-ND: Attribution-NoDerivatives
-CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives"
+                            text={
+                                <>
+                                    To know more about the Creative Commons Licenses please visit{" "}
+                                    <a
+                                        href="https://creativecommons.org/share-your-work/cclicenses/"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={(e) => e.stopPropagation()}
+                                    >
+                                        here
+                                    </a>
+                                    .
+                                </>
+                            }
                             id="tooltip-permissions"
                         />
                     </label>
@@ -509,19 +515,19 @@ CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives"
                         value={permissions}
                         onChange={(e) => setPermissions(e.target.value)}
                     >
-                        <option value="CC0">CC0</option>
-                        <option value="CC BY">CC BY</option>
-                        <option value="CC BY-SA">CC BY-SA</option>
-                        <option value="CC BY-NC">CC BY-NC</option>
-                        <option value="CC BY-NC-SA">CC BY-NC-SA</option>
-                        <option value="CC BY-ND">CC BY-ND</option>
-                        <option value="CC BY-NC-ND">CC BY-NC-ND</option>
+                        <option value="CC0: Public Domain">CC0: Public Domain</option>
+                        <option value="CC BY: Attribution">CC BY: Attribution</option>
+                        <option value="CC BY-SA: Attribution-ShareAlike">CC BY-SA: Attribution-ShareAlike</option>
+                        <option value="CC BY-NC: Attribution-NonCommercial">CC BY-NC: Attribution-NonCommercial</option>
+                        <option value="CC BY-NC-SA: Attribution-NonCommercial-ShareAlike">CC BY-NC-SA: Attribution-NonCommercial-ShareAlike</option>
+                        <option value="CC BY-ND: Attribution-NoDerivatives">CC BY-ND: Attribution-NoDerivatives</option>
+                        <option value="CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives">CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives</option>
                     </select>
                 </div>
 
                 <div className="mb-3">
                     <label className="form-label">
-                        Cite as
+                        Cite As
                         <HelpTooltip
                             text="How should someone give credit for the data?"
                             id="tooltip-cite-as"
@@ -636,7 +642,7 @@ Low: Openly downloadable in public domain`}
                     </div>
                 </div>
 
-                <h5 className="mt-4">File upload</h5>
+                <h5 className="mt-4">File Upload</h5>
 
                 <div className="mb-3">
                     <label className="form-label">
@@ -652,7 +658,7 @@ Low: Openly downloadable in public domain`}
 
                 <div className="mb-3">
                     <label className="form-label">
-                        File title{" "}
+                        File Title{" "}
                         <span style={{ color: "red" }}>(required)</span>
                     </label>
                     <input
@@ -683,7 +689,7 @@ Low: Openly downloadable in public domain`}
                 </div>
 
                 <div className="mb-3">
-                    <label className="form-label">File description</label>
+                    <label className="form-label">File Description</label>
                     <textarea
                         className={`form-control ${
                             fileDescriptionError ? "is-invalid" : ""

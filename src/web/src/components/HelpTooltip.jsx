@@ -27,7 +27,7 @@ function HelpTooltip({ text, id }) {
   }, [isOpen]);
 
   // Don't render if text is empty
-  if (!text || text.trim() === "") {
+  if (!text || (typeof text === 'string' && text.trim() === "")) {
     return null;
   }
 
@@ -67,7 +67,7 @@ function HelpTooltip({ text, id }) {
             zIndex: 1050,
             fontSize: "0.875rem",
             color: "#333",
-            whiteSpace: "pre-line",
+            whiteSpace: typeof text === 'string' ? "pre-line" : "normal",
           }}
           role="tooltip"
         >

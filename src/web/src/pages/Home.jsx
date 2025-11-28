@@ -47,16 +47,8 @@ function Home() {
             <div className="col-lg-9">
               <h1 className="display-4 hero-title mb-3">WELL Labs Open Data Portal</h1>
               <p className="lead mb-0">
-                Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer
-                nec odio. Praesent libero.
-              </p>
-              <p className="lead mb-0">
-                Sed cursus ante dapibus diam. Sed nisi. Nulla quis sem at nibh
-                elementum imperdiet.
-              </p>
-              <p className="lead">
-                Duis sagittis ipsum. Praesent mauris. Fusce nec tellus sed augue
-                semper porta.
+                Welcome to the Open Data Portal by WELL Labs. The portal acts as a source of truth for all of the datasets within the organisation, providing easy access to all of them.
+                This helps team members discover datasets that can be useful for their work.
               </p>
             </div>
           </div>
@@ -140,5 +132,6 @@ function Home() {
 }
 
 export default Home;
+
 
 

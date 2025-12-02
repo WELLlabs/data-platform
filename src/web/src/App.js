@@ -20,26 +20,14 @@ import CreateDataset from "./pages/CreateDataset";
 import DatasetSuccess from "./pages/DatasetSuccess";
 import DatasetInfo from "./pages/DatasetInfo";
 import AddFile from "./pages/AddFile";
+import FAQ from "./pages/FAQ";
+import Terms from "./pages/Terms";
 
 // Simple placeholders for routes that will be implemented later
 const Datasets = () => (
   <div className="container py-5">
     <h2>Datasets</h2>
     <p>Coming soon...</p>
-  </div>
-);
-
-const FAQ = () => (
-  <div className="container py-5">
-    <h2>FAQ</h2>
-    <p>Content coming soon...</p>
-  </div>
-);
-
-const Terms = () => (
-  <div className="container py-5">
-    <h2>Terms of Usage</h2>
-    <p>Content coming soon...</p>
   </div>
 );
 

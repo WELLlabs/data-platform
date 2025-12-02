@@ -16,7 +16,7 @@ from models.user import User
 from schemas.dataset import DatasetCreate
 from services.organization import OrganizationService, get_organization_service
 from services.upload import UploadService, get_upload_service
-from sqlalchemy import desc, select, update
+from sqlalchemy import desc, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from utils.security import sanitize_input
@@ -474,6 +474,111 @@ class DatasetService:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Error fetching user datasets",
+            )
+
+    async def get_datasets(
+        self,
+        apikey: Optional[str] = None,
+        limit: int = 10,
+        offset: int = 0,
+    ) -> List[Dataset]:
+        """
+        Get datasets with optional API key filtering and pagination.
+
+        If apikey is not provided:
+            - Returns all datasets where private=False
+            - Sorted by created_at (latest first)
+
+        If apikey is provided:
+            - Finds user by apikey
+            - Gets user's organization UUID
+            - Returns datasets where (private=False OR organization=user's organization)
+            - Sorted by created_at (latest first)
+
+        Args:
+            apikey: Optional API key to filter by user's organization
+            limit: Maximum number of results (default: 10)
+            offset: Number of results to skip (default: 0)
+
+        Returns:
+            List of Dataset objects ordered by created_at (latest first)
+
+        Raises:
+            HTTPException: If there's an error fetching datasets or invalid apikey
+        """
+        try:
+            self.logger.info(
+                "Fetching datasets: apikey=%s, limit=%d, offset=%d",
+                "provided" if apikey else "not provided",
+                limit,
+                offset,
+            )
+
+            # Build base query
+            query = select(Dataset).order_by(desc(Dataset.created_at))
+
+            # Apply filtering based on apikey
+            if apikey is None:
+                # No apikey: only public datasets
+                self.logger.debug("No apikey provided, filtering private=False")
+                query = query.where(Dataset.private.is_(False))
+            else:
+                # Apikey provided: find user and get organization
+                user_result = await self.session.execute(
+                    select(User).where(User.apikey == apikey)
+                )
+                user: Optional[User] = user_result.scalar_one_or_none()
+
+                if user is None:
+                    self.logger.warning("User not found for provided apikey")
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Invalid API key",
+                    )
+
+                # Get user's organization UUID
+                user_organization = user.organization
+                self.logger.debug(
+                    "User found for apikey: user_id=%s, organization=%s",
+                    user.id,
+                    user_organization,
+                )
+
+                # Filter: private=False OR organization=user's organization
+                query = query.where(
+                    or_(
+                        Dataset.private.is_(False),
+                        Dataset.organization == user_organization,
+                    )
+                )
+
+            # Apply pagination
+            query = query.limit(limit).offset(offset)
+
+            result = await self.session.execute(query)
+            datasets: List[Dataset] = list(result.scalars().all())
+
+            self.logger.info(
+                "Found %d datasets (apikey=%s, limit=%d, offset=%d)",
+                len(datasets),
+                "provided" if apikey else "not provided",
+                limit,
+                offset,
+            )
+
+            return datasets
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.exception(
+                "Unexpected error fetching datasets: apikey=%s, error=%s",
+                "provided" if apikey else "not provided",
+                e,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error fetching datasets",
             )
 
 

@@ -118,7 +118,9 @@ class DatasetController:
                     "private": dataset.private,
                     "downloads": dataset.downloads,
                     "approved": dataset.approved,
-                    "approved_by": str(dataset.approved_by) if dataset.approved_by else None,
+                    "approved_by": str(dataset.approved_by)
+                    if dataset.approved_by
+                    else None,
                     "permissions": dataset.permissions,
                     "duration": dataset.duration,
                     "value": dataset.value,
@@ -194,7 +196,9 @@ class DatasetController:
                 "cite_as": dataset.cite_as,
                 "groundtruthed": dataset.groundtruthed,
                 "approved": dataset.approved,
-                "approved_by": str(dataset.approved_by) if dataset.approved_by else None,
+                "approved_by": str(dataset.approved_by)
+                if dataset.approved_by
+                else None,
                 "permissions": dataset.permissions,
                 "duration": dataset.duration,
                 "value": dataset.value,
@@ -300,6 +304,85 @@ class DatasetController:
                 detail="Error fetching user datasets",
             )
 
+    async def get_datasets(
+        self,
+        apikey: Optional[str] = None,
+        limit: int = 10,
+        offset: int = 0,
+    ) -> JSONResponse:
+        """
+        Get datasets with optional API key filtering and pagination.
+
+        Args:
+            apikey: Optional API key to filter by user's organization
+            limit: Maximum number of results (default: 10)
+            offset: Number of results to skip (default: 0)
+
+        Returns:
+            JSONResponse containing list of datasets
+        """
+        try:
+            self.logger.info(
+                "Fetching datasets: apikey=%s, limit=%d, offset=%d",
+                "provided" if apikey else "not provided",
+                limit,
+                offset,
+            )
+
+            datasets = await self.dataset_service.get_datasets(
+                apikey=apikey, limit=limit, offset=offset
+            )
+
+            datasets_arr = [
+                {
+                    "dataset_id": str(ds.dataset_id),
+                    "dataset_title": ds.dataset_title,
+                    "creator": str(ds.creator),
+                    "created_at": ds.created_at.isoformat() if ds.created_at else None,
+                    "organization": ds.organization,
+                    "private": ds.private,
+                    "downloads": ds.downloads,
+                    "dataset_description": ds.dataset_description,
+                    "tags": ds.tags,
+                    "provenance": ds.provenance,
+                    "source": ds.source,
+                    "cite_as": ds.cite_as,
+                    "groundtruthed": ds.groundtruthed,
+                    "approved": ds.approved,
+                    "approved_by": str(ds.approved_by) if ds.approved_by else None,
+                    "permissions": ds.permissions,
+                    "duration": ds.duration,
+                    "value": ds.value,
+                }
+                for ds in datasets
+            ]
+
+            self.logger.info(
+                "Successfully fetched %d datasets (apikey=%s, limit=%d, offset=%d)",
+                len(datasets_arr),
+                "provided" if apikey else "not provided",
+                limit,
+                offset,
+            )
+
+            return JSONResponse(
+                content=jsonable_encoder(datasets_arr),
+                status_code=status.HTTP_200_OK,
+            )
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.exception(
+                "Unexpected error in get_datasets: apikey=%s, error=%s",
+                "provided" if apikey else "not provided",
+                e,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error fetching datasets",
+            )
+
 
 # Dependency to get dataset controller
 async def get_dataset_controller(
@@ -325,31 +408,29 @@ def process_tags(tags: str | None) -> str | None:
     3. Replacing spaces within tags with hyphens
     4. Converting to lowercase
     5. Joining back with commas
-    
+
     Example:
         "Open, Cold blooded, data , store, Cloud Model, test "
         -> "open,cold-blooded,data,store,cloud-model,test"
-    
+
     Args:
         tags: Tags string (comma-separated) or None
-        
+
     Returns:
         Processed tags string or None if input is None/empty
     """
     if not tags or not tags.strip():
         return None
-    
+
     # Split by comma, strip whitespace, filter out empty strings
     tag_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
-    
+
     if not tag_list:
         return None
-    
+
     # Process each tag: replace one or more spaces with a single hyphen and convert to lowercase
-    processed_tags = [
-        re.sub(r'\s+', '-', tag).lower() for tag in tag_list
-    ]
-    
+    processed_tags = [re.sub(r"\s+", "-", tag).lower() for tag in tag_list]
+
     # Join back with commas
     return ",".join(processed_tags)
 
@@ -570,4 +651,53 @@ async def user_datasets(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error processing user datasets request",
+        )
+
+
+@router.get("/datasets")
+async def datasets(
+    apikey: Optional[str] = Query(
+        None, description="Optional API key for organization filtering"
+    ),
+    limit: int = Query(10, ge=1, le=50, description="Maximum number of results"),
+    offset: int = Query(0, ge=0, description="Number of results to skip"),
+    controller: DatasetController = Depends(get_dataset_controller),
+):
+    """
+    Get datasets with optional API key filtering and pagination.
+
+    If apikey is not provided:
+        - Returns all datasets where private=False
+        - Sorted by created_at (latest first)
+
+    If apikey is provided:
+        - Finds user by apikey
+        - Gets user's organization UUID
+        - Returns datasets where (private=False OR organization=user's organization)
+        - Sorted by created_at (latest first)
+
+    Args:
+        apikey: Optional API key to filter by user's organization
+        limit: Maximum number of results (default: 10, min: 1, max: 50)
+        offset: Number of results to skip for pagination (default: 0, min: 0)
+        controller: Dataset controller (from dependency)
+
+    Returns:
+        JSON response containing list of datasets ordered by created_at (latest first)
+
+    Raises:
+        HTTPException:
+            - 404: Invalid API key (when apikey is provided but not found)
+            - 500: Internal server error
+    """
+    try:
+        return await controller.get_datasets(apikey=apikey, limit=limit, offset=offset)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unexpected error in /datasets: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error processing datasets request",
         )

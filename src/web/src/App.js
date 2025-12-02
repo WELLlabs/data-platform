@@ -22,14 +22,7 @@ import DatasetInfo from "./pages/DatasetInfo";
 import AddFile from "./pages/AddFile";
 import FAQ from "./pages/FAQ";
 import Terms from "./pages/Terms";
-
-// Simple placeholders for routes that will be implemented later
-const Datasets = () => (
-  <div className="container py-5">
-    <h2>Datasets</h2>
-    <p>Coming soon...</p>
-  </div>
-);
+import Datasets from "./pages/Datasets";
 
 const ApiDocs = () => (
   <div className="container py-5">

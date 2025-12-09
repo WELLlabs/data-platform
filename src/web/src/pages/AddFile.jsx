@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { upload_url_endpoint, add_files_url_endpoint } from "../api/endpoints";
+import HelpTooltip from "../components/HelpTooltip";
 
 function AddFile() {
   const navigate = useNavigate();
@@ -19,11 +20,24 @@ function AddFile() {
   const [fileTitle, setFileTitle] = useState("");
   const [fileDescription, setFileDescription] = useState("");
   const [fileFormat, setFileFormat] = useState("");
+  const [provenance, setProvenance] = useState("");
+  const [source, setSource] = useState("");
+  const [citeAs, setCiteAs] = useState("");
+  const [groundtruthed, setGroundtruthed] = useState(false);
+  const [permissions, setPermissions] = useState("CC0: Public Domain");
+  const [duration, setDuration] = useState(0);
+  const [value, setValue] = useState("low");
+  const [temporalFrom, setTemporalFrom] = useState("");
+  const [temporalTo, setTemporalTo] = useState("");
+  const [geography, setGeography] = useState("");
 
   // Validation error states
   const [fileTitleError, setFileTitleError] = useState(false);
   const [fileDescriptionError, setFileDescriptionError] = useState(false);
   const [fileFormatError, setFileFormatError] = useState(false);
+  const [provenanceError, setProvenanceError] = useState(false);
+  const [sourceError, setSourceError] = useState(false);
+  const [citeAsError, setCiteAsError] = useState(false);
 
   const datasetId = searchParams.get("dataset_id");
 
@@ -181,6 +195,16 @@ function AddFile() {
       form.append("file_description", constrained(fileDescription, 1000));
       form.append("file_format", constrained(fileFormat, 20));
       form.append("dataset_id", datasetId);
+      form.append("provenance", constrained(provenance, 125));
+      form.append("source", constrained(source, 1000));
+      form.append("cite_as", constrained(citeAs, 1500));
+      if (groundtruthed) form.append("groundtruthed", "true");
+      form.append("permissions", constrained(permissions, 1000));
+      form.append("duration", duration.toString());
+      if (value) form.append("value", value);
+      if (temporalFrom) form.append("temporal_from", temporalFrom);
+      if (temporalTo) form.append("temporal_to", temporalTo);
+      if (geography) form.append("geography", constrained(geography, 2000));
 
       const addFileResp = await fetch(add_files_url_endpoint, {
         method: "POST",
@@ -317,6 +341,310 @@ function AddFile() {
                     no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
                   </div>
                 )}
+              </div>
+
+              <div className="mb-3">
+                <label className="form-label">
+                  Provenance
+                  <HelpTooltip
+                    text="Who own the dataset?"
+                    id="tooltip-provenance-addfile"
+                  />
+                </label>
+                <input
+                  type="text"
+                  className={`form-control ${provenanceError ? "is-invalid" : ""}`}
+                  value={provenance}
+                  onChange={(e) =>
+                    validateAndFilterSpecialChars(e.target.value, setProvenance, setProvenanceError, 125)
+                  }
+                  disabled={submitting}
+                />
+                {provenanceError && (
+                  <div className="invalid-feedback" style={{ display: "block", color: "red" }}>
+                    no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
+                  </div>
+                )}
+              </div>
+
+              <div className="mb-3">
+                <label className="form-label">
+                  Source
+                  <HelpTooltip
+                    text="Who gave you the dataset?"
+                    id="tooltip-source-addfile"
+                  />
+                </label>
+                <input
+                  type="text"
+                  className={`form-control ${sourceError ? "is-invalid" : ""}`}
+                  value={source}
+                  onChange={(e) =>
+                    validateAndFilterSpecialChars(e.target.value, setSource, setSourceError, 1000)
+                  }
+                  disabled={submitting}
+                />
+                {sourceError && (
+                  <div className="invalid-feedback" style={{ display: "block", color: "red" }}>
+                    no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
+                  </div>
+                )}
+              </div>
+
+              <div className="mb-3">
+                <label className="form-label">
+                  Permissions
+                  <HelpTooltip
+                    text={
+                      <>
+                        To know more about the Creative Commons Licenses please visit{" "}
+                        <a
+                          href="https://creativecommons.org/share-your-work/cclicenses/"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          here
+                        </a>
+                        .
+                      </>
+                    }
+                    id="tooltip-permissions-addfile"
+                  />
+                </label>
+                <select
+                  className="form-select"
+                  value={permissions}
+                  onChange={(e) => setPermissions(e.target.value)}
+                  disabled={submitting}
+                >
+                  <option value="CC0: Public Domain">CC0: Public Domain</option>
+                  <option value="CC BY: Attribution">CC BY: Attribution</option>
+                  <option value="CC BY-SA: Attribution-ShareAlike">CC BY-SA: Attribution-ShareAlike</option>
+                  <option value="CC BY-NC: Attribution-NonCommercial">CC BY-NC: Attribution-NonCommercial</option>
+                  <option value="CC BY-NC-SA: Attribution-NonCommercial-ShareAlike">CC BY-NC-SA: Attribution-NonCommercial-ShareAlike</option>
+                  <option value="CC BY-ND: Attribution-NoDerivatives">CC BY-ND: Attribution-NoDerivatives</option>
+                  <option value="CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives">CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives</option>
+                </select>
+              </div>
+
+              <div className="mb-3">
+                <label className="form-label">
+                  Cite As
+                  <HelpTooltip
+                    text="How should someone give credit for the data?"
+                    id="tooltip-cite-as-addfile"
+                  />
+                </label>
+                <textarea
+                  className={`form-control ${citeAsError ? "is-invalid" : ""}`}
+                  rows={4}
+                  value={citeAs}
+                  onChange={(e) =>
+                    validateAndFilterSpecialChars(e.target.value, setCiteAs, setCiteAsError, 1500)
+                  }
+                  disabled={submitting}
+                />
+                {citeAsError && (
+                  <div className="invalid-feedback" style={{ display: "block", color: "red" }}>
+                    no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
+                  </div>
+                )}
+              </div>
+
+              <div className="mb-3">
+                <label className="form-label me-3">
+                  Groundtruthed
+                  <HelpTooltip
+                    text="Has this data been validated in the field?"
+                    id="tooltip-groundtruthed-addfile"
+                  />
+                </label>
+                <div>
+                  <div className="form-check form-check-inline">
+                    <input
+                      className="form-check-input"
+                      type="radio"
+                      name="groundtruthed-addfile"
+                      id="gt_no_addfile"
+                      checked={!groundtruthed}
+                      onChange={() => setGroundtruthed(false)}
+                      disabled={submitting}
+                    />
+                    <label className="form-check-label" htmlFor="gt_no_addfile">
+                      No
+                    </label>
+                  </div>
+                  <div className="form-check form-check-inline">
+                    <input
+                      className="form-check-input"
+                      type="radio"
+                      name="groundtruthed-addfile"
+                      id="gt_yes_addfile"
+                      checked={groundtruthed}
+                      onChange={() => setGroundtruthed(true)}
+                      disabled={submitting}
+                    />
+                    <label className="form-check-label" htmlFor="gt_yes_addfile">
+                      Yes
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mb-3">
+                <label className="form-label">
+                  Duration
+                  <HelpTooltip
+                    text="How many years can this data be used for from the date of creation? 0 if not applicable"
+                    id="tooltip-duration-addfile"
+                  />
+                </label>
+                <input
+                  type="number"
+                  className="form-control"
+                  value={duration}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value) || 0;
+                    setDuration(Math.max(0, val));
+                  }}
+                  min="0"
+                  disabled={submitting}
+                />
+              </div>
+
+              <div className="mb-3">
+                <label className="form-label">
+                  Value
+                  <HelpTooltip
+                    text={`What is the value of the data?
+High: data has high acquisition cost or sensitive information
+Medium: data is specific to a particular organisation and hard to search online
+Low: Openly downloadable in public domain`}
+                    id="tooltip-value-addfile"
+                  />
+                </label>
+                <select
+                  className="form-select"
+                  value={value}
+                  onChange={(e) => setValue(e.target.value)}
+                  disabled={submitting}
+                >
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                </select>
+              </div>
+
+              <div className="mb-3">
+                <label className="form-label">
+                  Temporal Coverage From
+                  <HelpTooltip
+                    text="Start date of temporal coverage (ISO format: YYYY-MM-DDTHH:mm:ssZ)"
+                    id="tooltip-temporal-from-addfile"
+                  />
+                </label>
+                <input
+                  type="datetime-local"
+                  className="form-control"
+                  value={temporalFrom ? (() => {
+                    // Convert ISO string to datetime-local format (YYYY-MM-DDTHH:mm)
+                    try {
+                      const date = new Date(temporalFrom);
+                      if (isNaN(date.getTime())) return "";
+                      // Get local datetime string in format YYYY-MM-DDTHH:mm
+                      const year = date.getFullYear();
+                      const month = String(date.getMonth() + 1).padStart(2, '0');
+                      const day = String(date.getDate()).padStart(2, '0');
+                      const hours = String(date.getHours()).padStart(2, '0');
+                      const minutes = String(date.getMinutes()).padStart(2, '0');
+                      return `${year}-${month}-${day}T${hours}:${minutes}`;
+                    } catch {
+                      return "";
+                    }
+                  })() : ""}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    // Convert to ISO format with timezone
+                    if (val) {
+                      // datetime-local gives us YYYY-MM-DDTHH:mm in local time
+                      // We need to convert it to ISO format
+                      const date = new Date(val);
+                      if (!isNaN(date.getTime())) {
+                        setTemporalFrom(date.toISOString());
+                      } else {
+                        setTemporalFrom("");
+                      }
+                    } else {
+                      setTemporalFrom("");
+                    }
+                  }}
+                  disabled={submitting}
+                />
+              </div>
+
+              <div className="mb-3">
+                <label className="form-label">
+                  Temporal Coverage To
+                  <HelpTooltip
+                    text="End date of temporal coverage (ISO format: YYYY-MM-DDTHH:mm:ssZ)"
+                    id="tooltip-temporal-to-addfile"
+                  />
+                </label>
+                <input
+                  type="datetime-local"
+                  className="form-control"
+                  value={temporalTo ? (() => {
+                    // Convert ISO string to datetime-local format (YYYY-MM-DDTHH:mm)
+                    try {
+                      const date = new Date(temporalTo);
+                      if (isNaN(date.getTime())) return "";
+                      // Get local datetime string in format YYYY-MM-DDTHH:mm
+                      const year = date.getFullYear();
+                      const month = String(date.getMonth() + 1).padStart(2, '0');
+                      const day = String(date.getDate()).padStart(2, '0');
+                      const hours = String(date.getHours()).padStart(2, '0');
+                      const minutes = String(date.getMinutes()).padStart(2, '0');
+                      return `${year}-${month}-${day}T${hours}:${minutes}`;
+                    } catch {
+                      return "";
+                    }
+                  })() : ""}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    // Convert to ISO format with timezone
+                    if (val) {
+                      // datetime-local gives us YYYY-MM-DDTHH:mm in local time
+                      // We need to convert it to ISO format
+                      const date = new Date(val);
+                      if (!isNaN(date.getTime())) {
+                        setTemporalTo(date.toISOString());
+                      } else {
+                        setTemporalTo("");
+                      }
+                    } else {
+                      setTemporalTo("");
+                    }
+                  }}
+                  disabled={submitting}
+                />
+              </div>
+
+              <div className="mb-3">
+                <label className="form-label">
+                  Geographical Extent
+                  <HelpTooltip
+                    text="Geographic coverage or location information"
+                    id="tooltip-geography-addfile"
+                  />
+                </label>
+                <textarea
+                  className="form-control"
+                  rows={3}
+                  value={geography}
+                  onChange={(e) => setGeography(e.target.value)}
+                  disabled={submitting}
+                />
               </div>
 
               {submitting && (

@@ -17,7 +17,6 @@ import CreateOrg from "./pages/CreateOrg";
 import CreateOrgSuccess from "./pages/CreateOrgSuccess";
 import Organization from "./pages/Organization";
 import CreateDataset from "./pages/CreateDataset";
-import DatasetSuccess from "./pages/DatasetSuccess";
 import DatasetInfo from "./pages/DatasetInfo";
 import AddFile from "./pages/AddFile";
 import FAQ from "./pages/FAQ";
@@ -50,7 +49,6 @@ function App() {
             <Route path="/createorgsuccess" element={<CreateOrgSuccess />} />
             <Route path="/organisation" element={<Organization />} />
             <Route path="/create-dataset" element={<CreateDataset />} />
-            <Route path="/dataset-success" element={<DatasetSuccess />} />
             <Route path="/dataset-info" element={<DatasetInfo />} />
             <Route path="/add-file" element={<AddFile />} />
             <Route path="/faq" element={<FAQ />} />

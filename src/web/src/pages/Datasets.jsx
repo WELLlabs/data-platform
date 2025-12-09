@@ -185,10 +185,10 @@ function Datasets() {
                         <strong>Downloads:</strong> {dataset.downloads ?? 0}
                       </small>
                     </div>
-                    {dataset.tags && (
+                    {dataset.tags && Array.isArray(dataset.tags) && dataset.tags.length > 0 && (
                       <div className="mb-2">
                         <small className="text-muted">
-                          <strong>Tags:</strong> {dataset.tags}
+                          <strong>Tags:</strong> {dataset.tags.join(", ")}
                         </small>
                       </div>
                     )}

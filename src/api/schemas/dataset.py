@@ -2,7 +2,8 @@
 Dataset schemas for validation and serialization.
 """
 
-from typing import Optional, Literal
+from datetime import datetime
+from typing import List, Optional, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, validator
@@ -22,12 +23,24 @@ class DatasetCreate(BaseModel):
     dataset_description: Optional[str] = Field(
         None, description="Dataset description"
     )
-    tags: Optional[str] = Field(
-        None, max_length=500, description="Tags for the dataset"
+    tags: Optional[List[str]] = Field(
+        None, description="Tags for the dataset (list of strings)"
     )
     organization: str = Field(
         ..., min_length=1, max_length=100, description="Organization ID"
     )
+    private: bool = Field(default=False, description="Whether dataset is private")
+
+    # File fields
+    filename: str = Field(..., min_length=1, description="File name")
+    file_key: str = Field(..., min_length=1, description="S3 file key")
+    file_description: Optional[str] = Field(
+        None, description="File description"
+    )
+    file_format: Optional[str] = Field(
+        None, max_length=20, description="File format/extension"
+    )
+    # Moved fields from dataset to file
     provenance: Optional[str] = Field(
         None, max_length=125, description="Provenance"
     )
@@ -40,7 +53,6 @@ class DatasetCreate(BaseModel):
     groundtruthed: Optional[bool] = Field(
         None, description="Whether dataset is groundtruthed"
     )
-    private: bool = Field(default=False, description="Whether dataset is private")
     permissions: Optional[str] = Field(
         None, description="Permissions (CC license type)"
     )
@@ -48,15 +60,15 @@ class DatasetCreate(BaseModel):
     value: Optional[Literal["high", "medium", "low"]] = Field(
         None, description="Value level"
     )
-
-    # File fields
-    filename: str = Field(..., min_length=1, description="File name")
-    file_key: str = Field(..., min_length=1, description="S3 file key")
-    file_description: Optional[str] = Field(
-        None, description="File description"
+    # New file fields
+    temporal_from: Optional[datetime] = Field(
+        None, description="Temporal coverage start date"
     )
-    file_format: Optional[str] = Field(
-        None, max_length=20, description="File format/extension"
+    temporal_to: Optional[datetime] = Field(
+        None, description="Temporal coverage end date"
+    )
+    geography: Optional[str] = Field(
+        None, description="Geographic coverage"
     )
 
     @validator("title")
@@ -87,12 +99,23 @@ class DatasetCreate(BaseModel):
             return None
         return v.strip() if v else None
 
-    @validator("tags", "provenance", "source", "cite_as", "file_format")
+    @validator("provenance", "source", "cite_as", "file_format", "geography")
     def validate_optional_strings(cls, v):
         """Validate and sanitize optional string fields."""
         if v is not None and not v.strip():
             return None
         return v.strip() if v else None
+
+    @validator("tags")
+    def validate_tags(cls, v):
+        """Validate tags list."""
+        if v is None:
+            return None
+        if not isinstance(v, list):
+            return None
+        # Filter out empty strings and strip whitespace
+        processed = [tag.strip() for tag in v if tag and tag.strip()]
+        return processed if processed else None
 
     @validator("permissions")
     def validate_permissions(cls, v):
@@ -135,5 +158,13 @@ class DatasetCreate(BaseModel):
             return None
         if v not in ["high", "medium", "low"]:
             raise ValueError("Value must be one of: high, medium, low")
+        return v
+
+    @validator("temporal_to")
+    def validate_temporal_range(cls, v, values):
+        """Validate that temporal_to is after temporal_from if both are provided."""
+        if v is not None and "temporal_from" in values and values["temporal_from"] is not None:
+            if v < values["temporal_from"]:
+                raise ValueError("temporal_to must be after temporal_from")
         return v
 

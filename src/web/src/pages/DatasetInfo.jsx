@@ -247,7 +247,9 @@ function DatasetInfo() {
             <div className="col-md-3">
               <strong>Creator:</strong>
             </div>
-            <div className="col-md-9">{dataset.creator || "N/A"}</div>
+            <div className="col-md-9">
+              {dataset.full_name || dataset.creator || "N/A"}
+            </div>
           </div>
 
           <div className="row mb-3">
@@ -266,43 +268,13 @@ function DatasetInfo() {
 
           <div className="row mb-3">
             <div className="col-md-3">
-              <strong>Groundtruthed:</strong>
-            </div>
-            <div className="col-md-9">
-              {dataset.groundtruthed === true
-                ? "Yes"
-                : dataset.groundtruthed === false
-                ? "No"
-                : "N/A"}
-            </div>
-          </div>
-
-          <div className="row mb-3">
-            <div className="col-md-3">
-              <strong>Provenance:</strong>
-            </div>
-            <div className="col-md-9">{dataset.provenance || "N/A"}</div>
-          </div>
-
-          <div className="row mb-3">
-            <div className="col-md-3">
-              <strong>Source:</strong>
-            </div>
-            <div className="col-md-9">{dataset.source || "N/A"}</div>
-          </div>
-
-          <div className="row mb-3">
-            <div className="col-md-3">
-              <strong>Cite As:</strong>
-            </div>
-            <div className="col-md-9">{dataset.cite_as || "N/A"}</div>
-          </div>
-
-          <div className="row mb-3">
-            <div className="col-md-3">
               <strong>Tags:</strong>
             </div>
-            <div className="col-md-9">{dataset.tags || "N/A"}</div>
+            <div className="col-md-9">
+              {dataset.tags && Array.isArray(dataset.tags) && dataset.tags.length > 0
+                ? dataset.tags.join(", ")
+                : "N/A"}
+            </div>
           </div>
 
           <div className="row mb-3">
@@ -311,31 +283,6 @@ function DatasetInfo() {
             </div>
             <div className="col-md-9">{dataset.downloads ?? "N/A"}</div>
           </div>
-
-          {dataset.permissions && (
-            <div className="row mb-3">
-              <div className="col-md-3">
-                <strong>Permissions:</strong>
-              </div>
-              <div className="col-md-9">{dataset.permissions}</div>
-            </div>
-          )}
-
-          <div className="row mb-3">
-            <div className="col-md-3">
-              <strong>Duration (years):</strong>
-            </div>
-            <div className="col-md-9">{dataset.duration ?? 0}</div>
-          </div>
-
-          {dataset.value && (
-            <div className="row mb-3">
-              <div className="col-md-3">
-                <strong>Value:</strong>
-              </div>
-              <div className="col-md-9">{dataset.value}</div>
-            </div>
-          )}
 
           <div className="row mb-3">
             <div className="col-md-3">
@@ -425,6 +372,76 @@ function DatasetInfo() {
                       <strong>Downloads:</strong> {file.downloads ?? "N/A"}
                     </small>
                   </div>
+                  {file.provenance && (
+                    <div className="mb-2">
+                      <small className="text-muted">
+                        <strong>Provenance:</strong> {file.provenance}
+                      </small>
+                    </div>
+                  )}
+                  {file.source && (
+                    <div className="mb-2">
+                      <small className="text-muted">
+                        <strong>Source:</strong> {file.source}
+                      </small>
+                    </div>
+                  )}
+                  {file.cite_as && (
+                    <div className="mb-2">
+                      <small className="text-muted">
+                        <strong>Cite As:</strong> {file.cite_as}
+                      </small>
+                    </div>
+                  )}
+                  {file.groundtruthed !== undefined && file.groundtruthed !== null && (
+                    <div className="mb-2">
+                      <small className="text-muted">
+                        <strong>Groundtruthed:</strong> {file.groundtruthed ? "Yes" : "No"}
+                      </small>
+                    </div>
+                  )}
+                  {file.permissions && (
+                    <div className="mb-2">
+                      <small className="text-muted">
+                        <strong>Permissions:</strong> {file.permissions}
+                      </small>
+                    </div>
+                  )}
+                  {file.duration !== undefined && file.duration !== null && (
+                    <div className="mb-2">
+                      <small className="text-muted">
+                        <strong>Duration (years):</strong> {file.duration}
+                      </small>
+                    </div>
+                  )}
+                  {file.value && (
+                    <div className="mb-2">
+                      <small className="text-muted">
+                        <strong>Value:</strong> {file.value}
+                      </small>
+                    </div>
+                  )}
+                  {file.temporal_from && (
+                    <div className="mb-2">
+                      <small className="text-muted">
+                        <strong>Temporal From:</strong> {formatDate(file.temporal_from)}
+                      </small>
+                    </div>
+                  )}
+                  {file.temporal_to && (
+                    <div className="mb-2">
+                      <small className="text-muted">
+                        <strong>Temporal To:</strong> {formatDate(file.temporal_to)}
+                      </small>
+                    </div>
+                  )}
+                  {file.geography && (
+                    <div className="mb-2">
+                      <small className="text-muted">
+                        <strong>Geography:</strong> {file.geography}
+                      </small>
+                    </div>
+                  )}
                   <button
                     className="btn btn-sm btn-outline-primary"
                     onClick={() => handleDownload(file)}

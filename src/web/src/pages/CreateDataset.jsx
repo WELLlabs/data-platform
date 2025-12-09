@@ -36,6 +36,9 @@ function CreateDataset() {
     const [fileTitle, setFileTitle] = useState("");
     const [fileDescription, setFileDescription] = useState("");
     const [fileFormat, setFileFormat] = useState("");
+    const [temporalFrom, setTemporalFrom] = useState("");
+    const [temporalTo, setTemporalTo] = useState("");
+    const [geography, setGeography] = useState("");
 
     // Validation error states
     const [titleError, setTitleError] = useState(false);
@@ -164,6 +167,10 @@ function CreateDataset() {
             setError("Dataset title is required.");
             return;
         }
+        if (!tags.trim()) {
+            setError("Tags are required.");
+            return;
+        }
         if (!fileTitle.trim()) {
             setError("File title is required.");
             return;
@@ -233,21 +240,34 @@ function CreateDataset() {
                 "dataset_description",
                 constrained(datasetDescription, 2000)
             );
-            form.append("tags", constrained(tags, 500));
+            // Process tags: split by comma, strip whitespace, replace internal spaces with hyphens, send as array
+            if (tags && tags.trim()) {
+                const tagsArray = tags
+                    .split(",")
+                    .map(tag => tag.trim())
+                    .filter(tag => tag.length > 0)
+                    .map(tag => tag.replace(/\s+/g, "-")); // Replace one or more spaces with single hyphen
+                tagsArray.forEach(tag => {
+                    form.append("tags", tag);
+                });
+            }
             form.append("organization", organizationId);
-            form.append("provenance", constrained(provenance, 125));
-            form.append("source", constrained(source, 1000));
-            form.append("cite_as", constrained(citeAs, 1500));
-            if (groundtruthed) form.append("groundtruthed", "true");
             form.append("private", orgPrivate && isPrivate ? "true" : "false");
-            form.append("permissions", constrained(permissions, 1000));
-            form.append("duration", duration.toString());
-            if (value) form.append("value", value);
 
             form.append("filename", constrained(fileTitle, 200));
             form.append("file_key", fileKey);
             form.append("file_description", constrained(fileDescription, 1000));
             form.append("file_format", constrained(fileFormat, 20));
+            form.append("provenance", constrained(provenance, 125));
+            form.append("source", constrained(source, 1000));
+            form.append("cite_as", constrained(citeAs, 1500));
+            if (groundtruthed) form.append("groundtruthed", "true");
+            form.append("permissions", constrained(permissions, 1000));
+            form.append("duration", duration.toString());
+            if (value) form.append("value", value);
+            if (temporalFrom) form.append("temporal_from", temporalFrom);
+            if (temporalTo) form.append("temporal_to", temporalTo);
+            if (geography) form.append("geography", constrained(geography, 2000));
 
             const createResp = await fetch(create_dataset_endpoint, {
                 method: "POST",
@@ -260,9 +280,13 @@ function CreateDataset() {
             }
             const result = await createResp.json();
 
-            // 4) Redirect to dataset-success with response as query parameter
-            const payload = encodeURIComponent(JSON.stringify(result));
-            navigate(`/dataset-success?data=${payload}`);
+            // 4) Redirect to dataset-info with dataset_id
+            const datasetId = result.dataset?.dataset_id || result.dataset_id;
+            if (datasetId) {
+                navigate(`/dataset-info?dataset_id=${datasetId}`);
+            } else {
+                throw new Error("Dataset ID not found in response");
+            }
         } catch (err) {
             console.error(err);
             setError(err.message || "Unexpected error");
@@ -421,228 +445,7 @@ function CreateDataset() {
                     </div>
                 )}
 
-                <div className="mb-3">
-                    <label className="form-label">
-                        Provenance
-                        <HelpTooltip
-                            text="Who own the dataset?"
-                            id="tooltip-provenance"
-                        />
-                    </label>
-                    <input
-                        type="text"
-                        className={`form-control ${
-                            provenanceError ? "is-invalid" : ""
-                        }`}
-                        value={provenance}
-                        onChange={(e) =>
-                            validateAndFilterSpecialChars(
-                                e.target.value,
-                                setProvenance,
-                                setProvenanceError,
-                                125
-                            )
-                        }
-                    />
-                    {provenanceError && (
-                        <div
-                            className="invalid-feedback"
-                            style={{ display: "block", color: "red" }}
-                        >
-                            no special characters &lt; , &gt; , " , ' , &amp; ,
-                            ; , ( , )
-                        </div>
-                    )}
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label">
-                        Source
-                        <HelpTooltip
-                            text="Who gave you the dataset?"
-                            id="tooltip-source"
-                        />
-                    </label>
-                    <input
-                        type="text"
-                        className={`form-control ${
-                            sourceError ? "is-invalid" : ""
-                        }`}
-                        value={source}
-                        onChange={(e) =>
-                            validateAndFilterSpecialChars(
-                                e.target.value,
-                                setSource,
-                                setSourceError,
-                                1000
-                            )
-                        }
-                    />
-                    {sourceError && (
-                        <div
-                            className="invalid-feedback"
-                            style={{ display: "block", color: "red" }}
-                        >
-                            no special characters &lt; , &gt; , " , ' , &amp; ,
-                            ; , ( , )
-                        </div>
-                    )}
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label">
-                        Permission
-                        <HelpTooltip
-                            text={
-                                <>
-                                    To know more about the Creative Commons Licenses please visit{" "}
-                                    <a
-                                        href="https://creativecommons.org/share-your-work/cclicenses/"
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        onClick={(e) => e.stopPropagation()}
-                                    >
-                                        here
-                                    </a>
-                                    .
-                                </>
-                            }
-                            id="tooltip-permissions"
-                        />
-                    </label>
-                    <select
-                        className="form-select"
-                        value={permissions}
-                        onChange={(e) => setPermissions(e.target.value)}
-                    >
-                        <option value="CC0: Public Domain">CC0: Public Domain</option>
-                        <option value="CC BY: Attribution">CC BY: Attribution</option>
-                        <option value="CC BY-SA: Attribution-ShareAlike">CC BY-SA: Attribution-ShareAlike</option>
-                        <option value="CC BY-NC: Attribution-NonCommercial">CC BY-NC: Attribution-NonCommercial</option>
-                        <option value="CC BY-NC-SA: Attribution-NonCommercial-ShareAlike">CC BY-NC-SA: Attribution-NonCommercial-ShareAlike</option>
-                        <option value="CC BY-ND: Attribution-NoDerivatives">CC BY-ND: Attribution-NoDerivatives</option>
-                        <option value="CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives">CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives</option>
-                    </select>
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label">
-                        Cite As
-                        <HelpTooltip
-                            text="How should someone give credit for the data?"
-                            id="tooltip-cite-as"
-                        />
-                    </label>
-                    <textarea
-                        className={`form-control ${
-                            citeAsError ? "is-invalid" : ""
-                        }`}
-                        rows={4}
-                        value={citeAs}
-                        onChange={(e) =>
-                            validateAndFilterSpecialChars(
-                                e.target.value,
-                                setCiteAs,
-                                setCiteAsError,
-                                1500
-                            )
-                        }
-                    />
-                    {citeAsError && (
-                        <div
-                            className="invalid-feedback"
-                            style={{ display: "block", color: "red" }}
-                        >
-                            no special characters &lt; , &gt; , " , ' , &amp; ,
-                            ; , ( , )
-                        </div>
-                    )}
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label">
-                        Duration (years)
-                        <HelpTooltip
-                            text="How many years can this data be used for from the date of creation? 0 if not applicable"
-                            id="tooltip-duration"
-                        />
-                    </label>
-                    <input
-                        type="number"
-                        className="form-control"
-                        value={duration}
-                        onChange={(e) => {
-                            const val = parseInt(e.target.value) || 0;
-                            setDuration(Math.max(0, val));
-                        }}
-                        min="0"
-                    />
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label">
-                        Value
-                        <HelpTooltip
-                            text={`What is the value of the data?
-High: data has high acquisition cost or sensitive information
-Medium: data is specific to a particular organisation and hard to search online
-Low: Openly downloadable in public domain`}
-                            id="tooltip-value"
-                        />
-                    </label>
-                    <select
-                        className="form-select"
-                        value={value}
-                        onChange={(e) => setValue(e.target.value)}
-                    >
-                        <option value="low">low</option>
-                        <option value="medium">medium</option>
-                        <option value="high">high</option>
-                    </select>
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label me-3">
-                        Groundtruthed
-                        <HelpTooltip
-                            text="Has this data been validated in the field?"
-                            id="tooltip-groundtruthed"
-                        />
-                    </label>
-                    <div>
-                        <div className="form-check form-check-inline">
-                            <input
-                                className="form-check-input"
-                                type="radio"
-                                name="groundtruthed"
-                                id="gt_no"
-                                checked={!groundtruthed}
-                                onChange={() => setGroundtruthed(false)}
-                            />
-                            <label className="form-check-label" htmlFor="gt_no">
-                                No
-                            </label>
-                        </div>
-                        <div className="form-check form-check-inline">
-                            <input
-                                className="form-check-input"
-                                type="radio"
-                                name="groundtruthed"
-                                id="gt_yes"
-                                checked={groundtruthed}
-                                onChange={() => setGroundtruthed(true)}
-                            />
-                            <label
-                                className="form-check-label"
-                                htmlFor="gt_yes"
-                            >
-                                Yes
-                            </label>
-                        </div>
-                    </div>
-                </div>
-
-                <h5 className="mt-4">File Upload</h5>
+                <h4 className="mt-4">File Upload</h4>
 
                 <div className="mb-3">
                     <label className="form-label">
@@ -714,6 +517,335 @@ Low: Openly downloadable in public domain`}
                             ; , ( , )
                         </div>
                     )}
+                </div>
+
+                <div className="mb-3">
+                    <label className="form-label">
+                        Provenance
+                        <HelpTooltip
+                            text="Who own the dataset?"
+                            id="tooltip-provenance"
+                        />
+                    </label>
+                    <input
+                        type="text"
+                        className={`form-control ${
+                            provenanceError ? "is-invalid" : ""
+                        }`}
+                        value={provenance}
+                        onChange={(e) =>
+                            validateAndFilterSpecialChars(
+                                e.target.value,
+                                setProvenance,
+                                setProvenanceError,
+                                125
+                            )
+                        }
+                    />
+                    {provenanceError && (
+                        <div
+                            className="invalid-feedback"
+                            style={{ display: "block", color: "red" }}
+                        >
+                            no special characters &lt; , &gt; , " , ' , &amp; ,
+                            ; , ( , )
+                        </div>
+                    )}
+                </div>
+
+                <div className="mb-3">
+                    <label className="form-label">
+                        Source
+                        <HelpTooltip
+                            text="Who gave you the dataset?"
+                            id="tooltip-source"
+                        />
+                    </label>
+                    <input
+                        type="text"
+                        className={`form-control ${
+                            sourceError ? "is-invalid" : ""
+                        }`}
+                        value={source}
+                        onChange={(e) =>
+                            validateAndFilterSpecialChars(
+                                e.target.value,
+                                setSource,
+                                setSourceError,
+                                1000
+                            )
+                        }
+                    />
+                    {sourceError && (
+                        <div
+                            className="invalid-feedback"
+                            style={{ display: "block", color: "red" }}
+                        >
+                            no special characters &lt; , &gt; , " , ' , &amp; ,
+                            ; , ( , )
+                        </div>
+                    )}
+                </div>
+
+                <div className="mb-3">
+                    <label className="form-label">
+                        Permissions
+                        <HelpTooltip
+                            text={
+                                <>
+                                    To know more about the Creative Commons Licenses please visit{" "}
+                                    <a
+                                        href="https://creativecommons.org/share-your-work/cclicenses/"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={(e) => e.stopPropagation()}
+                                    >
+                                        here
+                                    </a>
+                                    .
+                                </>
+                            }
+                            id="tooltip-permissions"
+                        />
+                    </label>
+                    <select
+                        className="form-select"
+                        value={permissions}
+                        onChange={(e) => setPermissions(e.target.value)}
+                    >
+                        <option value="CC0: Public Domain">CC0: Public Domain</option>
+                        <option value="CC BY: Attribution">CC BY: Attribution</option>
+                        <option value="CC BY-SA: Attribution-ShareAlike">CC BY-SA: Attribution-ShareAlike</option>
+                        <option value="CC BY-NC: Attribution-NonCommercial">CC BY-NC: Attribution-NonCommercial</option>
+                        <option value="CC BY-NC-SA: Attribution-NonCommercial-ShareAlike">CC BY-NC-SA: Attribution-NonCommercial-ShareAlike</option>
+                        <option value="CC BY-ND: Attribution-NoDerivatives">CC BY-ND: Attribution-NoDerivatives</option>
+                        <option value="CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives">CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives</option>
+                    </select>
+                </div>
+
+                <div className="mb-3">
+                    <label className="form-label">
+                        Cite As
+                        <HelpTooltip
+                            text="How should someone give credit for the data?"
+                            id="tooltip-cite-as"
+                        />
+                    </label>
+                    <textarea
+                        className={`form-control ${
+                            citeAsError ? "is-invalid" : ""
+                        }`}
+                        rows={4}
+                        value={citeAs}
+                        onChange={(e) =>
+                            validateAndFilterSpecialChars(
+                                e.target.value,
+                                setCiteAs,
+                                setCiteAsError,
+                                1500
+                            )
+                        }
+                    />
+                    {citeAsError && (
+                        <div
+                            className="invalid-feedback"
+                            style={{ display: "block", color: "red" }}
+                        >
+                            no special characters &lt; , &gt; , " , ' , &amp; ,
+                            ; , ( , )
+                        </div>
+                    )}
+                </div>
+
+                <div className="mb-3">
+                    <label className="form-label me-3">
+                        Groundtruthed
+                        <HelpTooltip
+                            text="Has this data been validated in the field?"
+                            id="tooltip-groundtruthed"
+                        />
+                    </label>
+                    <div>
+                        <div className="form-check form-check-inline">
+                            <input
+                                className="form-check-input"
+                                type="radio"
+                                name="groundtruthed"
+                                id="gt_no"
+                                checked={!groundtruthed}
+                                onChange={() => setGroundtruthed(false)}
+                            />
+                            <label className="form-check-label" htmlFor="gt_no">
+                                No
+                            </label>
+                        </div>
+                        <div className="form-check form-check-inline">
+                            <input
+                                className="form-check-input"
+                                type="radio"
+                                name="groundtruthed"
+                                id="gt_yes"
+                                checked={groundtruthed}
+                                onChange={() => setGroundtruthed(true)}
+                            />
+                            <label
+                                className="form-check-label"
+                                htmlFor="gt_yes"
+                            >
+                                Yes
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="mb-3">
+                    <label className="form-label">
+                        Duration
+                        <HelpTooltip
+                            text="How many years can this data be used for from the date of creation? 0 if not applicable"
+                            id="tooltip-duration"
+                        />
+                    </label>
+                    <input
+                        type="number"
+                        className="form-control"
+                        value={duration}
+                        onChange={(e) => {
+                            const val = parseInt(e.target.value) || 0;
+                            setDuration(Math.max(0, val));
+                        }}
+                        min="0"
+                    />
+                </div>
+
+                <div className="mb-3">
+                    <label className="form-label">
+                        Value
+                        <HelpTooltip
+                            text={`What is the value of the data?
+High: data has high acquisition cost or sensitive information
+Medium: data is specific to a particular organisation and hard to search online
+Low: Openly downloadable in public domain`}
+                            id="tooltip-value"
+                        />
+                    </label>
+                    <select
+                        className="form-select"
+                        value={value}
+                        onChange={(e) => setValue(e.target.value)}
+                    >
+                        <option value="low">low</option>
+                        <option value="medium">medium</option>
+                        <option value="high">high</option>
+                    </select>
+                </div>
+
+                <div className="mb-3">
+                    <label className="form-label">
+                        Temporal Coverage From
+                        <HelpTooltip
+                            text="Start date of temporal coverage (ISO format: YYYY-MM-DDTHH:mm:ssZ)"
+                            id="tooltip-temporal-from"
+                        />
+                    </label>
+                    <input
+                        type="datetime-local"
+                        className="form-control"
+                        value={temporalFrom ? (() => {
+                            // Convert ISO string to datetime-local format (YYYY-MM-DDTHH:mm)
+                            try {
+                                const date = new Date(temporalFrom);
+                                if (isNaN(date.getTime())) return "";
+                                // Get local datetime string in format YYYY-MM-DDTHH:mm
+                                const year = date.getFullYear();
+                                const month = String(date.getMonth() + 1).padStart(2, '0');
+                                const day = String(date.getDate()).padStart(2, '0');
+                                const hours = String(date.getHours()).padStart(2, '0');
+                                const minutes = String(date.getMinutes()).padStart(2, '0');
+                                return `${year}-${month}-${day}T${hours}:${minutes}`;
+                            } catch {
+                                return "";
+                            }
+                        })() : ""}
+                        onChange={(e) => {
+                            const val = e.target.value;
+                            // Convert to ISO format with timezone
+                            if (val) {
+                                // datetime-local gives us YYYY-MM-DDTHH:mm in local time
+                                // We need to convert it to ISO format
+                                const date = new Date(val);
+                                if (!isNaN(date.getTime())) {
+                                    setTemporalFrom(date.toISOString());
+                                } else {
+                                    setTemporalFrom("");
+                                }
+                            } else {
+                                setTemporalFrom("");
+                            }
+                        }}
+                    />
+                </div>
+
+                <div className="mb-3">
+                    <label className="form-label">
+                        Temporal Coverage To
+                        <HelpTooltip
+                            text="End date of temporal coverage (ISO format: YYYY-MM-DDTHH:mm:ssZ)"
+                            id="tooltip-temporal-to"
+                        />
+                    </label>
+                    <input
+                        type="datetime-local"
+                        className="form-control"
+                        value={temporalTo ? (() => {
+                            // Convert ISO string to datetime-local format (YYYY-MM-DDTHH:mm)
+                            try {
+                                const date = new Date(temporalTo);
+                                if (isNaN(date.getTime())) return "";
+                                // Get local datetime string in format YYYY-MM-DDTHH:mm
+                                const year = date.getFullYear();
+                                const month = String(date.getMonth() + 1).padStart(2, '0');
+                                const day = String(date.getDate()).padStart(2, '0');
+                                const hours = String(date.getHours()).padStart(2, '0');
+                                const minutes = String(date.getMinutes()).padStart(2, '0');
+                                return `${year}-${month}-${day}T${hours}:${minutes}`;
+                            } catch {
+                                return "";
+                            }
+                        })() : ""}
+                        onChange={(e) => {
+                            const val = e.target.value;
+                            // Convert to ISO format with timezone
+                            if (val) {
+                                // datetime-local gives us YYYY-MM-DDTHH:mm in local time
+                                // We need to convert it to ISO format
+                                const date = new Date(val);
+                                if (!isNaN(date.getTime())) {
+                                    setTemporalTo(date.toISOString());
+                                } else {
+                                    setTemporalTo("");
+                                }
+                            } else {
+                                setTemporalTo("");
+                            }
+                        }}
+                    />
+                </div>
+
+                <div className="mb-3">
+                    <label className="form-label">
+                        Geographical Extent
+                        <HelpTooltip
+                            text="Geographic coverage or location information"
+                            id="tooltip-geography"
+                        />
+                    </label>
+                    <textarea
+                        className="form-control"
+                        rows={3}
+                        value={geography}
+                        onChange={(e) => setGeography(e.target.value)}
+                    />
                 </div>
 
                 {submitting && (

@@ -12,6 +12,7 @@ from uuid import UUID
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     ForeignKey,
     Integer,
@@ -79,6 +80,40 @@ class File(Base):
         String(length=20),
         nullable=True,
     )
+    # Moved fields from datasets table
+    provenance: Mapped[Optional[str]] = mapped_column(
+        String(length=125),
+        nullable=True,
+    )
+    source: Mapped[Optional[str]] = mapped_column(
+        String(length=1000),
+        nullable=True,
+    )
+    cite_as: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    groundtruthed: Mapped[Optional[bool]] = mapped_column(
+        Boolean,
+        nullable=True,
+    )
+    permissions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    duration: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False,
+    )
+    value: Mapped[Optional[str]] = mapped_column(
+        String(length=10),
+        nullable=True,
+    )
+    # New fields
+    temporal_from: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    temporal_to: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    geography: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Relationships
     dataset: Mapped["Dataset"] = relationship(

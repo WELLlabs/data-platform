@@ -4,7 +4,8 @@ Dataset router for handling dataset creation.
 
 import logging
 import re
-from typing import Optional
+from datetime import datetime
+from typing import List, Optional
 from uuid import UUID
 
 from core.config import settings
@@ -17,6 +18,7 @@ from schemas.dataset import DatasetCreate
 from services.auth import AuthService, RedisStrategy, get_auth_service
 from services.dataset import DatasetService, get_dataset_service
 from services.organization import OrganizationService, get_organization_service
+from sqlalchemy import select
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -102,6 +104,9 @@ class DatasetController:
                 dataset_data, user
             )
 
+            # Refresh dataset to load tags relationship
+            await self.dataset_service.session.refresh(dataset, ["tags"])
+
             # Prepare response data
             response_data = {
                 "dataset": {
@@ -109,21 +114,14 @@ class DatasetController:
                     "title": dataset.dataset_title,
                     "creator": str(dataset.creator),
                     "description": dataset.dataset_description,
-                    "tags": dataset.tags,
+                    "tags": [tag.tag_name for tag in dataset.tags],
                     "organization": dataset.organization,
-                    "provenance": dataset.provenance,
-                    "source": dataset.source,
-                    "cite_as": dataset.cite_as,
-                    "groundtruthed": dataset.groundtruthed,
                     "private": dataset.private,
                     "downloads": dataset.downloads,
                     "approved": dataset.approved,
                     "approved_by": str(dataset.approved_by)
                     if dataset.approved_by
                     else None,
-                    "permissions": dataset.permissions,
-                    "duration": dataset.duration,
-                    "value": dataset.value,
                     "created_at": dataset.created_at.isoformat()
                     if dataset.created_at
                     else None,
@@ -138,6 +136,20 @@ class DatasetController:
                     "file_format": file.file_format,
                     "dataset_id": str(file.dataset_id),
                     "downloads": file.downloads,
+                    "provenance": file.provenance,
+                    "source": file.source,
+                    "cite_as": file.cite_as,
+                    "groundtruthed": file.groundtruthed,
+                    "permissions": file.permissions,
+                    "duration": file.duration,
+                    "value": file.value,
+                    "temporal_from": file.temporal_from.isoformat()
+                    if file.temporal_from
+                    else None,
+                    "temporal_to": file.temporal_to.isoformat()
+                    if file.temporal_to
+                    else None,
+                    "geography": file.geography,
                     "created_at": file.created_at.isoformat()
                     if file.created_at
                     else None,
@@ -179,10 +191,19 @@ class DatasetController:
                 dataset_id
             )
 
+            # Fetch creator user to get full_name
+            from models.user import User
+
+            creator_result = await self.dataset_service.session.execute(
+                select(User).where(User.id == dataset.creator)
+            )
+            creator_user = creator_result.scalar_one_or_none()
+
             dataset_obj = {
                 "dataset_id": str(dataset.dataset_id),
                 "dataset_title": dataset.dataset_title,
                 "creator": str(dataset.creator),
+                "full_name": creator_user.full_name if creator_user else None,
                 "created_at": dataset.created_at.isoformat()
                 if dataset.created_at
                 else None,
@@ -190,18 +211,11 @@ class DatasetController:
                 "private": dataset.private,
                 "downloads": dataset.downloads,
                 "dataset_description": dataset.dataset_description,
-                "tags": dataset.tags,
-                "provenance": dataset.provenance,
-                "source": dataset.source,
-                "cite_as": dataset.cite_as,
-                "groundtruthed": dataset.groundtruthed,
+                "tags": [tag.tag_name for tag in dataset.tags],
                 "approved": dataset.approved,
                 "approved_by": str(dataset.approved_by)
                 if dataset.approved_by
                 else None,
-                "permissions": dataset.permissions,
-                "duration": dataset.duration,
-                "value": dataset.value,
             }
 
             files_arr = [
@@ -215,6 +229,18 @@ class DatasetController:
                     "file_format": f.file_format,
                     "dataset_id": str(f.dataset_id),
                     "downloads": f.downloads,
+                    "provenance": f.provenance,
+                    "source": f.source,
+                    "cite_as": f.cite_as,
+                    "groundtruthed": f.groundtruthed,
+                    "permissions": f.permissions,
+                    "duration": f.duration,
+                    "value": f.value,
+                    "temporal_from": f.temporal_from.isoformat()
+                    if f.temporal_from
+                    else None,
+                    "temporal_to": f.temporal_to.isoformat() if f.temporal_to else None,
+                    "geography": f.geography,
                     "created_at": f.created_at.isoformat() if f.created_at else None,
                 }
                 for f in files
@@ -266,6 +292,10 @@ class DatasetController:
                 user_id, limit, offset, authenticated_user
             )
 
+            # Eagerly load tags for all datasets
+            for ds in datasets:
+                await self.dataset_service.session.refresh(ds, ["tags"])
+
             datasets_arr = [
                 {
                     "dataset_id": str(ds.dataset_id),
@@ -276,16 +306,9 @@ class DatasetController:
                     "private": ds.private,
                     "downloads": ds.downloads,
                     "dataset_description": ds.dataset_description,
-                    "tags": ds.tags,
-                    "provenance": ds.provenance,
-                    "source": ds.source,
-                    "cite_as": ds.cite_as,
-                    "groundtruthed": ds.groundtruthed,
+                    "tags": [tag.tag_name for tag in ds.tags],
                     "approved": ds.approved,
                     "approved_by": str(ds.approved_by) if ds.approved_by else None,
-                    "permissions": ds.permissions,
-                    "duration": ds.duration,
-                    "value": ds.value,
                 }
                 for ds in datasets
             ]
@@ -333,6 +356,10 @@ class DatasetController:
                 apikey=apikey, limit=limit, offset=offset
             )
 
+            # Eagerly load tags for all datasets
+            for ds in datasets:
+                await self.dataset_service.session.refresh(ds, ["tags"])
+
             datasets_arr = [
                 {
                     "dataset_id": str(ds.dataset_id),
@@ -343,16 +370,9 @@ class DatasetController:
                     "private": ds.private,
                     "downloads": ds.downloads,
                     "dataset_description": ds.dataset_description,
-                    "tags": ds.tags,
-                    "provenance": ds.provenance,
-                    "source": ds.source,
-                    "cite_as": ds.cite_as,
-                    "groundtruthed": ds.groundtruthed,
+                    "tags": [tag.tag_name for tag in ds.tags],
                     "approved": ds.approved,
                     "approved_by": str(ds.approved_by) if ds.approved_by else None,
-                    "permissions": ds.permissions,
-                    "duration": ds.duration,
-                    "value": ds.value,
                 }
                 for ds in datasets
             ]
@@ -441,22 +461,31 @@ async def create_dataset(
     title: str = Form(..., description="Dataset title"),
     creator: str = Form(..., description="Creator user ID (UUID)"),
     dataset_description: str | None = Form(None, description="Dataset description"),
-    tags: str | None = Form(None, description="Tags for the dataset"),
+    tags: List[str] | None = Form(
+        None, description="Tags for the dataset (list of strings)"
+    ),
     organization: str = Form(..., description="Organization ID"),
+    private: bool = Form(False, description="Whether dataset is private"),
+    filename: str = Form(..., description="File name"),
+    file_key: str = Form(..., description="S3 file key"),
+    file_description: str | None = Form(None, description="File description"),
+    file_format: str | None = Form(None, description="File format/extension"),
     provenance: str | None = Form(None, description="Provenance"),
     source: str | None = Form(None, description="Source"),
     cite_as: str | None = Form(None, description="Citation information"),
     groundtruthed: bool | None = Form(
         None, description="Whether dataset is groundtruthed"
     ),
-    private: bool = Form(False, description="Whether dataset is private"),
     permissions: str | None = Form(None, description="Permissions"),
     duration: int = Form(0, description="Duration in years"),
     value: str | None = Form(None, description="Value level (high, medium, low)"),
-    filename: str = Form(..., description="File name"),
-    file_key: str = Form(..., description="S3 file key"),
-    file_description: str | None = Form(None, description="File description"),
-    file_format: str | None = Form(None, description="File format/extension"),
+    temporal_from: str | None = Form(
+        None, description="Temporal coverage start date (ISO format)"
+    ),
+    temporal_to: str | None = Form(
+        None, description="Temporal coverage end date (ISO format)"
+    ),
+    geography: str | None = Form(None, description="Geographic coverage"),
     user: User = Depends(get_current_active_user),
     controller: DatasetController = Depends(get_dataset_controller),
     org_service: OrganizationService = Depends(get_organization_service),
@@ -516,6 +545,44 @@ async def create_dataset(
                 detail="Invalid creator UUID format",
             )
 
+        # Authorization check: verify creator matches authenticated user
+        if creator_uuid != user.id:
+            logger.warning(
+                "Creator mismatch: creator=%s, authenticated_user=%s",
+                creator_uuid,
+                user.id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Creator must match authenticated user",
+            )
+
+        # Parse datetime strings for temporal_from and temporal_to
+        parsed_temporal_from = None
+        parsed_temporal_to = None
+        if temporal_from:
+            try:
+                parsed_temporal_from = datetime.fromisoformat(
+                    temporal_from.replace("Z", "+00:00")
+                )
+            except (ValueError, AttributeError):
+                logger.warning("Invalid temporal_from format: %s", temporal_from)
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid temporal_from format. Use ISO format (e.g., 2024-01-01T00:00:00Z)",
+                )
+        if temporal_to:
+            try:
+                parsed_temporal_to = datetime.fromisoformat(
+                    temporal_to.replace("Z", "+00:00")
+                )
+            except (ValueError, AttributeError):
+                logger.warning("Invalid temporal_to format: %s", temporal_to)
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid temporal_to format. Use ISO format (e.g., 2024-01-01T00:00:00Z)",
+                )
+
         # Validate organization exists
         logger.info("Validating organization exists: %s", organization)
         org_exists = await org_service.validate_organization_id(organization)
@@ -530,31 +597,28 @@ async def create_dataset(
                 detail=f"Organization '{organization}' not found",
             )
 
-        # Process tags: normalize format (lowercase, replace spaces with hyphens, strip whitespace)
-        processed_tags = process_tags(tags)
-        logger.debug(
-            "Tags processing: original='%s', processed='%s'", tags, processed_tags
-        )
-
         # Create DatasetCreate schema from form data
         dataset_data = DatasetCreate(
             title=title,
             creator=creator_uuid,
             dataset_description=dataset_description,
-            tags=processed_tags,
+            tags=tags,  # Already a list from Form parameter
             organization=organization,
-            provenance=provenance,
-            source=source,
-            cite_as=cite_as,
-            groundtruthed=groundtruthed,
             private=private,
-            permissions=permissions,
-            duration=duration,
-            value=value,
             filename=filename,
             file_key=file_key,
             file_description=file_description,
             file_format=file_format,
+            provenance=provenance,
+            source=source,
+            cite_as=cite_as,
+            groundtruthed=groundtruthed,
+            permissions=permissions,
+            duration=duration,
+            value=value,
+            temporal_from=parsed_temporal_from,
+            temporal_to=parsed_temporal_to,
+            geography=geography,
         )
 
         return await controller.create_dataset(dataset_data, user)

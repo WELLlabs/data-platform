@@ -340,6 +340,17 @@ class UploadController:
         file_description: Optional[str],
         file_format: Optional[str],
         dataset_id: UUID,
+        groundtruthed: Optional[bool],
+        provenance: Optional[str],
+        source: Optional[str],
+        cite_as: Optional[str],
+        permissions: Optional[str],
+        duration: int,
+        value: Optional[str],
+        temporal_from: Optional[datetime],
+        temporal_to: Optional[datetime],
+        geography: Optional[str],
+        user: User,
     ) -> JSONResponse:
         """
         Add a new file record to the files table.
@@ -416,6 +427,19 @@ class UploadController:
                     detail="Dataset not found",
                 )
 
+            # 1.5. Authorization check: verify user is the dataset creator
+            if dataset.creator != user.id:
+                self.logger.warning(
+                    "Unauthorized file addition attempt: user=%s, dataset_creator=%s, dataset_id=%s",
+                    user.id,
+                    dataset.creator,
+                    dataset_id,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Only the dataset creator can add files to this dataset",
+                )
+
             # 2. Check if file exists in S3 and get file size
             file_status = await self.upload_service.check_file_status_by_key(
                 sanitized_file_key
@@ -437,10 +461,56 @@ class UploadController:
                 "File validated in S3: key=%s, size=%d", sanitized_file_key, file_size
             )
 
-            # 3. Generate UUID for file_id
+            # 3. Sanitize and validate additional fields
+            sanitized_provenance = sanitize_input(provenance)
+            sanitized_source = sanitize_input(source)
+            sanitized_cite_as = sanitize_input(cite_as)
+            sanitized_geography = sanitize_input(geography)
+
+            # Validate and sanitize permissions - must be one of the allowed CC license values
+            allowed_permissions = [
+                "CC0: Public Domain",
+                "CC BY: Attribution",
+                "CC BY-SA: Attribution-ShareAlike",
+                "CC BY-NC: Attribution-NonCommercial",
+                "CC BY-NC-SA: Attribution-NonCommercial-ShareAlike",
+                "CC BY-ND: Attribution-NoDerivatives",
+                "CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives",
+            ]
+            permissions_value = permissions
+            if permissions_value is None or (isinstance(permissions_value, str) and not permissions_value.strip()):
+                sanitized_permissions = "CC0: Public Domain"
+            else:
+                permissions_stripped = permissions_value.strip() if isinstance(permissions_value, str) else str(permissions_value).strip()
+                if permissions_stripped not in allowed_permissions:
+                    self.logger.warning(
+                        "Invalid permissions value '%s', defaulting to 'CC0: Public Domain'",
+                        permissions_stripped
+                    )
+                    sanitized_permissions = "CC0: Public Domain"
+                else:
+                    sanitized_permissions = permissions_stripped
+
+            # Validate duration (default to 0 if None)
+            duration_value = duration if duration is not None else 0
+
+            # Validate value (must be "high", "medium", or "low" if provided)
+            if value is not None and value not in ["high", "medium", "low"]:
+                self.logger.warning("Invalid value '%s', setting to None", value)
+                value = None
+
+            # Validate temporal range
+            if temporal_to is not None and temporal_from is not None:
+                if temporal_to < temporal_from:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="temporal_to must be after temporal_from",
+                    )
+
+            # 4. Generate UUID for file_id
             file_id = uuid4()
 
-            # 4. Create File record
+            # 5. Create File record with all fields
             # Note: created_at uses server_default=func.now() in the model,
             # but we'll set it explicitly to avoid any deprecation warnings
             new_file = File(
@@ -454,6 +524,16 @@ class UploadController:
                 downloads=0,
                 bucket=settings.S3_BUCKET,
                 created_at=datetime.now(timezone.utc),
+                provenance=sanitized_provenance,
+                source=sanitized_source,
+                cite_as=sanitized_cite_as,
+                groundtruthed=groundtruthed,
+                permissions=sanitized_permissions,
+                duration=duration_value,
+                value=value,
+                temporal_from=temporal_from,
+                temporal_to=temporal_to,
+                geography=sanitized_geography,
             )
 
             # Add to session and commit
@@ -478,6 +558,20 @@ class UploadController:
                 "file_size": new_file.file_size,
                 "downloads": new_file.downloads,
                 "bucket": new_file.bucket,
+                "provenance": new_file.provenance,
+                "source": new_file.source,
+                "cite_as": new_file.cite_as,
+                "groundtruthed": new_file.groundtruthed,
+                "permissions": new_file.permissions,
+                "duration": new_file.duration,
+                "value": new_file.value,
+                "temporal_from": new_file.temporal_from.isoformat()
+                if new_file.temporal_from
+                else None,
+                "temporal_to": new_file.temporal_to.isoformat()
+                if new_file.temporal_to
+                else None,
+                "geography": new_file.geography,
                 "created_at": new_file.created_at.isoformat()
                 if new_file.created_at
                 else None,
@@ -614,6 +708,16 @@ async def add_files(
         None, description="File format/extension (max 20 chars)"
     ),
     dataset_id: str = Form(..., description="Dataset ID (UUID)"),
+    groundtruthed: Optional[bool] = Form(None, description="Whether dataset is groundtruthed"),
+    provenance: Optional[str] = Form(None, description="Provenance"),
+    source: Optional[str] = Form(None, description="Source"),
+    cite_as: Optional[str] = Form(None, description="Citation information"),
+    permissions: Optional[str] = Form(None, description="Permissions"),
+    duration: int = Form(0, description="Duration in years"),
+    value: Optional[str] = Form(None, description="Value level (high, medium, low)"),
+    temporal_from: Optional[str] = Form(None, description="Temporal coverage start date (ISO format)"),
+    temporal_to: Optional[str] = Form(None, description="Temporal coverage end date (ISO format)"),
+    geography: Optional[str] = Form(None, description="Geographic coverage"),
     user: User = Depends(get_current_active_user),
     controller: UploadController = Depends(get_upload_controller),
 ):
@@ -661,12 +765,45 @@ async def add_files(
                 detail="Invalid dataset_id UUID format",
             )
 
+        # Parse datetime strings for temporal_from and temporal_to
+        parsed_temporal_from = None
+        parsed_temporal_to = None
+        if temporal_from:
+            try:
+                parsed_temporal_from = datetime.fromisoformat(temporal_from.replace("Z", "+00:00"))
+            except (ValueError, AttributeError) as e:
+                logger.warning("Invalid temporal_from format: %s", temporal_from)
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid temporal_from format. Use ISO format (e.g., 2024-01-01T00:00:00Z)",
+                )
+        if temporal_to:
+            try:
+                parsed_temporal_to = datetime.fromisoformat(temporal_to.replace("Z", "+00:00"))
+            except (ValueError, AttributeError) as e:
+                logger.warning("Invalid temporal_to format: %s", temporal_to)
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid temporal_to format. Use ISO format (e.g., 2024-01-01T00:00:00Z)",
+                )
+
         return await controller.add_file(
             file_title=file_title,
             file_key=file_key,
             file_description=file_description,
             file_format=file_format,
             dataset_id=dataset_uuid,
+            groundtruthed=groundtruthed,
+            provenance=provenance,
+            source=source,
+            cite_as=cite_as,
+            permissions=permissions,
+            duration=duration,
+            value=value,
+            temporal_from=parsed_temporal_from,
+            temporal_to=parsed_temporal_to,
+            geography=geography,
+            user=user,
         )
 
     except HTTPException:

@@ -56,6 +56,12 @@ class Dataset(Base):
         server_default=func.now(),
         nullable=False,
     )
+    modified_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
     organization: Mapped[str] = mapped_column(
         String(length=100),
         ForeignKey("organizations.id", ondelete="RESTRICT"),
@@ -75,26 +81,6 @@ class Dataset(Base):
 
     # Optional fields
     dataset_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    tags: Mapped[Optional[str]] = mapped_column(
-        String(length=500),
-        nullable=True,
-    )
-    provenance: Mapped[Optional[str]] = mapped_column(
-        String(length=125),
-        nullable=True,
-    )
-    source: Mapped[Optional[str]] = mapped_column(
-        String(length=1000),
-        nullable=True,
-    )
-    cite_as: Mapped[Optional[str]] = mapped_column(
-        Text,
-        nullable=True,
-    )
-    groundtruthed: Mapped[Optional[bool]] = mapped_column(
-        Boolean,
-        nullable=True,
-    )
     approved: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
@@ -104,25 +90,17 @@ class Dataset(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
-    permissions: Mapped[Optional[str]] = mapped_column(
-        Text,
-        nullable=True,
-    )
-    duration: Mapped[int] = mapped_column(
-        Integer,
-        default=0,
-        nullable=False,
-    )
-    value: Mapped[Optional[str]] = mapped_column(
-        String(length=10),
-        nullable=True,
-    )
 
     # Relationships
     files: Mapped[list["File"]] = relationship(
         "File",
         back_populates="dataset",
         cascade="all, delete-orphan",
+    )
+    tags: Mapped[list["Tag"]] = relationship(
+        "Tag",
+        secondary="tag_dataset",
+        back_populates="datasets",
     )
 
     def __repr__(self) -> str:

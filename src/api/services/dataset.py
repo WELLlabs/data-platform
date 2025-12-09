@@ -3,6 +3,7 @@ Dataset service for handling dataset and file creation.
 """
 
 import logging
+import re
 from typing import List, Optional, Tuple
 from uuid import UUID, uuid4
 
@@ -12,13 +13,16 @@ from fastapi import Depends, HTTPException, status
 from models.dataset import Dataset
 from models.file import File
 from models.organization import Organization
+from models.tag import Tag
+from models.tag_dataset import TagDataset
 from models.user import User
 from schemas.dataset import DatasetCreate
 from services.organization import OrganizationService, get_organization_service
 from services.upload import UploadService, get_upload_service
-from sqlalchemy import desc, or_, select, update
+from sqlalchemy import desc, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from utils.security import sanitize_input
 
 logger = logging.getLogger(__name__)
@@ -161,8 +165,10 @@ class DatasetService:
         2. Validates organization exists
         3. Validates file exists in S3
         4. Applies private dataset logic
-        5. Creates dataset record
-        6. Creates file record
+        5. Creates and adds dataset record to session (must be before tags)
+        6. Processes tags and creates tag associations
+        7. Creates file record
+        8. Commits all changes
 
         Args:
             dataset_data: Dataset creation data from form
@@ -210,10 +216,15 @@ class DatasetService:
             # 6. Sanitize input fields
             sanitized_title = sanitize_input(dataset_data.title) or ""
             sanitized_dataset_desc = sanitize_input(dataset_data.dataset_description)
-            sanitized_tags = sanitize_input(dataset_data.tags)
+            
+            # Sanitize file fields
+            sanitized_filename = sanitize_input(dataset_data.filename) or ""
+            sanitized_file_desc = sanitize_input(dataset_data.file_description)
+            sanitized_file_format = sanitize_input(dataset_data.file_format)
             sanitized_provenance = sanitize_input(dataset_data.provenance)
             sanitized_source = sanitize_input(dataset_data.source)
             sanitized_cite_as = sanitize_input(dataset_data.cite_as)
+            sanitized_geography = sanitize_input(dataset_data.geography)
             
             # Validate and sanitize permissions - must be one of the allowed CC license values
             allowed_permissions = [
@@ -238,33 +249,60 @@ class DatasetService:
                     sanitized_permissions = "CC0: Public Domain"
                 else:
                     sanitized_permissions = permissions_stripped
-            
-            sanitized_filename = sanitize_input(dataset_data.filename) or ""
-            sanitized_file_desc = sanitize_input(dataset_data.file_description)
-            sanitized_file_format = sanitize_input(dataset_data.file_format)
 
-            # 7. Create dataset record
+            # 7. Create dataset record FIRST and add to session
+            # This must be done before processing tags to avoid foreign key constraint violations
+            # during autoflush when querying for existing tags
             dataset = Dataset(
                 dataset_id=dataset_id,
                 dataset_title=sanitized_title,
                 creator=dataset_data.creator,
                 dataset_description=sanitized_dataset_desc,
-                tags=sanitized_tags,
                 organization=dataset_data.organization,
-                provenance=sanitized_provenance,
-                source=sanitized_source,
-                cite_as=sanitized_cite_as,
-                groundtruthed=dataset_data.groundtruthed,
                 private=dataset_private,
                 downloads=0,
                 approved=False,
                 approved_by=None,
-                permissions=sanitized_permissions,
-                duration=dataset_data.duration if dataset_data.duration is not None else 0,
-                value=dataset_data.value,
             )
+            self.session.add(dataset)
 
-            # 8. Create file record
+            # 8. Process tags: normalize, create/get Tag records, create TagDataset associations
+            # Now that dataset is in the session, tag processing can safely reference it
+            if dataset_data.tags:
+                for tag_str in dataset_data.tags:
+                    # Strip whitespace
+                    tag_stripped = tag_str.strip()
+                    if not tag_stripped:
+                        continue
+                    
+                    # Normalize: replace spaces with hyphens, convert to lowercase
+                    normalized_tag = re.sub(r"\s+", "-", tag_stripped).lower()
+                    
+                    # Check if tag exists (case-insensitive)
+                    tag_result = await self.session.execute(
+                        select(Tag).where(func.lower(Tag.tag_name) == normalized_tag)
+                    )
+                    existing_tag = tag_result.scalar_one_or_none()
+                    
+                    if existing_tag:
+                        tag_id = existing_tag.tag_id
+                    else:
+                        # Create new tag
+                        tag_id = uuid4()
+                        new_tag = Tag(
+                            tag_id=tag_id,
+                            tag_name=normalized_tag,
+                        )
+                        self.session.add(new_tag)
+                    
+                    # Create TagDataset association
+                    tag_dataset = TagDataset(
+                        dataset_id=dataset_id,
+                        tag_id=tag_id,
+                    )
+                    self.session.add(tag_dataset)
+
+            # 9. Create file record with all moved and new fields
             file = File(
                 file_id=file_id,
                 file_title=sanitized_filename,
@@ -275,10 +313,17 @@ class DatasetService:
                 file_format=sanitized_file_format,
                 dataset_id=dataset_id,
                 downloads=0,
+                provenance=sanitized_provenance,
+                source=sanitized_source,
+                cite_as=sanitized_cite_as,
+                groundtruthed=dataset_data.groundtruthed,
+                permissions=sanitized_permissions,
+                duration=dataset_data.duration if dataset_data.duration is not None else 0,
+                value=dataset_data.value,
+                temporal_from=dataset_data.temporal_from,
+                temporal_to=dataset_data.temporal_to,
+                geography=sanitized_geography,
             )
-
-            # 9. Add to session
-            self.session.add(dataset)
             self.session.add(file)
 
             # 10. Increment contributions for user and organization
@@ -293,7 +338,7 @@ class DatasetService:
                 .values(contributions=Organization.contributions + 1)
             )
 
-            # 11. Commit all changes (dataset, file, and counters)
+            # 11. Commit all changes (dataset, file, tags, tag_dataset, and counters)
             await self.session.commit()
             await self.session.refresh(dataset)
             await self.session.refresh(file)
@@ -311,10 +356,29 @@ class DatasetService:
             raise
         except IntegrityError as e:
             await self.session.rollback()
+            error_str = str(e).lower()
+            
+            # Check for foreign key constraint violations
+            if "foreign key constraint" in error_str or "foreign key violation" in error_str:
+                self.logger.exception("Foreign key constraint violation creating dataset: %s", e)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Database constraint violation occurred while creating dataset. Please try again or contact support if the issue persists.",
+                )
+            
+            # Check for unique constraint violations (duplicate identifiers)
+            if "unique constraint" in error_str or "duplicate key" in error_str or "already exists" in error_str:
+                self.logger.exception("Duplicate identifier error creating dataset: %s", e)
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Dataset or file with this identifier already exists",
+                )
+            
+            # Generic integrity error
             self.logger.exception("Integrity error creating dataset: %s", e)
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Dataset or file with this identifier already exists",
+                detail="Database constraint violation: Dataset or file with this identifier may already exist",
             )
         except Exception as e:
             await self.session.rollback()
@@ -328,7 +392,7 @@ class DatasetService:
         self, dataset_id: UUID
     ) -> Tuple[Dataset, list[File]]:
         """
-        Retrieve a dataset and all of its files.
+        Retrieve a dataset and all of its files with eager loading of relationships.
 
         Args:
             dataset_id: Dataset UUID
@@ -342,9 +406,11 @@ class DatasetService:
         try:
             self.logger.info("Fetching dataset and files for dataset_id=%s", dataset_id)
 
-            # Fetch dataset
+            # Fetch dataset with eager loading of tags relationship
             result_ds = await self.session.execute(
-                select(Dataset).where(Dataset.dataset_id == dataset_id)
+                select(Dataset)
+                .options(selectinload(Dataset.tags))
+                .where(Dataset.dataset_id == dataset_id)
             )
             dataset: Dataset | None = result_ds.scalar_one_or_none()
 
@@ -411,9 +477,10 @@ class DatasetService:
                 authenticated_user.id if authenticated_user else None,
             )
 
-            # Build base query
+            # Build base query with eager loading of tags
             query = (
                 select(Dataset)
+                .options(selectinload(Dataset.tags))
                 .where(Dataset.creator == user_id)
                 .order_by(desc(Dataset.created_at))
             )
@@ -514,8 +581,8 @@ class DatasetService:
                 offset,
             )
 
-            # Build base query
-            query = select(Dataset).order_by(desc(Dataset.created_at))
+            # Build base query with eager loading of tags
+            query = select(Dataset).options(selectinload(Dataset.tags)).order_by(desc(Dataset.created_at))
 
             # Apply filtering based on apikey
             if apikey is None:

@@ -15,13 +15,14 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from models.dataset import Dataset
 from models.file import File
+from models.organization import Organization
 from models.user import User
 from routers.upload import get_current_active_user
 from schemas.dataset import DatasetCreate
 from services.auth import AuthService, RedisStrategy, get_auth_service
 from services.dataset import DatasetService, get_dataset_service
 from services.organization import OrganizationService, get_organization_service
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -412,10 +413,12 @@ class DatasetController:
 
         This method:
         1. Checks permission using check_dataset_permission
-        2. Gets all files associated with the dataset
-        3. Deletes each file from S3
-        4. Deletes all file records and the dataset record from the database
-        5. Verifies deletion was successful
+        2. Fetches dataset record to capture creator and organization
+        3. Gets all files associated with the dataset
+        4. Deletes each file from S3
+        5. Deletes all file records and the dataset record from the database
+        6. Verifies deletion was successful (no records with dataset_id remain)
+        7. Decrements contributions by 1 for the creator user and organization
 
         Args:
             dataset_id: UUID of the dataset to delete
@@ -452,12 +455,28 @@ class DatasetController:
                     status_code=status.HTTP_403_FORBIDDEN,
                 )
 
-            # 2. Get S3 settings
+            # 2. Fetch dataset record to capture creator and organization before deletion
+            dataset_result = await self.dataset_service.session.execute(
+                select(Dataset).where(Dataset.dataset_id == dataset_id)
+            )
+            dataset_record = dataset_result.scalar_one_or_none()
+
+            if not dataset_record:
+                self.logger.warning("Dataset not found: %s", dataset_id)
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Dataset {dataset_id} does not exist",
+                )
+
+            creator_id = dataset_record.creator
+            organization_id = dataset_record.organization
+
+            # 3. Get S3 settings
             s3_handler_url = settings.S3_HANDLER_URL.rstrip("/")
             s3_region = settings.S3_REGION
             s3_bucket = settings.S3_BUCKET
 
-            # 3. Get all files for dataset
+            # 4. Get all files for dataset
             files_result = await self.dataset_service.session.execute(
                 select(File).where(File.dataset_id == dataset_id)
             )
@@ -467,7 +486,7 @@ class DatasetController:
                 "Found %d files to delete for dataset %s", len(files), dataset_id
             )
 
-            # 4. Delete each file from S3
+            # 5. Delete each file from S3
             for file_record in files:
                 file_key = file_record.file_key
                 params = {
@@ -529,7 +548,7 @@ class DatasetController:
                         detail=f"Error connecting to S3 handler for file {file_record.file_id}",
                     )
 
-            # 5. Delete from database (after all S3 deletions succeed)
+            # 6. Delete from database (after all S3 deletions succeed)
             await self.dataset_service.session.execute(
                 delete(File).where(File.dataset_id == dataset_id)
             )
@@ -538,7 +557,7 @@ class DatasetController:
             )
             await self.dataset_service.session.commit()
 
-            # 6. Verify deletion
+            # 7. Verify deletion
             dataset_result = await self.dataset_service.session.execute(
                 select(Dataset).where(Dataset.dataset_id == dataset_id)
             )
@@ -560,6 +579,19 @@ class DatasetController:
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Dataset deletion verification failed",
                 )
+
+            # 8. Decrement contributions for creator and organization
+            await self.dataset_service.session.execute(
+                update(User)
+                .where(User.id == creator_id)
+                .values(contributions=User.contributions - 1)
+            )
+            await self.dataset_service.session.execute(
+                update(Organization)
+                .where(Organization.id == organization_id)
+                .values(contributions=Organization.contributions - 1)
+            )
+            await self.dataset_service.session.commit()
 
             self.logger.info("Dataset deleted successfully: dataset_id=%s", dataset_id)
 

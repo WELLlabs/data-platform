@@ -154,6 +154,90 @@ class DatasetService:
                 detail="Error validating file existence",
             )
 
+    async def check_dataset_permission(self, apikey: str, dataset_id: UUID) -> bool:
+        """
+        Check if the user associated with the apikey has permission to modify/delete the dataset.
+
+        Args:
+            apikey: API key of the user
+            dataset_id: UUID of the dataset
+
+        Returns:
+            True if user has permission, False otherwise
+        """
+        try:
+            # Query user by apikey
+            user_result = await self.session.execute(
+                select(User).where(User.apikey == apikey)
+            )
+            user: Optional[User] = user_result.scalar_one_or_none()
+
+            if user is None:
+                self.logger.warning("User not found for apikey: %s", apikey)
+                return False
+
+            # Check if user is superuser
+            if user.is_superuser:
+                self.logger.info(
+                    "Superuser permission granted for user %s, dataset %s",
+                    user.id,
+                    dataset_id,
+                )
+                return True
+
+            # Query dataset
+            dataset_result = await self.session.execute(
+                select(Dataset).where(Dataset.dataset_id == dataset_id)
+            )
+            dataset: Optional[Dataset] = dataset_result.scalar_one_or_none()
+
+            if dataset is None:
+                self.logger.warning("Dataset not found: %s", dataset_id)
+                return False
+
+            # Check organization match
+            if user.organization != dataset.organization:
+                self.logger.info(
+                    "Organization mismatch: user_org=%s, dataset_org=%s",
+                    user.organization,
+                    dataset.organization,
+                )
+                return False
+
+            # Check role or creator
+            if user.role > 0:
+                self.logger.info(
+                    "Permission granted: user %s has role > 0 for dataset %s",
+                    user.id,
+                    dataset_id,
+                )
+                return True
+
+            # If role is 0, check if user is the creator
+            if user.role == 0 and user.id == dataset.creator:
+                self.logger.info(
+                    "Permission granted: user %s is creator of dataset %s",
+                    user.id,
+                    dataset_id,
+                )
+                return True
+
+            self.logger.info(
+                "Permission denied: user %s does not have permission for dataset %s",
+                user.id,
+                dataset_id,
+            )
+            return False
+
+        except Exception as e:
+            self.logger.exception(
+                "Error checking dataset permission: apikey=%s, dataset_id=%s, error=%s",
+                apikey,
+                dataset_id,
+                e,
+            )
+            return False
+
     async def create_dataset_with_file(
         self, dataset_data: DatasetCreate, current_user: User
     ) -> Tuple[Dataset, File]:
@@ -216,7 +300,7 @@ class DatasetService:
             # 6. Sanitize input fields
             sanitized_title = sanitize_input(dataset_data.title) or ""
             sanitized_dataset_desc = sanitize_input(dataset_data.dataset_description)
-            
+
             # Sanitize file fields
             sanitized_filename = sanitize_input(dataset_data.filename) or ""
             sanitized_file_desc = sanitize_input(dataset_data.file_description)
@@ -225,7 +309,7 @@ class DatasetService:
             sanitized_source = sanitize_input(dataset_data.source)
             sanitized_cite_as = sanitize_input(dataset_data.cite_as)
             sanitized_geography = sanitize_input(dataset_data.geography)
-            
+
             # Validate and sanitize permissions - must be one of the allowed CC license values
             allowed_permissions = [
                 "CC0: Public Domain",
@@ -237,14 +321,20 @@ class DatasetService:
                 "CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives",
             ]
             permissions_value = dataset_data.permissions
-            if permissions_value is None or (isinstance(permissions_value, str) and not permissions_value.strip()):
+            if permissions_value is None or (
+                isinstance(permissions_value, str) and not permissions_value.strip()
+            ):
                 sanitized_permissions = "CC0: Public Domain"
             else:
-                permissions_stripped = permissions_value.strip() if isinstance(permissions_value, str) else str(permissions_value).strip()
+                permissions_stripped = (
+                    permissions_value.strip()
+                    if isinstance(permissions_value, str)
+                    else str(permissions_value).strip()
+                )
                 if permissions_stripped not in allowed_permissions:
                     self.logger.warning(
                         "Invalid permissions value '%s', defaulting to 'CC0: Public Domain'",
-                        permissions_stripped
+                        permissions_stripped,
                     )
                     sanitized_permissions = "CC0: Public Domain"
                 else:
@@ -274,16 +364,16 @@ class DatasetService:
                     tag_stripped = tag_str.strip()
                     if not tag_stripped:
                         continue
-                    
+
                     # Normalize: replace spaces with hyphens, convert to lowercase
                     normalized_tag = re.sub(r"\s+", "-", tag_stripped).lower()
-                    
+
                     # Check if tag exists (case-insensitive)
                     tag_result = await self.session.execute(
                         select(Tag).where(func.lower(Tag.tag_name) == normalized_tag)
                     )
                     existing_tag = tag_result.scalar_one_or_none()
-                    
+
                     if existing_tag:
                         tag_id = existing_tag.tag_id
                     else:
@@ -294,7 +384,7 @@ class DatasetService:
                             tag_name=normalized_tag,
                         )
                         self.session.add(new_tag)
-                    
+
                     # Create TagDataset association
                     tag_dataset = TagDataset(
                         dataset_id=dataset_id,
@@ -318,7 +408,9 @@ class DatasetService:
                 cite_as=sanitized_cite_as,
                 groundtruthed=dataset_data.groundtruthed,
                 permissions=sanitized_permissions,
-                duration=dataset_data.duration if dataset_data.duration is not None else 0,
+                duration=dataset_data.duration
+                if dataset_data.duration is not None
+                else 0,
                 value=dataset_data.value,
                 temporal_from=dataset_data.temporal_from,
                 temporal_to=dataset_data.temporal_to,
@@ -357,23 +449,34 @@ class DatasetService:
         except IntegrityError as e:
             await self.session.rollback()
             error_str = str(e).lower()
-            
+
             # Check for foreign key constraint violations
-            if "foreign key constraint" in error_str or "foreign key violation" in error_str:
-                self.logger.exception("Foreign key constraint violation creating dataset: %s", e)
+            if (
+                "foreign key constraint" in error_str
+                or "foreign key violation" in error_str
+            ):
+                self.logger.exception(
+                    "Foreign key constraint violation creating dataset: %s", e
+                )
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Database constraint violation occurred while creating dataset. Please try again or contact support if the issue persists.",
                 )
-            
+
             # Check for unique constraint violations (duplicate identifiers)
-            if "unique constraint" in error_str or "duplicate key" in error_str or "already exists" in error_str:
-                self.logger.exception("Duplicate identifier error creating dataset: %s", e)
+            if (
+                "unique constraint" in error_str
+                or "duplicate key" in error_str
+                or "already exists" in error_str
+            ):
+                self.logger.exception(
+                    "Duplicate identifier error creating dataset: %s", e
+                )
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Dataset or file with this identifier already exists",
                 )
-            
+
             # Generic integrity error
             self.logger.exception("Integrity error creating dataset: %s", e)
             raise HTTPException(
@@ -582,7 +685,11 @@ class DatasetService:
             )
 
             # Build base query with eager loading of tags
-            query = select(Dataset).options(selectinload(Dataset.tags)).order_by(desc(Dataset.created_at))
+            query = (
+                select(Dataset)
+                .options(selectinload(Dataset.tags))
+                .order_by(desc(Dataset.created_at))
+            )
 
             # Apply filtering based on apikey
             if apikey is None:

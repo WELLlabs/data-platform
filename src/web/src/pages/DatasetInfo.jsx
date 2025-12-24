@@ -1,16 +1,29 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { dataset_info_endpoint, download_url_endpoint } from "../api/endpoints";
+import { useAuth } from "../contexts/AuthContext";
+import {
+  dataset_info_endpoint,
+  download_url_endpoint,
+  delete_dataset_endpoint,
+  delete_file_endpoint,
+} from "../api/endpoints";
 
 function DatasetInfo() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [dataset, setDataset] = useState(null);
   const [files, setFiles] = useState([]);
   const [downloadingFileId, setDownloadingFileId] = useState(null);
   const [downloadError, setDownloadError] = useState("");
+  const [showDatasetDeleteModal, setShowDatasetDeleteModal] = useState(false);
+  const [showFileDeleteModal, setShowFileDeleteModal] = useState(false);
+  const [fileToDelete, setFileToDelete] = useState(null);
+  const [deletingDataset, setDeletingDataset] = useState(false);
+  const [deletingFileId, setDeletingFileId] = useState(null);
+  const [deleteError, setDeleteError] = useState("");
 
   useEffect(() => {
     const datasetId = searchParams.get("dataset_id");
@@ -193,6 +206,108 @@ function DatasetInfo() {
     }
   };
 
+  const handleDeleteDataset = async () => {
+    if (!user?.apikey || !dataset?.dataset_id) {
+      setDeleteError("Missing user authentication or dataset information.");
+      return;
+    }
+
+    setDeletingDataset(true);
+    setDeleteError("");
+
+    try {
+      const params = new URLSearchParams({
+        dataset_id: dataset.dataset_id,
+        apikey: user.apikey,
+      });
+
+      const response = await fetch(
+        `${delete_dataset_endpoint}?${params.toString()}`,
+        {
+          method: "DELETE",
+          credentials: "include",
+        }
+      );
+
+      if (!response.ok) {
+        let errorMessage = "Failed to delete dataset";
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.detail || errorData.message || errorMessage;
+        } catch {
+          errorMessage = response.statusText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+
+      // Success - redirect to dashboard
+      navigate("/dashboard");
+    } catch (err) {
+      console.error("Error deleting dataset:", err);
+      setDeleteError(err.message || "Failed to delete dataset. Please try again.");
+      setTimeout(() => {
+        setDeleteError("");
+      }, 5000);
+    } finally {
+      setDeletingDataset(false);
+      setShowDatasetDeleteModal(false);
+    }
+  };
+
+  const handleDeleteFile = async () => {
+    if (!user?.apikey || !fileToDelete?.file_id) {
+      setDeleteError("Missing user authentication or file information.");
+      return;
+    }
+
+    setDeletingFileId(fileToDelete.file_id);
+    setDeleteError("");
+
+    try {
+      const params = new URLSearchParams({
+        file_id: fileToDelete.file_id,
+        apikey: user.apikey,
+      });
+
+      const response = await fetch(
+        `${delete_file_endpoint}?${params.toString()}`,
+        {
+          method: "DELETE",
+          credentials: "include",
+        }
+      );
+
+      if (!response.ok) {
+        let errorMessage = "Failed to delete file";
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.detail || errorData.message || errorMessage;
+        } catch {
+          errorMessage = response.statusText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+
+      // Success - refresh the page
+      window.location.reload();
+    } catch (err) {
+      console.error("Error deleting file:", err);
+      setDeleteError(err.message || "Failed to delete file. Please try again.");
+      setTimeout(() => {
+        setDeleteError("");
+      }, 5000);
+    } finally {
+      setDeletingFileId(null);
+      setShowFileDeleteModal(false);
+      setFileToDelete(null);
+    }
+  };
+
+  const openFileDeleteModal = (file) => {
+    setFileToDelete(file);
+    setShowFileDeleteModal(true);
+  };
+
   if (loading) {
     return (
       <div className="container py-5 text-center">
@@ -225,7 +340,151 @@ function DatasetInfo() {
 
   return (
     <div className="container py-5">
-      <h2 className="mb-4">Dataset Information</h2>
+      <div className="d-flex justify-content-between align-items-center mb-4">
+        <h2 className="mb-0">Dataset Information</h2>
+        <button
+          className="btn btn-danger"
+          onClick={() => setShowDatasetDeleteModal(true)}
+          disabled={deletingDataset}
+        >
+          <i className="bi bi-trash"></i> Delete
+        </button>
+      </div>
+
+      {deleteError && (
+        <div className="alert alert-danger alert-dismissible fade show" role="alert">
+          {deleteError}
+          <button
+            type="button"
+            className="btn-close"
+            onClick={() => setDeleteError("")}
+            aria-label="Close"
+          ></button>
+        </div>
+      )}
+
+      {/* Dataset Delete Confirmation Modal */}
+      {showDatasetDeleteModal && (
+        <div
+          className="modal show d-block"
+          tabIndex="-1"
+          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+        >
+          <div className="modal-dialog">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">Confirm Dataset Deletion</h5>
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={() => setShowDatasetDeleteModal(false)}
+                  aria-label="Close"
+                ></button>
+              </div>
+              <div className="modal-body">
+                <p>
+                  Are you sure you want to delete this dataset? This action will
+                  permanently delete the dataset and all associated files. This
+                  action cannot be undone.
+                </p>
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setShowDatasetDeleteModal(false)}
+                  disabled={deletingDataset}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={handleDeleteDataset}
+                  disabled={deletingDataset}
+                >
+                  {deletingDataset ? (
+                    <>
+                      <span
+                        className="spinner-border spinner-border-sm me-2"
+                        role="status"
+                        aria-hidden="true"
+                      ></span>
+                      Deleting...
+                    </>
+                  ) : (
+                    "Delete Dataset"
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* File Delete Confirmation Modal */}
+      {showFileDeleteModal && fileToDelete && (
+        <div
+          className="modal show d-block"
+          tabIndex="-1"
+          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+        >
+          <div className="modal-dialog">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">Confirm File Deletion</h5>
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={() => {
+                    setShowFileDeleteModal(false);
+                    setFileToDelete(null);
+                  }}
+                  aria-label="Close"
+                ></button>
+              </div>
+              <div className="modal-body">
+                <p>
+                  Are you sure you want to delete the file "{fileToDelete.file_title}"?
+                  This action cannot be undone.
+                </p>
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    setShowFileDeleteModal(false);
+                    setFileToDelete(null);
+                  }}
+                  disabled={deletingFileId === fileToDelete.file_id}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={handleDeleteFile}
+                  disabled={deletingFileId === fileToDelete.file_id}
+                >
+                  {deletingFileId === fileToDelete.file_id ? (
+                    <>
+                      <span
+                        className="spinner-border spinner-border-sm me-2"
+                        role="status"
+                        aria-hidden="true"
+                      ></span>
+                      Deleting...
+                    </>
+                  ) : (
+                    "Delete File"
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="card mb-4">
         <div className="card-body">
@@ -442,26 +701,35 @@ function DatasetInfo() {
                       </small>
                     </div>
                   )}
-                  <button
-                    className="btn btn-sm btn-outline-primary"
-                    onClick={() => handleDownload(file)}
-                    disabled={downloadingFileId === file.file_id}
-                  >
-                    {downloadingFileId === file.file_id ? (
-                      <>
-                        <span
-                          className="spinner-border spinner-border-sm me-2"
-                          role="status"
-                          aria-hidden="true"
-                        ></span>
-                        Downloading...
-                      </>
-                    ) : (
-                      <>
-                        <i className="bi bi-arrow-down"></i> download
-                      </>
-                    )}
-                  </button>
+                  <div className="d-flex gap-2">
+                    <button
+                      className="btn btn-sm btn-outline-primary"
+                      onClick={() => handleDownload(file)}
+                      disabled={downloadingFileId === file.file_id}
+                    >
+                      {downloadingFileId === file.file_id ? (
+                        <>
+                          <span
+                            className="spinner-border spinner-border-sm me-2"
+                            role="status"
+                            aria-hidden="true"
+                          ></span>
+                          Downloading...
+                        </>
+                      ) : (
+                        <>
+                          <i className="bi bi-arrow-down"></i> download
+                        </>
+                      )}
+                    </button>
+                    <button
+                      className="btn btn-sm btn-danger"
+                      onClick={() => openFileDeleteModal(file)}
+                      disabled={deletingFileId === file.file_id}
+                    >
+                      <i className="bi bi-trash"></i>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

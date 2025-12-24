@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID, uuid4
 
+import httpx
 from core.config import settings
 from db.session import get_session
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
@@ -16,8 +17,9 @@ from models.dataset import Dataset
 from models.file import File
 from models.user import User
 from services.auth import AuthService, RedisStrategy, get_auth_service
+from services.dataset import DatasetService, get_dataset_service
 from services.upload import UploadService, get_upload_service
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from utils.security import sanitize_input
@@ -101,9 +103,11 @@ class UploadController:
         self,
         upload_service: UploadService,
         session: AsyncSession,
+        dataset_service: DatasetService,
     ):
         self.upload_service = upload_service
         self.session = session
+        self.dataset_service = dataset_service
         self.logger = logging.getLogger(__name__)
 
     async def get_upload_url(self, filename: str, user: User) -> JSONResponse:
@@ -478,14 +482,20 @@ class UploadController:
                 "CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives",
             ]
             permissions_value = permissions
-            if permissions_value is None or (isinstance(permissions_value, str) and not permissions_value.strip()):
+            if permissions_value is None or (
+                isinstance(permissions_value, str) and not permissions_value.strip()
+            ):
                 sanitized_permissions = "CC0: Public Domain"
             else:
-                permissions_stripped = permissions_value.strip() if isinstance(permissions_value, str) else str(permissions_value).strip()
+                permissions_stripped = (
+                    permissions_value.strip()
+                    if isinstance(permissions_value, str)
+                    else str(permissions_value).strip()
+                )
                 if permissions_stripped not in allowed_permissions:
                     self.logger.warning(
                         "Invalid permissions value '%s', defaulting to 'CC0: Public Domain'",
-                        permissions_stripped
+                        permissions_stripped,
                     )
                     sanitized_permissions = "CC0: Public Domain"
                 else:
@@ -606,11 +616,153 @@ class UploadController:
                 detail="Error creating file record",
             )
 
+    async def delete_file(self, file_id: UUID, apikey: str) -> JSONResponse:
+        """
+        Delete a file from S3 and the database.
+
+        This method:
+        1. Gets the file record to retrieve dataset_id and file_key
+        2. Checks permission using check_dataset_permission
+        3. Deletes the file from S3
+        4. Deletes the file record from the database
+
+        Args:
+            file_id: UUID of the file to delete
+            apikey: API key of the user requesting deletion
+
+        Returns:
+            JSONResponse with success or error message
+
+        Raises:
+            HTTPException: If validation fails or deletion fails
+        """
+        try:
+            self.logger.info(
+                "Processing delete_file request for file_id: %s, apikey: %s",
+                file_id,
+                apikey,
+            )
+
+            # 1. Get file record
+            result = await self.session.execute(
+                select(File).where(File.file_id == file_id)
+            )
+            file_record = result.scalar_one_or_none()
+
+            if not file_record:
+                self.logger.warning("File not found: %s", file_id)
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"file {file_id} does not exist",
+                )
+
+            dataset_id = file_record.dataset_id
+            file_key = file_record.file_key
+
+            # 2. Check permission
+            has_permission = await self.dataset_service.check_dataset_permission(
+                apikey, dataset_id
+            )
+
+            if not has_permission:
+                self.logger.warning(
+                    "Permission denied for file deletion: file_id=%s, apikey=%s",
+                    file_id,
+                    apikey,
+                )
+                return JSONResponse(
+                    content={
+                        "detail": "user does not have permission to control this dataset"
+                    },
+                    status_code=status.HTTP_403_FORBIDDEN,
+                )
+
+            # 3. Delete from S3
+            s3_handler_url = settings.S3_HANDLER_URL.rstrip("/")
+            s3_region = settings.S3_REGION
+            s3_bucket = settings.S3_BUCKET
+
+            params = {
+                "key": file_key,
+                "s3_region": s3_region,
+                "s3_bucket": s3_bucket,
+            }
+
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.delete(
+                        f"{s3_handler_url}/delete",
+                        params=params,
+                    )
+
+                    if response.status_code != 200:
+                        self.logger.error(
+                            "S3 handler delete endpoint returned status %d: %s",
+                            response.status_code,
+                            response.text,
+                        )
+                        raise HTTPException(
+                            status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail="S3 handler service unavailable",
+                        )
+
+                    data = response.json()
+                    deleted = data.get("deleted", False)
+
+                    if not deleted:
+                        self.logger.warning(
+                            "File deletion failed in S3: file_id=%s, file_key=%s",
+                            file_id,
+                            file_key,
+                        )
+                        return JSONResponse(
+                            content={"detail": f"file {file_id} does not exist"},
+                            status_code=status.HTTP_404_NOT_FOUND,
+                        )
+
+            except httpx.TimeoutException:
+                self.logger.exception("Timeout while deleting file from S3")
+                raise HTTPException(
+                    status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                    detail="S3 handler service timeout",
+                )
+            except httpx.RequestError as e:
+                self.logger.exception(
+                    "Request error while deleting file from S3: %s", e
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="S3 handler service connection error",
+                )
+
+            # 4. Delete from database
+            await self.session.execute(delete(File).where(File.file_id == file_id))
+            await self.session.commit()
+
+            self.logger.info("File deleted successfully: file_id=%s", file_id)
+
+            return JSONResponse(
+                content={"detail": "file deleted successfully."},
+                status_code=status.HTTP_200_OK,
+            )
+
+        except HTTPException:
+            await self.session.rollback()
+            raise
+        except Exception as e:
+            await self.session.rollback()
+            self.logger.exception("Unexpected error deleting file: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error deleting file",
+            )
+
 
 # Dependency to get upload controller
 async def get_upload_controller(
     upload_service: UploadService = Depends(get_upload_service),
     session: AsyncSession = Depends(get_session),
+    dataset_service: DatasetService = Depends(get_dataset_service),
 ) -> UploadController:
     """
     Dependency function to get UploadController instance.
@@ -618,11 +770,12 @@ async def get_upload_controller(
     Args:
         upload_service: Upload service dependency
         session: Database session dependency
+        dataset_service: Dataset service dependency
 
     Returns:
         UploadController instance
     """
-    return UploadController(upload_service, session)
+    return UploadController(upload_service, session, dataset_service)
 
 
 # Route handlers
@@ -708,15 +861,21 @@ async def add_files(
         None, description="File format/extension (max 20 chars)"
     ),
     dataset_id: str = Form(..., description="Dataset ID (UUID)"),
-    groundtruthed: Optional[bool] = Form(None, description="Whether dataset is groundtruthed"),
+    groundtruthed: Optional[bool] = Form(
+        None, description="Whether dataset is groundtruthed"
+    ),
     provenance: Optional[str] = Form(None, description="Provenance"),
     source: Optional[str] = Form(None, description="Source"),
     cite_as: Optional[str] = Form(None, description="Citation information"),
     permissions: Optional[str] = Form(None, description="Permissions"),
     duration: int = Form(0, description="Duration in years"),
     value: Optional[str] = Form(None, description="Value level (high, medium, low)"),
-    temporal_from: Optional[str] = Form(None, description="Temporal coverage start date (ISO format)"),
-    temporal_to: Optional[str] = Form(None, description="Temporal coverage end date (ISO format)"),
+    temporal_from: Optional[str] = Form(
+        None, description="Temporal coverage start date (ISO format)"
+    ),
+    temporal_to: Optional[str] = Form(
+        None, description="Temporal coverage end date (ISO format)"
+    ),
     geography: Optional[str] = Form(None, description="Geographic coverage"),
     user: User = Depends(get_current_active_user),
     controller: UploadController = Depends(get_upload_controller),
@@ -770,8 +929,10 @@ async def add_files(
         parsed_temporal_to = None
         if temporal_from:
             try:
-                parsed_temporal_from = datetime.fromisoformat(temporal_from.replace("Z", "+00:00"))
-            except (ValueError, AttributeError) as e:
+                parsed_temporal_from = datetime.fromisoformat(
+                    temporal_from.replace("Z", "+00:00")
+                )
+            except (ValueError, AttributeError):
                 logger.warning("Invalid temporal_from format: %s", temporal_from)
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -779,8 +940,10 @@ async def add_files(
                 )
         if temporal_to:
             try:
-                parsed_temporal_to = datetime.fromisoformat(temporal_to.replace("Z", "+00:00"))
-            except (ValueError, AttributeError) as e:
+                parsed_temporal_to = datetime.fromisoformat(
+                    temporal_to.replace("Z", "+00:00")
+                )
+            except (ValueError, AttributeError):
                 logger.warning("Invalid temporal_to format: %s", temporal_to)
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -814,3 +977,37 @@ async def add_files(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error processing add_files request",
         )
+
+
+@router.delete("/delete_file")
+async def delete_file(
+    file_id: UUID = Query(..., description="File ID (UUID)"),
+    apikey: str = Query(..., description="API key for authentication"),
+    controller: UploadController = Depends(get_upload_controller),
+):
+    """
+    Delete a file from S3 and the database.
+
+    This endpoint:
+    - Takes file_id and apikey as query parameters
+    - Checks if the user has permission to delete the file
+    - Deletes the file from S3
+    - Deletes the file record from the database
+
+    Args:
+        file_id: File ID (UUID) to delete
+        apikey: API key for authentication
+        controller: Upload controller (from dependency)
+
+    Returns:
+        JSON response with success or error message
+
+    Raises:
+        HTTPException:
+            - 403: User does not have permission
+            - 404: File does not exist
+            - 500: Internal server error
+            - 502: S3 handler service unavailable
+            - 504: S3 handler service timeout
+    """
+    return await controller.delete_file(file_id, apikey)

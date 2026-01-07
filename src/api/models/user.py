@@ -22,6 +22,9 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    modified_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, onupdate=func.now()
+    )
     verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     apikey: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     contributions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

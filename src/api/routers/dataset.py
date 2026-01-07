@@ -22,6 +22,7 @@ from schemas.dataset import DatasetCreate
 from services.auth import AuthService, RedisStrategy, get_auth_service
 from services.dataset import DatasetService, get_dataset_service
 from services.organization import OrganizationService, get_organization_service
+from services.user import UserService, get_user_service
 from sqlalchemy import delete, select, update
 
 router = APIRouter()
@@ -875,16 +876,17 @@ async def user_datasets(
     user_id: str = Query(..., description="User ID (UUID)"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of results"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
+    apikey: Optional[str] = Query(None, description="Optional API key for privacy filtering"),
     controller: DatasetController = Depends(get_dataset_controller),
-    authenticated_user: Optional[User] = Depends(get_current_active_user_optional),
+    user_service: UserService = Depends(get_user_service),
 ):
     """
     Get datasets created by a specific user with pagination and privacy filtering.
 
     Privacy rules:
-    - If not authenticated: returns only public datasets (private=False)
-    - If authenticated:
-      - If authenticated user's organization matches creator's organization:
+    - If no apikey provided: returns only public datasets (private=False)
+    - If apikey provided:
+      - If requesting user's organization matches creator's organization:
         returns all datasets (no privacy filter)
       - If organizations don't match: returns only public datasets (private=False)
 
@@ -892,8 +894,9 @@ async def user_datasets(
         user_id: User ID (UUID) - required query parameter (creator of datasets)
         limit: Maximum number of results (default: 10, min: 1, max: 100)
         offset: Number of results to skip for pagination (default: 0, min: 0)
+        apikey: Optional API key for privacy filtering
         controller: Dataset controller (from dependency)
-        authenticated_user: Optional authenticated user (from dependency)
+        user_service: User service (from dependency)
 
     Returns:
         JSON response containing list of datasets ordered by created_at (latest first)
@@ -912,8 +915,19 @@ async def user_datasets(
                 detail="Invalid user_id UUID format",
             )
 
+        # Get user by apikey if provided
+        requesting_user = None
+        if apikey:
+            user_data = await user_service.get_user_by_apikey(apikey)
+            if user_data:
+                # Fetch User model instance from database using user ID
+                user_result = await controller.dataset_service.session.execute(
+                    select(User).where(User.id == user_data["id"])
+                )
+                requesting_user = user_result.scalar_one_or_none()
+
         return await controller.get_user_datasets(
-            user_uuid, limit, offset, authenticated_user
+            user_uuid, limit, offset, requesting_user
         )
 
     except HTTPException:

@@ -6,6 +6,7 @@ from uuid import UUID
 from db.session import get_session
 from fastapi import Depends, HTTPException, status
 from models.organization import Organization
+from models.user import User
 from schemas.organization import (
     OrganizationCreate,
     OrganizationSearch,
@@ -109,6 +110,92 @@ class OrganizationService:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Error fetching organization",
+            )
+
+    async def get_organization_with_details(
+        self, org_id: str
+    ) -> Optional[dict]:
+        """
+        Get organization by ID with creator name and members.
+
+        Args:
+            org_id: Organization ID
+
+        Returns:
+            Dictionary containing organization data with creator_name and members,
+            or None if organization not found
+        """
+        try:
+            self.logger.info("Fetching organization with details: %s", org_id)
+
+            # Get organization
+            organization = await self.get_organization_by_id(org_id)
+            if not organization:
+                return None
+
+            # Get creator's full_name
+            creator_name = None
+            if organization.creator:
+                creator_query = select(User).where(User.id == organization.creator)
+                creator_result = await self.session.execute(creator_query)
+                creator_user = creator_result.scalar_one_or_none()
+                if creator_user:
+                    creator_name = creator_user.full_name
+                    self.logger.info(
+                        "Creator found: %s (ID: %s)", creator_name, organization.creator
+                    )
+
+            # Get all members
+            members_query = select(User).where(User.organization == org_id)
+            members_result = await self.session.execute(members_query)
+            members_users = members_result.scalars().all()
+
+            members = []
+            for member in members_users:
+                members.append(
+                    {
+                        "full_name": member.full_name,
+                        "id": str(member.id),
+                        "designation": member.designation,
+                        "email": member.email,
+                        "role": member.role,
+                        "contributions": member.contributions,
+                        "verified": member.verified,
+                    }
+                )
+
+            self.logger.info("Found %d members for organization %s", len(members), org_id)
+
+            # Build response dictionary
+            org_dict = {
+                "id": organization.id,
+                "name": organization.name,
+                "creator": organization.creator,
+                "description": organization.description,
+                "org_type": organization.org_type,
+                "contact": organization.contact,
+                "website": organization.website,
+                "private": organization.private,
+                "contributions": organization.contributions,
+                "focus": organization.focus,
+                "roi_states": organization.roi_states,
+                "created_at": organization.created_at,
+                "modified_at": organization.modified_at,
+                "creator_name": creator_name,
+                "members": members,
+            }
+
+            return org_dict
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.exception(
+                "Error fetching organization with details %s: %s", org_id, e
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error fetching organization details",
             )
 
     async def create_organization(self, org_data: OrganizationCreate) -> Organization:

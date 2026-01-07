@@ -41,7 +41,10 @@ class Organization(Base):
         ARRAY(String), nullable=True
     )
 
-    # Timestamp
+    # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    modified_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, onupdate=func.now()
     )

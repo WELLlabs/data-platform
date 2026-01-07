@@ -20,3 +20,4 @@ export const download_url_endpoint = "/api/download_url";
 export const add_files_url_endpoint = "/api/add_file";
 export const delete_dataset_endpoint = "/api/delete_dataset";
 export const delete_file_endpoint = "/api/delete_file";
+export const profile_endpoint = "/api/profile";

@@ -223,13 +223,6 @@ function Datasets() {
               Next
             </button>
           </div>
-
-          {/* End of datasets message */}
-          {(!hasMore || (datasets.length === 0 && currentPage > 1)) && (
-            <div className="text-center mt-3">
-              <small className="text-muted">End of datasets</small>
-            </div>
-          )}
         </>
       )}
     </div>

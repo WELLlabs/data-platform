@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, validator
@@ -63,9 +63,25 @@ class OrganizationRead(OrganizationBase):
     creator: Optional[UUID] = Field(None, description="Creator user ID")
     contributions: int = Field(default=0, description="Number of contributions")
     created_at: datetime = Field(..., description="Creation timestamp")
+    modified_at: Optional[datetime] = Field(None, description="Last modification timestamp")
 
     class Config:
         from_attributes = True
+
+
+class OrganizationDetailRead(OrganizationRead):
+    """Schema for reading organization data with detailed information"""
+
+    creator_name: Optional[str] = Field(
+        None, description="Full name of the organization creator"
+    )
+    members: List[Dict] = Field(
+        default_factory=list,
+        description="List of organization members with user details",
+    )
+    privileges: Dict[str, bool] = Field(
+        default_factory=dict, description="User privileges (edit, create)"
+    )
 
 
 class OrganizationUpdate(BaseModel):

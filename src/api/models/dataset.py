@@ -56,11 +56,10 @@ class Dataset(Base):
         server_default=func.now(),
         nullable=False,
     )
-    modified_at: Mapped[datetime] = mapped_column(
+    modified_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True),
-        server_default=func.now(),
+        nullable=True,
         onupdate=func.now(),
-        nullable=False,
     )
     organization: Mapped[str] = mapped_column(
         String(length=100),

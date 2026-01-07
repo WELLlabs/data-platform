@@ -58,6 +58,9 @@ class File(Base):
         nullable=False,
         server_default=func.now(),
     )
+    modified_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, onupdate=func.now()
+    )
     dataset_id: Mapped[UUID] = mapped_column(
         ForeignKey("datasets.dataset_id", ondelete="CASCADE"),
         nullable=False,

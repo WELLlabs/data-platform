@@ -6,6 +6,7 @@ This model represents the association between tags and datasets in the system.
 
 import logging
 from datetime import datetime
+from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import DateTime, ForeignKey
@@ -43,6 +44,9 @@ class TagDataset(Base):
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,
+    )
+    modified_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, onupdate=func.now()
     )
 
     def __repr__(self) -> str:

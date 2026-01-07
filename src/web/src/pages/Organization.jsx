@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { 
   Container, 
   Row, 
@@ -11,8 +11,7 @@ import {
   Spinner, 
   Alert,
   Button,
-  ListGroup,
-  ListGroupItem
+  Table
 } from 'reactstrap';
 import { useAuth } from '../contexts/AuthContext';
 import { organization_by_id_endpoint } from '../api/endpoints';
@@ -55,8 +54,14 @@ const Organization = () => {
           return;
         }
 
+        // Build URL with optional apikey query parameter
+        let url = organization_by_id_endpoint(organizationId);
+        if (isAuthenticated && user?.apikey) {
+          url += `?apikey=${encodeURIComponent(user.apikey)}`;
+        }
+
         // Fetch organization details
-        const response = await fetch(organization_by_id_endpoint(organizationId), {
+        const response = await fetch(url, {
           method: 'GET',
           credentials: 'include'
         });
@@ -160,16 +165,75 @@ const Organization = () => {
     );
   }
 
+  // Helper function to format date
+  const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    try {
+      return new Date(dateString).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+    } catch {
+      return dateString;
+    }
+  };
+
+  // Helper function to format array as comma-separated string
+  const formatArray = (arr) => {
+    if (!arr || !Array.isArray(arr) || arr.length === 0) return 'N/A';
+    return arr.join(', ');
+  };
+
+  // Helper function to get role display
+  const getRoleDisplay = (role) => {
+    if (role === 0) return 'Member';
+    if (role === 1) return 'Admin';
+    if (role === 2) return 'Editor';
+    return 'Member';
+  };
+
   return (
     <Container className="py-5">
       <Row>
         <Col lg="8" className="mx-auto">
-          {/* Organization Header */}
+          {/* Header with title and action buttons */}
+          <div className="d-flex justify-content-between align-items-center mb-4">
+            <h2 className="mb-0">{organization.name}</h2>
+            <div className="d-flex gap-2">
+              {organization.privileges?.create && (
+                <Button 
+                  color="success" 
+                  onClick={() => navigate('/createorg')}
+                >
+                  Create
+                </Button>
+              )}
+              {organization.privileges?.edit && (
+                <Button 
+                  color="primary"
+                  onClick={() => {
+                    // TODO: Navigate to edit page
+                    console.log('Edit organization clicked');
+                  }}
+                >
+                  Edit
+                </Button>
+              )}
+              <Button 
+                color="primary"
+                onClick={() => navigate('/orgsearch')}
+              >
+                Search
+              </Button>
+            </div>
+          </div>
+
+          {/* Organization Details Card */}
           <Card className="mb-4 shadow-sm">
             <CardHeader className="bg-primary text-white">
               <div className="d-flex justify-content-between align-items-start">
                 <div>
-                  <h2 className="mb-1">{organization.name}</h2>
                   <p className="mb-0 opacity-75">
                     <i className="bi bi-building me-2"></i>
                     Organization Details
@@ -186,186 +250,114 @@ const Organization = () => {
               </div>
             </CardHeader>
             <CardBody>
-              {organization.description && (
-                <div className="mb-4">
-                  <h5 className="text-muted mb-2">Description</h5>
-                  <p className="lead">{organization.description}</p>
-                </div>
-              )}
-
               <Row>
-                <Col md="6">
-                  <div className="mb-3">
-                    <h6 className="text-muted mb-2">
-                      <i className="bi bi-tag me-2"></i>
-                      Organization Type
-                    </h6>
-                    <p className="mb-0">
-                      {organization.org_type || 'Not specified'}
-                    </p>
-                  </div>
+                <Col md="6" className="mb-3">
+                  <strong>Organization ID:</strong> {organization.id}
                 </Col>
-                <Col md="6">
-                  <div className="mb-3">
-                    <h6 className="text-muted mb-2">
-                      <i className="bi bi-people me-2"></i>
-                      Contributions
-                    </h6>
-                    <p className="mb-0">
-                      <Badge color="info" className="fs-6">
-                        {organization.contributions}
-                      </Badge>
-                    </p>
-                  </div>
+                <Col md="6" className="mb-3">
+                  <strong>Creator:</strong>{' '}
+                  {organization.creator_name ? (
+                    <Link 
+                      to={`/profile?id=${organization.creator}`}
+                      style={{ color: '#1b75e0' }}
+                    >
+                      {organization.creator_name}
+                    </Link>
+                  ) : (
+                    'N/A'
+                  )}
                 </Col>
-              </Row>
-
-              <Row>
-                <Col md="6">
-                  <div className="mb-3">
-                    <h6 className="text-muted mb-2">
-                      <i className="bi bi-calendar me-2"></i>
-                      Created
-                    </h6>
-                    <p className="mb-0">
-                      {new Date(organization.created_at).toLocaleDateString('en-US', {
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric'
-                      })}
-                    </p>
-                  </div>
+                <Col md="12" className="mb-3">
+                  <strong>Description:</strong> {organization.description || 'N/A'}
                 </Col>
-                <Col md="6">
-                  <div className="mb-3">
-                    <h6 className="text-muted mb-2">
-                      <i className="bi bi-hash me-2"></i>
-                      Organization ID
-                    </h6>
-                    <p className="mb-0 font-monospace small">
-                      {organization.id}
-                    </p>
-                  </div>
+                <Col md="6" className="mb-3">
+                  <strong>Organization Type:</strong> {organization.org_type || 'N/A'}
+                </Col>
+                <Col md="6" className="mb-3">
+                  <strong>Contact:</strong> {organization.contact || 'N/A'}
+                </Col>
+                <Col md="6" className="mb-3">
+                  <strong>Website:</strong>{' '}
+                  {organization.website ? (
+                    <a 
+                      href={organization.website} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-decoration-none"
+                    >
+                      {organization.website}
+                      <i className="bi bi-box-arrow-up-right ms-1"></i>
+                    </a>
+                  ) : (
+                    'N/A'
+                  )}
+                </Col>
+                <Col md="6" className="mb-3">
+                  <strong>Contributions:</strong> {organization.contributions || 0}
+                </Col>
+                <Col md="6" className="mb-3">
+                  <strong>Focus:</strong> {formatArray(organization.focus)}
+                </Col>
+                <Col md="6" className="mb-3">
+                  <strong>States:</strong> {formatArray(organization.roi_states)}
+                </Col>
+                <Col md="6" className="mb-3">
+                  <strong>Created At:</strong> {formatDate(organization.created_at)}
+                </Col>
+                <Col md="6" className="mb-3">
+                  <strong>Modified At:</strong> {formatDate(organization.modified_at)}
                 </Col>
               </Row>
             </CardBody>
           </Card>
 
-          {/* Contact Information */}
-          {(organization.contact || organization.website) && (
-            <Card className="mb-4 shadow-sm">
-              <CardHeader className="bg-light">
-                <h5 className="mb-0">
-                  <i className="bi bi-envelope me-2"></i>
-                  Contact Information
-                </h5>
-              </CardHeader>
-              <CardBody>
-                <Row>
-                  {organization.contact && (
-                    <Col md="6">
-                      <div className="mb-3">
-                        <h6 className="text-muted mb-2">Contact</h6>
-                        <p className="mb-0">{organization.contact}</p>
-                      </div>
-                    </Col>
-                  )}
-                  {organization.website && (
-                    <Col md="6">
-                      <div className="mb-3">
-                        <h6 className="text-muted mb-2">Website</h6>
-                        <a 
-                          href={organization.website} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="text-decoration-none"
+          {/* Members Section */}
+          {organization.members && organization.members.length > 0 && (
+            <div className="mb-4">
+              <h4 className="mb-3">Members</h4>
+              <Table borderless responsive>
+                <thead>
+                  <tr>
+                    <th></th>
+                    <th>Name</th>
+                    <th>Designation</th>
+                    <th>Email</th>
+                    <th>Contributions</th>
+                    <th>Role</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {organization.members.map((member) => (
+                    <tr key={member.id}>
+                      <td>
+                        <span
+                          title={member.verified ? 'Approved' : 'Not Approved'}
                         >
-                          {organization.website}
-                          <i className="bi bi-box-arrow-up-right ms-1"></i>
-                        </a>
-                      </div>
-                    </Col>
-                  )}
-                </Row>
-              </CardBody>
-            </Card>
-          )}
-
-          {/* Focus Areas */}
-          {organization.focus && organization.focus.length > 0 && (
-            <Card className="mb-4 shadow-sm">
-              <CardHeader className="bg-light">
-                <h5 className="mb-0">
-                  <i className="bi bi-bullseye me-2"></i>
-                  Focus Areas
-                </h5>
-              </CardHeader>
-              <CardBody>
-                <div className="d-flex flex-wrap gap-2">
-                  {organization.focus.map((area, index) => (
-                    <Badge key={index} color="primary" className="fs-6 px-3 py-2">
-                      {area}
-                    </Badge>
+                          {member.verified ? (
+                            <i className="bi bi-check-circle-fill text-success"></i>
+                          ) : (
+                            <i className="bi bi-x-circle-fill text-danger"></i>
+                          )}
+                        </span>
+                      </td>
+                      <td>
+                        <Link 
+                          to={`/profile?id=${member.id}`}
+                          style={{ color: '#1b75e0' }}
+                        >
+                          {member.full_name}
+                        </Link>
+                      </td>
+                      <td>{member.designation || 'N/A'}</td>
+                      <td>{member.email || 'N/A'}</td>
+                      <td>{member.contributions || 0}</td>
+                      <td>{getRoleDisplay(member.role)}</td>
+                    </tr>
                   ))}
-                </div>
-              </CardBody>
-            </Card>
+                </tbody>
+              </Table>
+            </div>
           )}
-
-          {/* ROI States */}
-          {organization.roi_states && organization.roi_states.length > 0 && (
-            <Card className="mb-4 shadow-sm">
-              <CardHeader className="bg-light">
-                <h5 className="mb-0">
-                  <i className="bi bi-geo-alt me-2"></i>
-                  ROI States
-                </h5>
-              </CardHeader>
-              <CardBody>
-                <div className="d-flex flex-wrap gap-2">
-                  {organization.roi_states.map((state, index) => (
-                    <Badge key={index} color="secondary" className="fs-6 px-3 py-2">
-                      {state}
-                    </Badge>
-                  ))}
-                </div>
-              </CardBody>
-            </Card>
-          )}
-
-          {/* Action Buttons */}
-          <Card className="shadow-sm">
-            <CardBody className="text-center">
-              <div className="d-flex flex-wrap justify-content-center gap-3">
-                <Button 
-                  color="primary" 
-                  size="lg"
-                  onClick={() => navigate('/orgsearch')}
-                >
-                  <i className="bi bi-search me-2"></i>
-                  Search Organizations
-                </Button>
-                {isAuthenticated && (
-                  <Button 
-                    color="success" 
-                    size="lg"
-                    onClick={() => navigate('/createorg')}
-                  >
-                    <i className="bi bi-plus-circle me-2"></i>
-                    Create Organization
-                  </Button>
-                )}
-                <Button 
-                  color="outline-primary" 
-                  size="lg"
-                  onClick={() => navigate('/')}
-                >
-                  <i className="bi bi-house me-2"></i>
-                  Go Home
-                </Button>
-              </div>
-            </CardBody>
-          </Card>
         </Col>
       </Row>
     </Container>

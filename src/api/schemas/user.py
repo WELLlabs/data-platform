@@ -14,6 +14,7 @@ class UserRead(schemas.BaseUser[UUID]):
     role: int
     phone: Optional[str] = None
     created_at: datetime
+    modified_at: Optional[datetime] = None
     verified: bool
     apikey: str
     contributions: int

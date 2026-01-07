@@ -1,5 +1,5 @@
 import logging
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.encoders import jsonable_encoder
@@ -11,6 +11,7 @@ from schemas.organization import (
     OrganizationUpdate,
 )
 from services.organization import OrganizationService, get_organization_service
+from services.user import UserService, get_user_service
 
 router = APIRouter()
 
@@ -20,8 +21,11 @@ class OrganizationController:
     Class-based organization controller with comprehensive error handling.
     """
 
-    def __init__(self, org_service: OrganizationService):
+    def __init__(
+        self, org_service: OrganizationService, user_service: UserService
+    ):
         self.org_service = org_service
+        self.user_service = user_service
         self.logger = logging.getLogger(__name__)
 
     async def create_organization(self, org_data: OrganizationCreate) -> JSONResponse:
@@ -59,15 +63,18 @@ class OrganizationController:
                 detail="Organization creation service error",
             )
 
-    async def get_organization(self, org_id: str) -> JSONResponse:
+    async def get_organization(
+        self, org_id: str, apikey: Optional[str] = None
+    ) -> JSONResponse:
         """
-        Get organization by ID.
+        Get organization by ID with detailed information.
 
         Args:
             org_id: Organization ID
+            apikey: Optional API key for privilege checking
 
         Returns:
-            JSONResponse with organization data
+            JSONResponse with organization data including creator_name, members, and privileges
 
         Raises:
             HTTPException: If organization not found
@@ -75,19 +82,40 @@ class OrganizationController:
         try:
             self.logger.info("Fetching organization: %s", org_id)
 
-            organization = await self.org_service.get_organization_by_id(org_id)
+            # Get organization with details
+            org_dict = await self.org_service.get_organization_with_details(org_id)
 
-            if not organization:
+            if not org_dict:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Organization not found",
                 )
 
-            # Convert to OrganizationRead schema
-            org_read = OrganizationRead.from_orm(organization)
+            # Calculate privileges
+            create_privilege = False
+            edit_privilege = False
+
+            if apikey:
+                # Check if user is superuser for create privilege
+                user_data = await self.user_service.get_user_by_apikey(apikey)
+                if user_data and user_data.get("is_superuser"):
+                    create_privilege = True
+                    self.logger.info("User has create privilege (superuser)")
+
+                # Check if user is admin for edit privilege
+                is_admin = await self.user_service.check_if_admin_by_key(org_id, apikey)
+                if is_admin:
+                    edit_privilege = True
+                    self.logger.info("User has edit privilege (admin)")
+
+            # Add privileges to response
+            org_dict["privileges"] = {
+                "create": create_privilege,
+                "edit": edit_privilege,
+            }
 
             return JSONResponse(
-                content=jsonable_encoder(org_read.dict()),
+                content=jsonable_encoder(org_dict),
                 status_code=status.HTTP_200_OK,
             )
 
@@ -278,8 +306,9 @@ class OrganizationController:
 # Dependency to get organization controller
 async def get_organization_controller(
     org_service: OrganizationService = Depends(get_organization_service),
+    user_service: UserService = Depends(get_user_service),
 ) -> OrganizationController:
-    return OrganizationController(org_service)
+    return OrganizationController(org_service, user_service)
 
 
 # Route handlers
@@ -294,15 +323,18 @@ async def create_organization(
     return await controller.create_organization(org_data)
 
 
-@router.get("/{org_id}", response_model=OrganizationRead)
+@router.get("/{org_id}")
 async def get_organization(
     org_id: str,
+    apikey: Optional[str] = Query(
+        None, description="Optional API key for privilege checking"
+    ),
     controller: OrganizationController = Depends(get_organization_controller),
 ):
     """
-    Get organization by ID.
+    Get organization by ID with detailed information.
     """
-    return await controller.get_organization(org_id)
+    return await controller.get_organization(org_id, apikey)
 
 
 @router.put("/{org_id}", response_model=OrganizationRead)

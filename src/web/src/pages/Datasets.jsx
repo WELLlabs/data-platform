@@ -123,15 +123,17 @@ function Datasets() {
         <div className="col">
           <h2 className="text-start m-0">Datasets</h2>
         </div>
-        <div className="col-auto">
-          <button
-            className="btn"
-            style={{ backgroundColor: "#0d983b", color: "#fff" }}
-            onClick={() => navigate("/create-dataset")}
-          >
-            Upload
-          </button>
-        </div>
+        {isAuthenticated && (
+          <div className="col-auto">
+            <button
+              className="btn"
+              style={{ backgroundColor: "#0d983b", color: "#fff" }}
+              onClick={() => navigate("/create-dataset")}
+            >
+              Upload
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Loading state */}

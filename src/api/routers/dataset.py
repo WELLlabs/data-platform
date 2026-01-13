@@ -416,8 +416,8 @@ class DatasetController:
         1. Checks permission using check_dataset_permission
         2. Fetches dataset record to capture creator and organization
         3. Gets all files associated with the dataset
-        4. Deletes each file from S3
-        5. Deletes all file records and the dataset record from the database
+        4. For each file: deletes from S3, then immediately deletes the file record from database
+        5. Deletes the dataset record from the database
         6. Verifies deletion was successful (no records with dataset_id remain)
         7. Decrements contributions by 1 for the creator user and organization
 
@@ -487,9 +487,10 @@ class DatasetController:
                 "Found %d files to delete for dataset %s", len(files), dataset_id
             )
 
-            # 5. Delete each file from S3
+            # 5. Delete each file from S3 and database as pairs
             for file_record in files:
                 file_key = file_record.file_key
+                file_id = file_record.file_id
                 params = {
                     "key": file_key,
                     "s3_region": s3_region,
@@ -497,6 +498,7 @@ class DatasetController:
                 }
 
                 try:
+                    # Delete file from S3
                     async with httpx.AsyncClient(timeout=10.0) as client:
                         response = await client.delete(
                             f"{s3_handler_url}/delete",
@@ -511,7 +513,7 @@ class DatasetController:
                             )
                             raise HTTPException(
                                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                                detail=f"Failed to delete file {file_record.file_id} from S3",
+                                detail=f"Failed to delete file {file_id} from S3",
                             )
 
                         data = response.json()
@@ -520,39 +522,48 @@ class DatasetController:
                         if not deleted:
                             self.logger.error(
                                 "File deletion failed in S3: file_id=%s, file_key=%s",
-                                file_record.file_id,
+                                file_id,
                                 file_key,
                             )
                             raise HTTPException(
                                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                                detail=f"Failed to delete file {file_record.file_id} from S3",
+                                detail=f"Failed to delete file {file_id} from S3",
                             )
 
                         self.logger.info(
                             "File deleted from S3: file_id=%s, file_key=%s",
-                            file_record.file_id,
+                            file_id,
                             file_key,
                         )
 
+                    # Delete file record from database immediately after S3 deletion
+                    await self.dataset_service.session.execute(
+                        delete(File).where(File.file_id == file_id)
+                    )
+                    await self.dataset_service.session.commit()
+
+                    self.logger.info(
+                        "File record deleted from database: file_id=%s", file_id
+                    )
+
                 except httpx.TimeoutException:
+                    await self.dataset_service.session.rollback()
                     self.logger.exception("Timeout while deleting file from S3")
                     raise HTTPException(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail=f"Timeout while deleting file {file_record.file_id} from S3",
+                        detail=f"Timeout while deleting file {file_id} from S3",
                     )
                 except httpx.RequestError as e:
+                    await self.dataset_service.session.rollback()
                     self.logger.exception(
                         "Request error while deleting file from S3: %s", e
                     )
                     raise HTTPException(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail=f"Error connecting to S3 handler for file {file_record.file_id}",
+                        detail=f"Error connecting to S3 handler for file {file_id}",
                     )
 
-            # 6. Delete from database (after all S3 deletions succeed)
-            await self.dataset_service.session.execute(
-                delete(File).where(File.dataset_id == dataset_id)
-            )
+            # 6. Delete dataset record from database (after all files are deleted)
             await self.dataset_service.session.execute(
                 delete(Dataset).where(Dataset.dataset_id == dataset_id)
             )

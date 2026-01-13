@@ -19,7 +19,7 @@ from models.user import User
 from services.auth import AuthService, RedisStrategy, get_auth_service
 from services.dataset import DatasetService, get_dataset_service
 from services.upload import UploadService, get_upload_service
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from utils.security import sanitize_input
@@ -623,8 +623,9 @@ class UploadController:
         This method:
         1. Gets the file record to retrieve dataset_id and file_key
         2. Checks permission using check_dataset_permission
-        3. Deletes the file from S3
-        4. Deletes the file record from the database
+        3. Checks if this is the only file in the dataset (prevents deletion if so)
+        4. Deletes the file from S3
+        5. Deletes the file record from the database
 
         Args:
             file_id: UUID of the file to delete
@@ -675,6 +676,23 @@ class UploadController:
                         "detail": "user does not have permission to control this dataset"
                     },
                     status_code=status.HTTP_403_FORBIDDEN,
+                )
+
+            # 2.5. Check if this is the only file in the dataset
+            file_count_result = await self.session.execute(
+                select(func.count(File.file_id)).where(File.dataset_id == dataset_id)
+            )
+            file_count = file_count_result.scalar_one()
+
+            if file_count == 1:
+                self.logger.warning(
+                    "Deletion prevented: file_id=%s is the only file in dataset_id=%s",
+                    file_id,
+                    dataset_id,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Delete failed as this is the only file of the dataset",
                 )
 
             # 3. Delete from S3

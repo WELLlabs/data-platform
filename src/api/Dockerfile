@@ -1,7 +1,51 @@
-FROM python:3.13.7
-RUN pip install uv
-WORKDIR /code
-COPY .python-version pyproject.toml uv.lock .
-RUN uv sync --frozen
-COPY ./ ./
+# Stage 1: Builder
+FROM python:3.13-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache \
+    gcc \
+    musl-dev \
+    libffi-dev \
+    curl
+
+# Install uv
+RUN pip install --no-cache-dir uv
+
+WORKDIR /app
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
+
+# Stage 2: Runtime
+FROM python:3.13-alpine
+
+# Install only runtime dependencies
+RUN apk add --no-cache curl
+
+# Install uv
+RUN pip install --no-cache-dir uv
+
+# Create non-root user
+RUN adduser -D -u 1000 appuser && \
+    mkdir -p /app && \
+    chown -R appuser:appuser /app
+
+WORKDIR /app
+
+COPY --from=builder /app/.venv /app/.venv
+COPY --chown=appuser:appuser core/ ./core/
+COPY --chown=appuser:appuser db/ ./db/
+COPY --chown=appuser:appuser middleware/ ./middleware/
+COPY --chown=appuser:appuser models/ ./models/
+COPY --chown=appuser:appuser routers/ ./routers/
+COPY --chown=appuser:appuser schemas/ ./schemas/
+COPY --chown=appuser:appuser services/ ./services/
+COPY --chown=appuser:appuser utils/ ./utils/
+COPY --chown=appuser:appuser __init__.py ./
+COPY --chown=appuser:appuser main.py ./
+
+USER appuser
+
+EXPOSE 8000
+
 CMD ["uv", "run", "main.py"]

@@ -19,6 +19,7 @@ from models.user import User
 from schemas.dataset import DatasetCreate
 from services.organization import OrganizationService, get_organization_service
 from services.upload import UploadService, get_upload_service
+from services.user import UserService, get_user_service
 from sqlalchemy import desc, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,10 +45,12 @@ class DatasetService:
         session: AsyncSession,
         org_service: OrganizationService,
         upload_service: UploadService,
+        user_service: UserService,
     ):
         self.session = session
         self.org_service = org_service
         self.upload_service = upload_service
+        self.user_service = user_service
         self.logger = logging.getLogger(__name__)
         self.s3_bucket = settings.S3_BUCKET
 
@@ -158,6 +161,11 @@ class DatasetService:
         """
         Check if the user associated with the apikey has permission to modify/delete the dataset.
 
+        Permission check order:
+        1. Check if user is the dataset creator
+        2. Check if user has high role (role > 0) AND belongs to dataset's organization
+        3. Check if user is superuser
+
         Args:
             apikey: API key of the user
             dataset_id: UUID of the dataset
@@ -166,65 +174,47 @@ class DatasetService:
             True if user has permission, False otherwise
         """
         try:
-            # Query user by apikey
-            user_result = await self.session.execute(
-                select(User).where(User.apikey == apikey)
+            # 1. First check: Is the user the dataset creator?
+            is_creator = await self.user_service.check_if_dataset_creator_by_key(
+                apikey, dataset_id
             )
-            user: Optional[User] = user_result.scalar_one_or_none()
-
-            if user is None:
-                self.logger.warning("User not found for apikey: %s", apikey)
-                return False
-
-            # Check if user is superuser
-            if user.is_superuser:
+            if is_creator:
                 self.logger.info(
-                    "Superuser permission granted for user %s, dataset %s",
-                    user.id,
+                    "Permission granted: user with apikey %s is creator of dataset %s",
+                    apikey,
                     dataset_id,
                 )
                 return True
 
-            # Query dataset
-            dataset_result = await self.session.execute(
-                select(Dataset).where(Dataset.dataset_id == dataset_id)
+            # 2. Second check: Does user have high role AND belong to dataset's organization?
+            has_high_role = await self.user_service.check_if_high_role_by_key(apikey)
+            belongs_to_org = (
+                await self.user_service.check_user_belongs_to_dataset_organization_by_key(
+                    apikey, dataset_id
+                )
             )
-            dataset: Optional[Dataset] = dataset_result.scalar_one_or_none()
-
-            if dataset is None:
-                self.logger.warning("Dataset not found: %s", dataset_id)
-                return False
-
-            # Check organization match
-            if user.organization != dataset.organization:
+            if has_high_role and belongs_to_org:
                 self.logger.info(
-                    "Organization mismatch: user_org=%s, dataset_org=%s",
-                    user.organization,
-                    dataset.organization,
-                )
-                return False
-
-            # Check role or creator
-            if user.role > 0:
-                self.logger.info(
-                    "Permission granted: user %s has role > 0 for dataset %s",
-                    user.id,
+                    "Permission granted: user with apikey %s has high role and belongs to dataset %s organization",
+                    apikey,
                     dataset_id,
                 )
                 return True
 
-            # If role is 0, check if user is the creator
-            if user.role == 0 and user.id == dataset.creator:
+            # 3. Third check: Is the user a superuser?
+            is_superuser = await self.user_service.check_if_superuser_by_key(apikey)
+            if is_superuser:
                 self.logger.info(
-                    "Permission granted: user %s is creator of dataset %s",
-                    user.id,
+                    "Permission granted: user with apikey %s is superuser for dataset %s",
+                    apikey,
                     dataset_id,
                 )
                 return True
 
+            # All checks failed
             self.logger.info(
-                "Permission denied: user %s does not have permission for dataset %s",
-                user.id,
+                "Permission denied: user with apikey %s does not have permission for dataset %s",
+                apikey,
                 dataset_id,
             )
             return False
@@ -760,6 +750,7 @@ async def get_dataset_service(
     session: AsyncSession = Depends(get_session),
     org_service: OrganizationService = Depends(get_organization_service),
     upload_service: UploadService = Depends(get_upload_service),
+    user_service: UserService = Depends(get_user_service),
 ) -> DatasetService:
     """
     Dependency function to get DatasetService instance.
@@ -768,8 +759,9 @@ async def get_dataset_service(
         session: Database session
         org_service: Organization service
         upload_service: Upload service
+        user_service: User service
 
     Returns:
         DatasetService instance
     """
-    return DatasetService(session, org_service, upload_service)
+    return DatasetService(session, org_service, upload_service, user_service)

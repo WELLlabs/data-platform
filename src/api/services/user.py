@@ -389,6 +389,56 @@ class UserService:
             )
             return False
 
+    async def check_user_belongs_to_dataset_organization_by_key(
+        self, apikey: str, dataset_id: UUID
+    ) -> bool:
+        """
+        Check if user (by API key) belongs to the same organization as the dataset.
+
+        Args:
+            apikey: API key of the user
+            dataset_id: Dataset ID to check
+
+        Returns:
+            True if user's organization matches dataset's organization, False otherwise or if user/dataset not found
+        """
+        try:
+            self.logger.info(
+                "Checking if user with apikey %s belongs to dataset %s organization",
+                apikey,
+                dataset_id,
+            )
+
+            # Get user by apikey
+            user_data = await self.get_user_by_apikey(apikey)
+            if user_data is None:
+                self.logger.info("User not found for apikey: %s", apikey)
+                return False
+
+            organization_id = user_data["organization"]
+
+            # Check if dataset belongs to user's organization
+            belongs = await self.check_dataset_belongs_to_organization(
+                dataset_id, organization_id
+            )
+            self.logger.info(
+                "User belongs to dataset organization check result: apikey=%s, dataset_id=%s, user_org=%s, result=%s",
+                apikey,
+                dataset_id,
+                organization_id,
+                belongs,
+            )
+            return belongs
+
+        except Exception as e:
+            self.logger.exception(
+                "Error checking user belongs to dataset organization by apikey: apikey=%s, dataset_id=%s, error=%s",
+                apikey,
+                dataset_id,
+                e,
+            )
+            return False
+
     async def check_if_dataset_creator_by_id(
         self, user_id: UUID, dataset_id: UUID
     ) -> bool:

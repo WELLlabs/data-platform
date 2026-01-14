@@ -361,9 +361,14 @@ function Profile() {
             <button
               className="btn"
               style={{ backgroundColor: "#1b75e0", color: "#fff" }}
+              // the intent is always to change the current user's own password
+              // this button will be hidden if the user of profile page is not the current user or no user is signed in
+              // this button will be visible based on the privileges.edit condition from the backend response
               onClick={() => {
-                // TODO: Implement change password functionality
-                console.log("Change password clicked");
+                const userId = user?.id || profileData?.id;
+                if (userId) {
+                  navigate(`/change-password?user_id=${userId}`);
+                }
               }}
             >
               Change Password

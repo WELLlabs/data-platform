@@ -260,6 +260,93 @@ class AuthController:
                 detail="Password reset service error",
             )
 
+    async def change_password(
+        self, request: Request, current_password: str, new_password: str
+    ) -> JSONResponse:
+        """
+        Handle password change request with validation.
+        Gets authenticated user from session to prevent authorization bypass.
+
+        Args:
+            request: FastAPI request object to access cookies and session
+            current_password: User's current password
+            new_password: User's new password
+
+        Returns:
+            JSONResponse with success message
+
+        Raises:
+            HTTPException: If validation fails, user not authenticated, or password change fails
+        """
+        # Validate inputs
+        if not current_password or not current_password.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Current password is required",
+            )
+
+        if not new_password or not new_password.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="New password is required"
+            )
+
+        try:
+            # Get the session token from cookies
+            session_token = request.cookies.get(settings.COOKIE_NAME)
+            if not session_token:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="No authentication token found",
+                )
+
+            # Verify the session token with Redis
+            strategy = RedisStrategy(
+                self.auth_service.redis, settings.COOKIE_MAX_AGE_SECONDS
+            )
+            user_id_str = await strategy.read_token(session_token)
+
+            if not user_id_str:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid or expired session",
+                )
+
+            # Get user from database to verify they exist
+            try:
+                user_uuid = UUID(user_id_str)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid session token",
+                )
+
+            user = await self.auth_service.user_db.get(user_uuid)
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found"
+                )
+
+            # Change password using authenticated user's ID
+            await self.auth_service.change_password(
+                user_id=user_uuid,
+                current_password=current_password,
+                new_password=new_password,
+            )
+
+            return JSONResponse(
+                content={"detail": "Password changed successfully"},
+                status_code=status.HTTP_200_OK,
+            )
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.exception("Unexpected error in change_password controller: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Password change service error",
+            )
+
 
 # Dependency to get auth controller
 async def get_auth_controller(
@@ -323,3 +410,17 @@ async def forgot_password(
     Password reset request endpoint.
     """
     return await controller.forgot_password(email)
+
+
+@router.post("/changepassword")
+async def change_password(
+    request: Request,
+    current_password: str = Form(...),
+    new_password: str = Form(...),
+    controller: AuthController = Depends(get_auth_controller),
+):
+    """
+    Change authenticated user's password endpoint with current password verification.
+    User ID is derived from session token to prevent authorization bypass.
+    """
+    return await controller.change_password(request, current_password, new_password)

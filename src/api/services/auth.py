@@ -257,6 +257,86 @@ class AuthService:
         _user = await self.user_db.get_by_email(email)
         return None
 
+    async def change_password(
+        self, user_id: UUID, current_password: str, new_password: str
+    ) -> None:
+        """
+        Change user password after verifying current password.
+
+        Args:
+            user_id: User's UUID
+            current_password: User's current password
+            new_password: User's new password
+
+        Raises:
+            HTTPException: If user not found, current password incorrect, or validation fails
+        """
+        try:
+            # Get user from database
+            user = await self.user_db.get(user_id)
+            if not user:
+                self.logger.warning("Password change attempt for non-existent user: %s", user_id)
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+                )
+
+            # Validate new password is not empty
+            if not new_password or not new_password.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="New password cannot be empty",
+                )
+
+            # Verify current password
+            valid = self.password_helper.verify_and_update(
+                current_password, user.hashed_password
+            )
+            if not valid[0]:
+                self.logger.warning(
+                    "Password change failed: incorrect current password for user_id=%s", user_id
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Current password is incorrect",
+                )
+
+            # Validate new password is different from current password
+            if current_password == new_password:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="New password must be different from current password",
+                )
+
+            # Hash new password
+            hashed_password = self.password_helper.hash(new_password)
+
+            # Update user password
+            await self.user_db.update(user, {"hashed_password": hashed_password})
+
+            # Invalidate existing sessions by deleting the session token from Redis
+            # This ensures that after password change, user must sign in again
+            session_token = f"session:{user_id}"
+            try:
+                await self.redis.delete(session_token)
+            except Exception as redis_err:
+                self.logger.warning(
+                    "Failed to invalidate session for user_id=%s after password change: %s",
+                    user_id,
+                    redis_err,
+                )
+                # Password is changed; session will eventually expire
+
+            self.logger.info("Password changed successfully for user_id=%s", user_id)
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.exception("Unexpected error during password change: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Internal server error during password change",
+            )
+
 
 async def get_user_db(
     session: AsyncSession = Depends(get_session),

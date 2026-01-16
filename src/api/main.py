@@ -13,7 +13,7 @@ from routers.upload import router as upload_router
 from routers.user import router as user_router
 from starlette.responses import JSONResponse
 
-__version__ = "0.2.0"
+__version__ = "0.5.3"
 
 
 def create_app() -> FastAPI:
@@ -31,6 +31,7 @@ def create_app() -> FastAPI:
         description="Open data portal API from WELL Labs",
         docs_url="/docs",
         redoc_url="/redoc",
+        root_path="/api",
     )
 
     # Security middleware (order matters - first added is outermost)
@@ -72,15 +73,9 @@ def create_app() -> FastAPI:
     app.include_router(
         organization_router, prefix="/organizations", tags=["Organizations"]
     )
-    app.include_router(
-        upload_router, prefix="", tags=["Upload"]
-    )
-    app.include_router(
-        dataset_router, prefix="", tags=["Datasets"]
-    )
-    app.include_router(
-        user_router, prefix="", tags=["Users"]
-    )
+    app.include_router(upload_router, prefix="", tags=["Upload"])
+    app.include_router(dataset_router, prefix="", tags=["Datasets"])
+    app.include_router(user_router, prefix="", tags=["Users"])
 
     return app
 

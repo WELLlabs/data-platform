@@ -21,9 +21,7 @@ class OrganizationController:
     Class-based organization controller with comprehensive error handling.
     """
 
-    def __init__(
-        self, org_service: OrganizationService, user_service: UserService
-    ):
+    def __init__(self, org_service: OrganizationService, user_service: UserService):
         self.org_service = org_service
         self.user_service = user_service
         self.logger = logging.getLogger(__name__)
@@ -312,7 +310,7 @@ async def get_organization_controller(
 
 
 # Route handlers
-@router.post("/", response_model=OrganizationRead)
+@router.post("/", response_model=OrganizationRead, include_in_schema=False)
 async def create_organization(
     org_data: OrganizationCreate,
     controller: OrganizationController = Depends(get_organization_controller),
@@ -337,7 +335,7 @@ async def get_organization(
     return await controller.get_organization(org_id, apikey)
 
 
-@router.put("/{org_id}", response_model=OrganizationRead)
+@router.put("/{org_id}", response_model=OrganizationRead, include_in_schema=False)
 async def update_organization(
     org_id: str,
     org_data: OrganizationUpdate,
@@ -349,7 +347,7 @@ async def update_organization(
     return await controller.update_organization(org_id, org_data)
 
 
-@router.get("/", response_model=List[OrganizationRead])
+@router.get("/", response_model=List[OrganizationRead], include_in_schema=False)
 async def search_organizations(
     query: str = Query(None, description="Search query"),
     org_type: str = Query(None, description="Filter by organization type"),
@@ -366,7 +364,7 @@ async def search_organizations(
     )
 
 
-@router.delete("/{org_id}")
+@router.delete("/{org_id}", include_in_schema=False)
 async def delete_organization(
     org_id: str,
     controller: OrganizationController = Depends(get_organization_controller),
@@ -377,7 +375,7 @@ async def delete_organization(
     return await controller.delete_organization(org_id)
 
 
-@router.get("/validate/{org_id}")
+@router.get("/validate/{org_id}", include_in_schema=False)
 async def validate_organization_id(
     org_id: str,
     controller: OrganizationController = Depends(get_organization_controller),

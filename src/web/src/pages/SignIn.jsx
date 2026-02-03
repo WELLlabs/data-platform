@@ -161,6 +161,12 @@ function SignIn() {
                 </button>
               </form>
 
+              <div className="text-center mt-3">
+                <Link to="/forgot-password" className="text-muted text-decoration-none">
+                  Forgot password?
+                </Link>
+              </div>
+
               <div className="text-center mt-4">
                 <div className="text-muted mb-2">Don't have an account yet</div>
                 <Link to="/signup" className="btn btn-outline-primary w-100">Sign Up</Link>

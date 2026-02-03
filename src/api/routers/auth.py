@@ -1,19 +1,30 @@
 import logging
+import re
 from uuid import UUID
 
 from core.config import settings
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
+from fastapi import APIRouter, Body, Depends, Form, HTTPException, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer
+from pydantic import EmailStr
 from schemas.user import UserCreate, UserRead
-from services.auth import AuthService, RedisStrategy, get_auth_service
+from services.auth import (
+    AuthService,
+    RedisStrategy,
+    fastapi_users,
+    get_auth_service,
+    get_user_db,
+)
 from utils.security import sanitize_input
 
 # Security scheme for API key authentication
 security = HTTPBearer()
 
 router = APIRouter()
+
+# Module-level logger
+logger = logging.getLogger(__name__)
 
 
 class AuthController:
@@ -231,34 +242,7 @@ class AuthController:
                 detail="Sign out service error",
             )
 
-    async def forgot_password(self, email: str) -> JSONResponse:
-        """
-        Handle password reset request.
-
-        Args:
-            email: User's email address
-
-        Returns:
-            JSONResponse with confirmation message
-        """
-        # Sanitize email input
-        sanitized_email = sanitize_input(email)
-        if not sanitized_email:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid email format"
-            )
-
-        try:
-            await self.auth_service.forgot_password(email=sanitized_email)
-            return JSONResponse(
-                content={"detail": "Password reset request submitted"},
-                status_code=status.HTTP_200_OK,
-            )
-        except Exception:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Password reset service error",
-            )
+    # Removed forgot_password method - now using fastapi-users built-in /forgot-password route
 
     async def change_password(
         self, request: Request, current_password: str, new_password: str
@@ -287,7 +271,8 @@ class AuthController:
 
         if not new_password or not new_password.strip():
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="New password is required"
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="New password is required",
             )
 
         try:
@@ -341,7 +326,9 @@ class AuthController:
         except HTTPException:
             raise
         except Exception as e:
-            self.logger.exception("Unexpected error in change_password controller: %s", e)
+            self.logger.exception(
+                "Unexpected error in change_password controller: %s", e
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Password change service error",
@@ -401,15 +388,254 @@ async def signout(
     return await controller.sign_out(request)
 
 
-@router.post("/forgotpassword")
-async def forgot_password(
-    email: str = Form(...),
-    controller: AuthController = Depends(get_auth_controller),
-):
+# Include fastapi-users reset password router
+# This provides POST /forgot-password and POST /reset-password endpoints
+router.include_router(
+    fastapi_users.get_reset_password_router(),
+    prefix="",
+    tags=["Authentication"],
+)
+
+# Include fastapi-users verify router
+# This provides POST /request-verify-token and POST /verify endpoints
+router.include_router(
+    fastapi_users.get_verify_router(user_schema=UserRead),
+    prefix="",
+    tags=["Authentication"],
+)
+
+
+@router.post("/reset-password/validate")
+async def reset_password_validate(
+    token: str = Body(..., embed=True),
+    user_db=Depends(get_user_db),
+) -> JSONResponse:
     """
-    Password reset request endpoint.
+    Validate reset password token using fastapi-users' validation method.
+
+    Args:
+        token: Reset password token to validate (may be URL-encoded)
+        user_db: User database dependency
+
+    Returns:
+        JSONResponse with validation result
     """
-    return await controller.forgot_password(email)
+    try:
+        from datetime import datetime, timezone
+        from urllib.parse import unquote
+
+        import jwt
+        from fastapi_users import exceptions
+        from services.auth import UserManager
+
+        logger.info(
+            "Validating reset password token (token length: %d)",
+            len(token),
+        )
+
+        # URL-decode the token only if it contains percent-encoding
+        # This prevents double-decoding tokens that are already decoded
+        has_percent_encoding = bool(re.search(r'%[0-9A-Fa-f]{2}', token))
+        if has_percent_encoding:
+            decoded_token = unquote(token)
+            logger.debug(
+                "Token contains percent-encoding, URL-decoded (token length: %d)",
+                len(decoded_token),
+            )
+        else:
+            decoded_token = token
+            logger.debug(
+                "Token does not contain percent-encoding, kept as-is (token length: %d)",
+                len(decoded_token),
+            )
+
+        user_manager = UserManager(user_db)
+        is_secret_configured = bool(
+            user_manager.reset_password_token_secret
+            and len(user_manager.reset_password_token_secret) > 0
+        )
+        logger.debug(
+            "Reset password token secret configured: %s",
+            "configured" if is_secret_configured else "not configured",
+        )
+
+        # Use fastapi-users' built-in token verification method
+        # This matches the validation used by the actual reset endpoint
+        try:
+            user = None
+            # Try to use fastapi-users' verify_password_reset_token method if available
+            # If not available, fall back to using the reset_password method's internal validation
+            if hasattr(user_manager, "verify_password_reset_token"):
+                user_id = await user_manager.verify_password_reset_token(decoded_token)
+                # Fetch user after verification
+                user = await user_db.get(user_id)
+            else:
+                # Fallback: Use the same method that reset_password router uses internally
+                # This decodes the token and validates it using fastapi-users' internal logic
+
+                # Decode token using fastapi-users' secret and algorithm
+                # IMPORTANT: We need to verify the audience claim
+                payload = jwt.decode(
+                    decoded_token,
+                    user_manager.reset_password_token_secret,
+                    algorithms=["HS256"],
+                    audience="fastapi-users:reset",  # Verify audience claim
+                )
+
+                # Extract user_id from token
+                if "sub" not in payload:
+                    logger.warning("Token missing 'sub' claim")
+                    raise exceptions.InvalidResetPasswordToken()
+
+                user_id = UUID(payload["sub"])
+
+                # Verify user exists first
+                user = await user_db.get(user_id)
+                if not user:
+                    logger.warning(
+                        "Token valid but user not found for user_id=%s", user_id
+                    )
+                    raise exceptions.InvalidResetPasswordToken()
+
+                # Note: We don't check password_fgpt during validation
+                # fastapi-users only checks password fingerprint when actually resetting the password,
+                # not during token validation. This allows users to request multiple reset tokens
+                # and use any valid one, even if they requested a new one after changing their password.
+                # The actual reset password endpoint will verify the fingerprint when the password is changed.
+
+                # Check expiration (JWT decode already validates exp, but we double-check)
+                if "exp" in payload:
+                    exp_timestamp = payload.get("exp")
+                    if exp_timestamp:
+                        exp_datetime = datetime.fromtimestamp(
+                            exp_timestamp, tz=timezone.utc
+                        )
+                        if exp_datetime <= datetime.now(timezone.utc):
+                            logger.warning("Token expired for user_id=%s", user_id)
+                            raise exceptions.InvalidResetPasswordToken()
+
+            logger.info("Token verified successfully for user_id=%s", user_id)
+
+            if user:
+                logger.info(
+                    "Reset password token validation successful for user_id=%s", user_id
+                )
+                return JSONResponse(
+                    content={"valid": True}, status_code=status.HTTP_200_OK
+                )
+            else:
+                logger.warning(
+                    "Token valid but user not found for user_id=%s", user_id
+                )
+                return JSONResponse(
+                    content={"valid": False}, status_code=status.HTTP_200_OK
+                )
+        except jwt.InvalidTokenError as token_error:
+            # Token is invalid, expired, or malformed
+            logger.warning(
+                "Token validation failed (InvalidTokenError): %s",
+                str(token_error),
+            )
+        except exceptions.InvalidResetPasswordToken as token_error:
+            # Token is invalid according to fastapi-users
+            logger.warning(
+                "Token validation failed (InvalidResetPasswordToken): %s",
+                str(token_error),
+            )
+        except Exception as token_error:
+            # Other errors
+            logger.warning(
+                "Token validation failed: %s (type: %s)",
+                str(token_error),
+                type(token_error).__name__,
+                exc_info=True,
+            )
+
+        logger.info("Reset password token validation failed")
+        return JSONResponse(content={"valid": False}, status_code=status.HTTP_200_OK)
+    except Exception as e:
+        logger.exception("Error validating reset password token: %s", e)
+        return JSONResponse(content={"valid": False}, status_code=status.HTTP_200_OK)
+
+
+@router.post("/send-verify-email")
+async def send_verify_email(
+    email: EmailStr = Body(..., embed=True),
+    user_db=Depends(get_user_db),
+) -> JSONResponse:
+    """
+    Send verification email to user.
+
+    Args:
+        email: User's email address
+        user_db: User database dependency
+
+    Returns:
+        JSONResponse with success message
+    """
+    try:
+        from urllib.parse import quote
+
+        from fastapi_users.jwt import generate_jwt
+        from services.auth import UserManager
+        from tasks.email import send_verify_email as send_verify_email_task
+
+        user_manager = UserManager(user_db)
+        user = await user_db.get_by_email(email)
+
+        if not user:
+            # For security, always return success even if user doesn't exist
+            return JSONResponse(
+                content={
+                    "detail": "If this email exists, a verification email has been sent."
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+        # Generate verification token using fastapi-users' generate_jwt function
+        # This ensures compatibility with the library's verification method
+        # Token structure matches BaseUserManager.request_verify() implementation:
+        # - sub: user ID as string
+        # - email: user email (required by fastapi-users verify method)
+        # - aud: verification token audience (defaults to "fastapi-users:verify")
+        # - exp: expiration timestamp (automatically added by generate_jwt)
+        token_data = {
+            "sub": str(user.id),
+            "email": user.email,
+            "aud": user_manager.verification_token_audience,
+        }
+
+        token = generate_jwt(
+            token_data,
+            user_manager.verification_token_secret,
+            user_manager.verification_token_lifetime_seconds,
+        )
+
+        # URL-encode the token to handle special characters in JWT tokens
+        encoded_token = quote(token, safe="")
+        verify_link = f"{settings.DOMAIN}/verify-email?token={encoded_token}"
+
+        # Queue Celery task to send email
+        send_verify_email_task.apply_async(
+            args=[user.email, user.full_name, verify_link],
+            queue="email",
+        )
+
+        logger.info("Queued verification email for user_id=%s", user.id)
+
+        return JSONResponse(
+            content={"detail": "Verification email has been sent."},
+            status_code=status.HTTP_200_OK,
+        )
+    except Exception as e:
+        logger.exception("Error sending verification email: %s", e)
+        # For security, always return success
+        return JSONResponse(
+            content={
+                "detail": "If this email exists, a verification email has been sent."
+            },
+            status_code=status.HTTP_200_OK,
+        )
 
 
 @router.post("/changepassword")

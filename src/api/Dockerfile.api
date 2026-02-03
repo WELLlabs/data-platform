@@ -32,7 +32,10 @@ RUN adduser -D -u 1000 appuser && \
 
 WORKDIR /app
 
-COPY --from=builder /app/.venv /app/.venv
+# Copy virtual environment from builder
+COPY --chown=appuser:appuser --from=builder /app/.venv /app/.venv
+
+# Copy necessary application files for API
 COPY --chown=appuser:appuser core/ ./core/
 COPY --chown=appuser:appuser db/ ./db/
 COPY --chown=appuser:appuser middleware/ ./middleware/
@@ -40,6 +43,7 @@ COPY --chown=appuser:appuser models/ ./models/
 COPY --chown=appuser:appuser routers/ ./routers/
 COPY --chown=appuser:appuser schemas/ ./schemas/
 COPY --chown=appuser:appuser services/ ./services/
+COPY --chown=appuser:appuser tasks/ ./tasks/
 COPY --chown=appuser:appuser utils/ ./utils/
 COPY --chown=appuser:appuser __init__.py ./
 COPY --chown=appuser:appuser main.py ./

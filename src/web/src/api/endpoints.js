@@ -6,6 +6,16 @@ export const me_endpoint = "/api/auth/me";
 export const signout_endpoint = "/api/auth/signout";
 export const changepassword_endpoint = "/api/auth/changepassword";
 
+// Password reset endpoints
+export const forgot_password_endpoint = "/api/auth/forgot-password";
+export const reset_password_endpoint = "/api/auth/reset-password";
+export const reset_password_validate_endpoint = "/api/auth/reset-password/validate";
+
+// Email verification endpoints
+export const request_verify_token_endpoint = "/api/auth/request-verify-token";
+export const verify_endpoint = "/api/auth/verify";
+export const send_verify_email_endpoint = "/api/auth/send-verify-email";
+
 // Organization endpoints
 export const organizations_endpoint = "/api/organizations";
 export const organization_validate_endpoint = "/api/organizations/validate";

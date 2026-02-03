@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Optional, Tuple
+from urllib.parse import quote, unquote
 from uuid import UUID
 
 from core.config import settings
 from db.session import get_session
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
+from fastapi_users import BaseUserManager, FastAPIUsers
 from fastapi_users.authentication import CookieTransport
 from fastapi_users.password import PasswordHelper
 from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
@@ -16,6 +18,7 @@ from schemas.user import UserCreate, UserRead
 from services.organization import OrganizationService, get_organization_service
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from tasks.email import send_forgot_password_email, send_verify_email
 from utils.security import generate_unique_api_key, sanitize_input
 
 
@@ -198,7 +201,7 @@ class AuthService:
                 )
                 if creator_set:
                     # Update user role to 1 (creator/admin) and mark as verified since they became the organization creator
-                    await self.user_db.update(user, {"role": 1, "verified": True})
+                    user = await self.user_db.update(user, {"role": 1, "verified": True})
                     self.logger.info(
                         "Set user %s as creator of organization %s, updated role to 1, and marked as verified",
                         user.id,
@@ -217,6 +220,32 @@ class AuthService:
                     "Failed to set creator for organization %s: %s", org_id, e
                 )
                 # Don't fail user creation if creator setting fails
+
+            # Trigger verification email via UserManager's on_after_register hook
+            # This queues the Celery task to send verification email
+            # Skip if user is already verified (e.g., organization creator)
+            if not user.verified:
+                try:
+                    user_manager = UserManager(self.user_db)
+                    await user_manager.on_after_register(user, request=None)
+                    self.logger.info(
+                        "Triggered verification email for user_id=%s", user.id
+                    )
+                except Exception as email_error:
+                    # Don't fail user creation if email sending fails
+                    # The email task will be retried automatically by Celery
+                    self.logger.error(
+                        "Failed to trigger verification email for user_id=%s: %s. "
+                        "User was created successfully but email may not be sent.",
+                        user.id,
+                        email_error,
+                        exc_info=True,
+                    )
+            else:
+                self.logger.info(
+                    "Skipping verification email for user_id=%s (already verified as organization creator)",
+                    user.id,
+                )
 
             return user
 
@@ -275,7 +304,9 @@ class AuthService:
             # Get user from database
             user = await self.user_db.get(user_id)
             if not user:
-                self.logger.warning("Password change attempt for non-existent user: %s", user_id)
+                self.logger.warning(
+                    "Password change attempt for non-existent user: %s", user_id
+                )
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
                 )
@@ -293,7 +324,8 @@ class AuthService:
             )
             if not valid[0]:
                 self.logger.warning(
-                    "Password change failed: incorrect current password for user_id=%s", user_id
+                    "Password change failed: incorrect current password for user_id=%s",
+                    user_id,
                 )
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -350,3 +382,204 @@ async def get_auth_service(
     org_service: OrganizationService = Depends(get_organization_service),
 ) -> AuthService:
     return AuthService(user_db=user_db, redis=redis, org_service=org_service)
+
+
+class UserManager(BaseUserManager[User, UUID]):
+    """
+    Custom UserManager for fastapi-users with email hooks for password reset and verification.
+    """
+
+    reset_password_token_secret = settings.SECRET
+    reset_password_token_lifetime_seconds = settings.LONG_TOKEN_AGE_SECONDS
+    verification_token_secret = settings.SECRET
+    verification_token_lifetime_seconds = settings.LONG_TOKEN_AGE_SECONDS
+
+    def __init__(self, user_db: SQLAlchemyUserDatabase[User, UUID]):
+        super().__init__(user_db)
+        self.logger = logging.getLogger(__name__)
+
+    def parse_id(self, value: str) -> UUID:
+        """
+        Parse user ID from string to UUID.
+
+        This method is required by fastapi-users BaseUserManager when using UUID as the ID type.
+        It converts the user_id string from tokens to UUID format.
+
+        Args:
+            value: User ID as string
+
+        Returns:
+            UUID instance
+
+        Raises:
+            ValueError: If the string is not a valid UUID
+        """
+        try:
+            return UUID(value)
+        except ValueError as e:
+            raise ValueError(f"Invalid UUID format: {value}") from e
+
+    async def on_after_forgot_password(
+        self, user: User, token: str, request: Optional[Request] = None
+    ) -> None:
+        """
+        Hook called after forgot password token is generated.
+        Queues Celery task to send forgot password email.
+
+        Args:
+            user: User instance
+            token: Generated reset token (raw token string)
+            request: Optional FastAPI request object
+        """
+        self.logger.info("Forgot password requested for user_id=%s", user.id)
+        self.logger.debug(
+            "Generated reset password token for user_id=%s (token length: %d)",
+            user.id,
+            len(token),
+        )
+
+        # URL-encode the token to handle special characters in JWT tokens
+        encoded_token = quote(token, safe="")
+        reset_link = f"{settings.DOMAIN}/reset-password?token={encoded_token}"
+
+        self.logger.debug(
+            "Constructed reset link for user_id=%s (link length: %d)",
+            user.id,
+            len(reset_link),
+        )
+
+        # Queue Celery task to send email
+        send_forgot_password_email.apply_async(
+            args=[user.email, user.full_name, reset_link],
+            queue="email",
+        )
+
+        self.logger.info(
+            "Queued forgot password email task for user_id=%s",
+            user.id,
+        )
+
+    async def on_after_register(
+        self, user: User, request: Optional[Request] = None
+    ) -> None:
+        """
+        Hook called after user registration.
+        Generates verification token and queues Celery task to send verification email.
+
+        Args:
+            user: User instance
+            request: Optional FastAPI request object
+        """
+        from fastapi_users.jwt import generate_jwt
+
+        self.logger.info("User registered: user_id=%s", user.id)
+
+        # Generate verification token using fastapi-users' generate_jwt function
+        # This ensures compatibility with the library's verification method
+        # Token structure matches BaseUserManager.request_verify() implementation:
+        # - sub: user ID as string
+        # - email: user email (required by fastapi-users verify method)
+        # - aud: verification token audience (defaults to "fastapi-users:verify")
+        # - exp: expiration timestamp (automatically added by generate_jwt)
+        token_data = {
+            "sub": str(user.id),
+            "email": user.email,
+            "aud": self.verification_token_audience,
+        }
+
+        token = generate_jwt(
+            token_data,
+            self.verification_token_secret,
+            self.verification_token_lifetime_seconds,
+        )
+
+        # URL-encode the token to handle special characters in JWT tokens
+        encoded_token = quote(token, safe="")
+        verify_link = f"{settings.DOMAIN}/verify-email?token={encoded_token}"
+
+        # Queue Celery task to send email
+        send_verify_email.apply_async(
+            args=[user.email, user.full_name, verify_link],
+            queue="email",
+        )
+
+        self.logger.info(
+            "Queued verification email task for user_id=%s",
+            user.id,
+        )
+
+    async def verify(self, token: str, request: Optional[Request] = None) -> User:
+        """
+        Override verify method to handle URL-decoded tokens.
+
+        Args:
+            token: Verification token (may be URL-encoded)
+            request: Optional FastAPI request object
+
+        Returns:
+            User instance on successful verification
+
+        Raises:
+            InvalidVerifyToken: If the verification token is invalid, expired, or malformed
+            UserAlreadyVerified: If the user is already verified
+            Exception: Re-raises any exceptions from the parent verify method
+        """
+        import re
+
+        from fastapi_users import exceptions
+
+        # URL-decode if needed (fastapi-users expects decoded token)
+        has_percent_encoding = (
+            bool(re.search(r"%[0-9A-Fa-f]{2}", token)) if token else False
+        )
+        decoded_token = unquote(token) if has_percent_encoding and token else token
+
+        # Call parent verify method with decoded token
+        # BaseUserManager.verify raises InvalidVerifyToken or UserAlreadyVerified on failure
+        # and returns User on success, so we propagate exceptions and return the User
+        user = await super().verify(decoded_token, request)
+        if user is None:
+            # This should not happen if BaseUserManager.verify is implemented correctly,
+            # but we ensure we raise an exception rather than returning None
+            raise exceptions.InvalidVerifyToken()
+        return user
+
+    async def validate_password(self, password: str, user: User) -> None:
+        """
+        Validate password strength.
+
+        Args:
+            password: Password to validate
+            user: User instance
+
+        Raises:
+            InvalidPasswordException: If password doesn't meet requirements
+        """
+        from fastapi_users import exceptions
+
+        if len(password) < 8:
+            raise exceptions.InvalidPasswordException(
+                reason="Password should be at least 8 characters"
+            )
+
+
+async def get_user_manager(
+    user_db: SQLAlchemyUserDatabase[User, UUID] = Depends(get_user_db),
+) -> UserManager:
+    """
+    Dependency function to get UserManager instance.
+
+    Args:
+        user_db: User database adapter
+
+    Yields:
+        UserManager instance
+    """
+    yield UserManager(user_db)
+
+
+# Create FastAPIUsers instance
+fastapi_users = FastAPIUsers[User, UUID](
+    get_user_manager,
+    [],  # List of authentication backends
+)

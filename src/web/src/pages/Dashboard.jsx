@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import { user_datasets_endpoint } from "../api/endpoints";
+import { user_datasets_endpoint, send_verify_email_endpoint } from "../api/endpoints";
 
 function Dashboard() {
   const [loading, setLoading] = useState(true);
@@ -9,11 +9,14 @@ function Dashboard() {
   const [datasetsLoading, setDatasetsLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
+  const [verificationMessage, setVerificationMessage] = useState("");
+  const [sendingVerification, setSendingVerification] = useState(false);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user, isAuthenticated, verifyUser } = useAuth();
   const paramsSetRef = useRef(false);
   const lastFetchedUserIdRef = useRef(null);
+  const lastFocusTimeRef = useRef(0);
   const limit = 10;
 
   // First useEffect: Handle authentication and URL params (runs once on mount)
@@ -113,6 +116,33 @@ function Dashboard() {
     }
   }, [user?.id, currentPage, isAuthenticated, user?.apikey]);
 
+  // Third useEffect: Refresh user data when window regains focus
+  // This ensures user verification status is updated after email verification
+  useEffect(() => {
+    // Refresh user data when window regains focus (user returns from verification page)
+    // Throttle calls to prevent rapid repeated requests
+    const handleFocus = () => {
+      if (!isAuthenticated) return;
+      
+      const now = Date.now();
+      const timeSinceLastCall = now - lastFocusTimeRef.current;
+      const throttleDelay = 2000; // 2 seconds minimum between calls
+      
+      if (timeSinceLastCall >= throttleDelay) {
+        lastFocusTimeRef.current = now;
+        verifyUser();
+      }
+    };
+
+    // Add event listener for window focus
+    window.addEventListener('focus', handleFocus);
+    
+    // Cleanup: remove event listener on unmount
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [isAuthenticated, verifyUser]);
+
   if (loading) {
     return (
       <div className="container py-5">
@@ -156,6 +186,55 @@ function Dashboard() {
     }
   };
 
+  const handleSendVerificationEmail = async () => {
+    if (!user?.email) return;
+
+    setSendingVerification(true);
+    setVerificationMessage("");
+
+    try {
+      const response = await fetch(send_verify_email_endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email: user.email }),
+        credentials: "include",
+      });
+
+      if (response.ok) {
+        setVerificationMessage("Verification email sent! Please check your inbox.");
+      } else {
+        let errorMessage = "Failed to send verification email. Please try again.";
+        try {
+          const contentType = response.headers.get("content-type");
+          if (contentType && contentType.includes("application/json")) {
+            const errorData = await response.json();
+            errorMessage = errorData?.detail || errorMessage;
+          } else {
+            const text = await response.text();
+            errorMessage = text || errorMessage;
+          }
+        } catch (parseError) {
+          console.error("Error parsing error response:", parseError);
+          // Use default error message
+        }
+        setVerificationMessage(errorMessage);
+      }
+    } catch (err) {
+      console.error("Error sending verification email:", err);
+      setVerificationMessage(
+        "Network error. Please check your connection and try again."
+      );
+    } finally {
+      setSendingVerification(false);
+    }
+  };
+
+  // Check if user is not verified (check only is_verified field)
+  // User is unverified if is_verified is not explicitly true
+  const isUnverified = user && user.is_verified !== true;
+
   return (
     <div className="container py-5">
       <div className="row align-items-center mb-4">
@@ -172,6 +251,35 @@ function Dashboard() {
           </button>
         </div>
       </div>
+
+      {isUnverified && (
+        <div className="alert alert-warning mb-4" role="alert">
+          <div className="d-flex align-items-center justify-content-between">
+            <span>
+              Your email address is not verified.{" "}
+              <button
+                className="btn btn-link p-0 text-decoration-underline"
+                onClick={handleSendVerificationEmail}
+                disabled={sendingVerification}
+                style={{ verticalAlign: "baseline" }}
+              >
+                Verify Now
+              </button>
+            </span>
+          </div>
+          {verificationMessage && (
+            <div className={`mt-2 ${verificationMessage.includes("sent") ? "text-success" : "text-danger"}`}>
+              {verificationMessage}
+            </div>
+          )}
+          {sendingVerification && (
+            <div className="mt-2">
+              <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+              Sending verification email...
+            </div>
+          )}
+        </div>
+      )}
 
       {datasetsLoading ? (
         <div className="text-center py-5">

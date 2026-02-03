@@ -2,8 +2,6 @@
 Security middleware for the FastAPI application
 """
 
-import time
-
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response as StarletteResponse
@@ -81,16 +79,5 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> StarletteResponse:
-        start_time = time.time()
-
-        # Log request details
-        print(f"Request: {request.method} {request.url}")
-        print(f"Client: {request.client.host if request.client else 'unknown'}")
-
         response = await call_next(request)
-
-        # Log response details
-        process_time = time.time() - start_time
-        print(f"Response: {response.status_code} - {process_time:.4f}s")
-
         return response

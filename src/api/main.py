@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 
 import uvicorn
@@ -16,11 +17,32 @@ from starlette.responses import JSONResponse
 __version__ = "0.5.3"
 
 
+def _get_log_level() -> int:
+    """
+    Get logging level from LOG_LEVEL environment variable with safe default.
+
+    Returns:
+        int: Logging level (defaults to INFO if LOG_LEVEL is absent/invalid)
+    """
+    log_level_str = os.environ.get("LOG_LEVEL", "INFO").upper()
+    # Map string to logging level
+    level_map = {
+        "DEBUG": logging.DEBUG,
+        "INFO": logging.INFO,
+        "WARNING": logging.WARNING,
+        "ERROR": logging.ERROR,
+        "CRITICAL": logging.CRITICAL,
+    }
+    # Return mapped level or default to INFO if invalid
+    return level_map.get(log_level_str, logging.INFO)
+
+
 def create_app() -> FastAPI:
     # Basic logging configuration if not already configured by the host
     if not logging.getLogger().handlers:
+        log_level = _get_log_level()
         logging.basicConfig(
-            level=logging.INFO,
+            level=log_level,
             format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
             stream=sys.stdout,
         )

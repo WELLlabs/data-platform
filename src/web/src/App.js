@@ -11,6 +11,9 @@ import SignIn from "./pages/SignIn";
 import SignUp from "./pages/SignUp";
 import SignupSuccess from "./pages/SignupSuccess";
 import ChangePassword from "./pages/ChangePassword";
+import ForgotPassword from "./pages/ForgotPassword";
+import ResetPassword from "./pages/ResetPassword";
+import VerifyEmail from "./pages/VerifyEmail";
 import OrgSearch from "./pages/OrgSearch";
 import Dashboard from "./pages/Dashboard";
 import Profile from "./pages/Profile";
@@ -44,6 +47,9 @@ function App() {
             <Route path="/signup" element={<SignUp />} />
             <Route path="/signupsuccess" element={<SignupSuccess />} />
             <Route path="/change-password" element={<ChangePassword />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/verify-email" element={<VerifyEmail />} />
             <Route path="/orgsearch" element={<OrgSearch />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/profile" element={<Profile />} />

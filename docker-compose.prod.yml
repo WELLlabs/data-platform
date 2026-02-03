@@ -85,8 +85,6 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      db:
-        condition: service_healthy
     restart: unless-stopped
     # Optional: Override command to specify queues and concurrency
     # command: ["uv", "run", "celery", "-A", "celery_worker", "worker", "--loglevel=info", "-Q", "email,default", "--concurrency=2"]

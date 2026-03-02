@@ -52,8 +52,7 @@ function Profile() {
     };
 
     checkAuthAndApplyParams();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [navigate, verifyUser]);
+  }, [navigate, searchParams]);
 
   // Fetch profile data
   useEffect(() => {
@@ -269,8 +268,7 @@ function Profile() {
         {profileData.privileges?.edit && (
           <div className="col-auto">
             <button
-              className="btn"
-              style={{ backgroundColor: "#1b75e0", color: "#fff" }}
+              className="btn btn-search"
               onClick={() => {
                 // TODO: Implement edit functionality
                 console.log("Edit profile clicked");
@@ -359,8 +357,7 @@ function Profile() {
         <div className="mb-4">
           <div className="d-flex gap-2 flex-wrap">
             <button
-              className="btn"
-              style={{ backgroundColor: "#1b75e0", color: "#fff" }}
+              className="btn btn-search"
               // the intent is always to change the current user's own password
               // this button will be hidden if the user of profile page is not the current user or no user is signed in
               // this button will be visible based on the privileges.edit condition from the backend response
@@ -374,8 +371,7 @@ function Profile() {
               Change Password
             </button>
             <button
-              className="btn"
-              style={{ backgroundColor: "#1b75e0", color: "#fff" }}
+              className="btn btn-search"
               onClick={() => setShowApiKeyOverlay(true)}
             >
               API KEY

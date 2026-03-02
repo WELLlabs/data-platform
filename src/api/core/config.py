@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     CELERY_TASK_DEFAULT_RETRY_DELAY: int = 10
     CELERY_TASK_MAX_RETRIES: int = 3
 
+    # Search cache (Redis) TTL in seconds; default 120 if not set
+    SEARCH_CACHE_AGE_SECONDS: int = 120
+
     class Config:
         env_file = ".env"
         extra = "ignore"  # ignores unexpected variables

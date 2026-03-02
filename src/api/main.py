@@ -10,6 +10,7 @@ from middleware.security import RequestLoggingMiddleware, SecurityHeadersMiddlew
 from routers.auth import router as auth_router
 from routers.dataset import router as dataset_router
 from routers.organization import router as organization_router
+from routers.search import router as search_router
 from routers.upload import router as upload_router
 from routers.user import router as user_router
 from starlette.responses import JSONResponse
@@ -95,8 +96,9 @@ def create_app() -> FastAPI:
     app.include_router(
         organization_router, prefix="/organizations", tags=["Organizations"]
     )
-    app.include_router(upload_router, prefix="", tags=["Upload"])
+    app.include_router(upload_router, prefix="", tags=["Files"])
     app.include_router(dataset_router, prefix="", tags=["Datasets"])
+    app.include_router(search_router, prefix="", tags=["Search"])
     app.include_router(user_router, prefix="", tags=["Users"])
 
     return app

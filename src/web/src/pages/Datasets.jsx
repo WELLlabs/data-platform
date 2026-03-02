@@ -33,7 +33,7 @@ function Datasets() {
 
     checkAuthAndSetParams();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [verifyUser]);
+  }, []);
 
   // Fetch datasets when page changes or authentication state changes
   useEffect(() => {
@@ -118,22 +118,27 @@ function Datasets() {
 
   return (
     <div className="container py-5">
-      {/* Header with title and upload button */}
+      {/* Header with title, upload and search buttons */}
       <div className="row align-items-center mb-4">
         <div className="col">
           <h2 className="text-start m-0">Datasets</h2>
         </div>
-        {isAuthenticated && (
-          <div className="col-auto">
+        <div className="col-auto d-flex gap-2">
+          {isAuthenticated && (
             <button
-              className="btn"
-              style={{ backgroundColor: "#0d983b", color: "#fff" }}
+              className="btn btn-upload"
               onClick={() => navigate("/create-dataset")}
             >
               Upload
             </button>
-          </div>
-        )}
+          )}
+          <button
+            className="btn btn-search"
+            onClick={() => navigate("/search")}
+          >
+            Search
+          </button>
+        </div>
       </div>
 
       {/* Loading state */}

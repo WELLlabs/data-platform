@@ -26,6 +26,7 @@ import AddFile from "./pages/AddFile";
 import FAQ from "./pages/FAQ";
 import Terms from "./pages/Terms";
 import Datasets from "./pages/Datasets";
+import Search from "./pages/Search";
 
 const ApiDocs = () => (
   <div className="container py-5">
@@ -43,6 +44,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/datasets" element={<Datasets />} />
+            <Route path="/search" element={<Search />} />
             <Route path="/signin" element={<SignIn />} />
             <Route path="/signup" element={<SignUp />} />
             <Route path="/signupsuccess" element={<SignupSuccess />} />

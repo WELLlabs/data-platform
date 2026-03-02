@@ -50,7 +50,7 @@ function Dashboard() {
 
     checkAuthAndApplyParams();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [navigate, verifyUser]);
+  }, [navigate]);
 
   // Second useEffect: Fetch datasets when user.id is available, page changes, or apikey changes
   useEffect(() => {
@@ -243,8 +243,7 @@ function Dashboard() {
         </div>
         <div className="col-auto">
           <button
-            className="btn"
-            style={{ backgroundColor: '#0d983b', color: '#fff' }}
+            className="btn btn-upload"
             onClick={() => navigate('/create-dataset')}
           >
             Upload

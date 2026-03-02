@@ -49,7 +49,7 @@ const ChangePassword = () => {
 
     checkAuthAndApplyParams();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [navigate, verifyUser]);
+  }, [navigate]);
 
   // Validation checks
   const passwordsMatch = useMemo(

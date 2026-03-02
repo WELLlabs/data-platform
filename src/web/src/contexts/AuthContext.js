@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { me_endpoint, signout_endpoint } from '../api/endpoints';
 
 const AuthContext = createContext();
@@ -16,7 +16,7 @@ export const AuthProvider = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  const verifyUser = async () => {
+  const verifyUser = useCallback(async () => {
     try {
       const response = await fetch(me_endpoint, {
         method: 'GET',
@@ -47,7 +47,7 @@ export const AuthProvider = ({ children }) => {
       setIsAuthenticated(false);
       return null;
     }
-  };
+  }, []);
 
   useEffect(() => {
     // Check for existing authentication on app load
@@ -58,7 +58,7 @@ export const AuthProvider = ({ children }) => {
     };
 
     checkAuth();
-  }, []);
+  }, [verifyUser]);
 
   const signIn = (userData) => {
     setUser(userData);

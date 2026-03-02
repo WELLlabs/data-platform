@@ -184,6 +184,32 @@
   filter: brightness(0.95);
 }
 
+/* Search button (Datasets and Search pages) */
+.btn-search {
+  background-color: #0d6efd;
+  color: #fff;
+  border-color: #0d6efd;
+}
+
+.btn-search:hover {
+  background-color: #0b5ed7;
+  border-color: #0b5ed7;
+  color: #fff;
+}
+
+/* Upload button (Datasets and Dashboard pages) */
+.btn-upload {
+  background-color: #198754;
+  color: #fff;
+  border-color: #198754;
+}
+
+.btn-upload:hover {
+  background-color: #157347;
+  border-color: #157347;
+  color: #fff;
+}
+
 /* React Select styling */
 .react-select-container {
   width: 100%;

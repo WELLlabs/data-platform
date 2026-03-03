@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import {
@@ -6,7 +6,96 @@ import {
   download_url_endpoint,
   delete_dataset_endpoint,
   delete_file_endpoint,
+  edit_dataset_endpoint,
+  edit_file_endpoint,
 } from "../api/endpoints";
+
+const initialDatasetEdit = {
+  showModal: false,
+  title: "",
+  description: "",
+  isPrivate: false,
+  tags: "",
+  error: "",
+  submitting: false,
+};
+
+function datasetEditReducer(state, action) {
+  switch (action.type) {
+    case "OPEN":
+      return {
+        ...state,
+        showModal: true,
+        title: action.payload.title ?? "",
+        description: action.payload.description ?? "",
+        isPrivate: action.payload.isPrivate ?? false,
+        tags: action.payload.tags ?? "",
+        error: "",
+      };
+    case "CLOSE":
+      return { ...state, showModal: false };
+    case "SET_FIELD":
+      return { ...state, [action.field]: action.value };
+    case "SET_ERROR":
+      return { ...state, error: action.error };
+    case "SET_SUBMITTING":
+      return { ...state, submitting: action.submitting };
+    default:
+      return state;
+  }
+}
+
+const initialFileEdit = {
+  showModal: false,
+  file: null,
+  title: "",
+  description: "",
+  provenance: "",
+  source: "",
+  citeAs: "",
+  groundtruthed: false,
+  permissions: "CC0: Public Domain",
+  duration: 0,
+  value: "low",
+  temporalFrom: "",
+  temporalTo: "",
+  geography: "",
+  error: "",
+  submitting: false,
+};
+
+function fileEditReducer(state, action) {
+  switch (action.type) {
+    case "OPEN":
+      return {
+        ...initialFileEdit,
+        showModal: true,
+        file: action.payload.file,
+        title: action.payload.title ?? "",
+        description: action.payload.description ?? "",
+        provenance: action.payload.provenance ?? "",
+        source: action.payload.source ?? "",
+        citeAs: action.payload.citeAs ?? "",
+        groundtruthed: action.payload.groundtruthed ?? false,
+        permissions: action.payload.permissions ?? "CC0: Public Domain",
+        duration: action.payload.duration ?? 0,
+        value: action.payload.value ?? "low",
+        temporalFrom: action.payload.temporalFrom ?? "",
+        temporalTo: action.payload.temporalTo ?? "",
+        geography: action.payload.geography ?? "",
+      };
+    case "CLOSE":
+      return { ...state, showModal: false, file: null };
+    case "SET_FIELD":
+      return { ...state, [action.field]: action.value };
+    case "SET_ERROR":
+      return { ...state, error: action.error };
+    case "SET_SUBMITTING":
+      return { ...state, submitting: action.submitting };
+    default:
+      return state;
+  }
+}
 
 function DatasetInfo() {
   const navigate = useNavigate();
@@ -25,44 +114,57 @@ function DatasetInfo() {
   const [deletingFileId, setDeletingFileId] = useState(null);
   const [deleteError, setDeleteError] = useState("");
 
-  useEffect(() => {
+  // Dataset edit modal state
+  const [datasetEdit, dispatchDatasetEdit] = useReducer(
+    datasetEditReducer,
+    initialDatasetEdit
+  );
+  const showDatasetEditModal = datasetEdit.showModal;
+  const editDatasetModalRef = useRef(null);
+  const editDatasetTitleInputRef = useRef(null);
+  const previousActiveElementRef = useRef(null);
+
+  // File edit modal state
+  const [fileEdit, dispatchFileEdit] = useReducer(
+    fileEditReducer,
+    initialFileEdit
+  );
+  const showFileEditModal = fileEdit.showModal;
+  const fileToEdit = fileEdit.file;
+
+  const fetchDatasetInfo = useCallback(async () => {
     const datasetId = searchParams.get("dataset_id");
-    
     if (!datasetId) {
       navigate("/datasets");
       return;
     }
-
-    const fetchDatasetInfo = async () => {
-      try {
-        setLoading(true);
-        setError("");
-        
-        const response = await fetch(
-          `${dataset_info_endpoint}?dataset_id=${encodeURIComponent(datasetId)}`,
-          { credentials: "include" }
-        );
-
-        if (!response.ok) {
-          if (response.status === 404) {
-            throw new Error("Dataset not found");
-          }
-          throw new Error(`Failed to fetch dataset: ${response.statusText}`);
+    try {
+      setLoading(true);
+      setError("");
+      const response = await fetch(
+        `${dataset_info_endpoint}?dataset_id=${encodeURIComponent(datasetId)}`,
+        { credentials: "include" }
+      );
+      if (!response.ok) {
+        if (response.status === 404) {
+          throw new Error("Dataset not found");
         }
-
-        const data = await response.json();
-        setDataset(data.dataset);
-        setFiles(data.files || []);
-      } catch (err) {
-        console.error("Error fetching dataset info:", err);
-        setError(err.message || "Error loading dataset information");
-      } finally {
-        setLoading(false);
+        throw new Error(`Failed to fetch dataset: ${response.statusText}`);
       }
-    };
-
-    fetchDatasetInfo();
+      const data = await response.json();
+      setDataset(data.dataset);
+      setFiles(data.files || []);
+    } catch (err) {
+      console.error("Error fetching dataset info:", err);
+      setError(err.message || "Error loading dataset information");
+    } finally {
+      setLoading(false);
+    }
   }, [searchParams, navigate]);
+
+  useEffect(() => {
+    fetchDatasetInfo();
+  }, [fetchDatasetInfo]);
 
   const formatDate = (dateString) => {
     if (!dateString) return "N/A";
@@ -79,6 +181,22 @@ function DatasetInfo() {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  };
+
+  const formatToDatetimeLocal = (value) => {
+    if (value == null || value === "") return "";
+    try {
+      const date = new Date(value);
+      if (isNaN(date.getTime())) return "";
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, "0");
+      const d = String(date.getDate()).padStart(2, "0");
+      const h = String(date.getHours()).padStart(2, "0");
+      const min = String(date.getMinutes()).padStart(2, "0");
+      return `${y}-${m}-${d}T${h}:${min}`;
+    } catch {
+      return "";
+    }
   };
 
   const handleDownload = async (file) => {
@@ -308,6 +426,222 @@ function DatasetInfo() {
     setShowFileDeleteModal(true);
   };
 
+  const openDatasetEditModal = () => {
+    if (!dataset) return;
+    dispatchDatasetEdit({
+      type: "OPEN",
+      payload: {
+        title: dataset.dataset_title || "",
+        description: dataset.dataset_description || "",
+        isPrivate: Boolean(dataset.private),
+        tags:
+          dataset.tags && Array.isArray(dataset.tags)
+            ? dataset.tags.join(", ")
+            : "",
+      },
+    });
+  };
+
+  // Edit dataset modal: focus management and Escape/focus trap
+  useEffect(() => {
+    if (!showDatasetEditModal) return;
+    previousActiveElementRef.current = document.activeElement;
+    const timer = requestAnimationFrame(() => {
+      editDatasetTitleInputRef.current?.focus();
+    });
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        dispatchDatasetEdit({ type: "CLOSE" });
+        return;
+      }
+      if (e.key !== "Tab" || !editDatasetModalRef.current) return;
+      const focusableSelector =
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+      const focusables = [
+        ...editDatasetModalRef.current.querySelectorAll(focusableSelector),
+      ].filter((el) => el.offsetParent !== null);
+      const len = focusables.length;
+      if (len === 0) return;
+      const currentIndex = focusables.indexOf(document.activeElement);
+      if (e.shiftKey) {
+        if (currentIndex <= 0) {
+          e.preventDefault();
+          focusables[len - 1].focus();
+        }
+      } else {
+        if (currentIndex === -1 || currentIndex >= len - 1) {
+          e.preventDefault();
+          focusables[0].focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      cancelAnimationFrame(timer);
+      document.removeEventListener("keydown", handleKeyDown);
+      previousActiveElementRef.current?.focus?.();
+    };
+  }, [showDatasetEditModal]);
+
+  const processTagsForSubmit = (tagsText) => {
+    if (!tagsText || !String(tagsText).trim()) return [];
+    return tagsText
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter((tag) => tag.length > 0)
+      .map((tag) => tag.replace(/\s+/g, "-"));
+  };
+
+  const handleEditDatasetSubmit = async (e) => {
+    e.preventDefault();
+    dispatchDatasetEdit({ type: "SET_ERROR", error: "" });
+    const titleTrimmed = datasetEdit.title.trim();
+    const tagsArray = processTagsForSubmit(datasetEdit.tags);
+    if (!titleTrimmed) {
+      dispatchDatasetEdit({ type: "SET_ERROR", error: "Dataset title is required." });
+      return;
+    }
+    if (tagsArray.length === 0) {
+      dispatchDatasetEdit({ type: "SET_ERROR", error: "At least one tag is required." });
+      return;
+    }
+    dispatchDatasetEdit({ type: "SET_SUBMITTING", submitting: true });
+    try {
+      const body = {
+        dataset_id: dataset.dataset_id,
+        dataset_title: titleTrimmed,
+        dataset_description: datasetEdit.description.trim() || null,
+        private: datasetEdit.isPrivate,
+        tags: tagsArray,
+      };
+      const response = await fetch(edit_dataset_endpoint, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        credentials: "include",
+      });
+      if (!response.ok) {
+        let errorMessage = "Failed to update dataset.";
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.detail || errorData.message || errorMessage;
+        } catch {
+          errorMessage = response.statusText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+      dispatchDatasetEdit({ type: "CLOSE" });
+      await fetchDatasetInfo();
+    } catch (err) {
+      console.error("Error editing dataset:", err);
+      dispatchDatasetEdit({
+        type: "SET_ERROR",
+        error: err.message || "Failed to update dataset. Please try again.",
+      });
+    } finally {
+      dispatchDatasetEdit({ type: "SET_SUBMITTING", submitting: false });
+    }
+  };
+
+  const openFileEditModal = (file) => {
+    if (!file) return;
+    dispatchFileEdit({
+      type: "OPEN",
+      payload: {
+        file,
+        title: file.file_title || "",
+        description: file.file_description || "",
+        provenance: file.provenance || "",
+        source: file.source || "",
+        citeAs: file.cite_as || "",
+        groundtruthed: Boolean(file.groundtruthed),
+        permissions:
+          file.permissions && file.permissions.trim()
+            ? file.permissions
+            : "CC0: Public Domain",
+        duration:
+          file.duration !== undefined && file.duration !== null
+            ? Number(file.duration)
+            : 0,
+        value:
+          file.value && ["high", "medium", "low"].includes(file.value)
+            ? file.value
+            : "low",
+        temporalFrom: formatToDatetimeLocal(file.temporal_from),
+        temporalTo: formatToDatetimeLocal(file.temporal_to),
+        geography: file.geography || "",
+      },
+    });
+  };
+
+  const handleEditFileSubmit = async (e) => {
+    e.preventDefault();
+    dispatchFileEdit({ type: "SET_ERROR", error: "" });
+    const titleTrimmed = fileEdit.title.trim();
+    if (!titleTrimmed) {
+      dispatchFileEdit({ type: "SET_ERROR", error: "File title is required." });
+      return;
+    }
+    const fromStr = fileEdit.temporalFrom?.trim();
+    const toStr = fileEdit.temporalTo?.trim();
+    if (fromStr && toStr) {
+      const fromDate = new Date(fromStr);
+      const toDate = new Date(toStr);
+      if (!isNaN(fromDate.getTime()) && !isNaN(toDate.getTime()) && fromDate >= toDate) {
+        dispatchFileEdit({
+          type: "SET_ERROR",
+          error: "Temporal From must be before Temporal To.",
+        });
+        return;
+      }
+    }
+    dispatchFileEdit({ type: "SET_SUBMITTING", submitting: true });
+    try {
+      const body = {
+        file_id: fileEdit.file.file_id,
+        file_title: titleTrimmed,
+        file_description: fileEdit.description.trim() || null,
+        provenance: fileEdit.provenance.trim() || null,
+        source: fileEdit.source.trim() || null,
+        cite_as: fileEdit.citeAs.trim() || null,
+        groundtruthed: fileEdit.groundtruthed,
+        permissions: fileEdit.permissions.trim() || null,
+        duration: Math.max(0, parseInt(fileEdit.duration, 10) || 0),
+        value: fileEdit.value || null,
+        temporal_from: fromStr ? new Date(fromStr).toISOString() : null,
+        temporal_to: toStr ? new Date(toStr).toISOString() : null,
+        geography: fileEdit.geography.trim() || null,
+      };
+      const response = await fetch(edit_file_endpoint, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        credentials: "include",
+      });
+      if (!response.ok) {
+        let errorMessage = "Failed to update file.";
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.detail || errorData.message || errorMessage;
+        } catch {
+          errorMessage = response.statusText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+      dispatchFileEdit({ type: "CLOSE" });
+      await fetchDatasetInfo();
+    } catch (err) {
+      console.error("Error editing file:", err);
+      dispatchFileEdit({
+        type: "SET_ERROR",
+        error: err.message || "Failed to update file. Please try again.",
+      });
+    } finally {
+      dispatchFileEdit({ type: "SET_SUBMITTING", submitting: false });
+    }
+  };
+
   if (loading) {
     return (
       <div className="container py-5 text-center">
@@ -342,13 +676,23 @@ function DatasetInfo() {
     <div className="container py-5">
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h2 className="mb-0">Dataset Information</h2>
-        <button
-          className="btn btn-danger"
-          onClick={() => setShowDatasetDeleteModal(true)}
-          disabled={deletingDataset}
-        >
-          <i className="bi bi-trash"></i> Delete
-        </button>
+        <div className="d-flex gap-2">
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={openDatasetEditModal}
+            aria-label="Edit dataset"
+          >
+            <i className="bi bi-pencil"></i> Edit
+          </button>
+          <button
+            className="btn btn-danger"
+            onClick={() => setShowDatasetDeleteModal(true)}
+            disabled={deletingDataset}
+          >
+            <i className="bi bi-trash"></i> Delete
+          </button>
+        </div>
       </div>
 
       {deleteError && (
@@ -360,6 +704,129 @@ function DatasetInfo() {
             onClick={() => setDeleteError("")}
             aria-label="Close"
           ></button>
+        </div>
+      )}
+
+      {/* Dataset Edit Modal */}
+      {showDatasetEditModal && (
+        <div
+          className="modal show d-block"
+          tabIndex="-1"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="edit-dataset-modal-title"
+          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+        >
+          <div className="modal-dialog" ref={editDatasetModalRef}>
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 id="edit-dataset-modal-title" className="modal-title">Edit Dataset</h5>
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={() => dispatchDatasetEdit({ type: "CLOSE" })}
+                  aria-label="Close"
+                />
+              </div>
+              <form onSubmit={handleEditDatasetSubmit}>
+                <div className="modal-body">
+                  {datasetEdit.error && (
+                    <div className="alert alert-danger" role="alert">
+                      {datasetEdit.error}
+                    </div>
+                  )}
+                  <div className="mb-3">
+                    <label className="form-label" htmlFor="edit-dataset-title">
+                      Dataset Title <span style={{ color: "red" }}>(required)</span>
+                    </label>
+                    <input
+                      id="edit-dataset-title"
+                      ref={editDatasetTitleInputRef}
+                      type="text"
+                      className="form-control"
+                      value={datasetEdit.title}
+                      onChange={(e) =>
+                        dispatchDatasetEdit({
+                          type: "SET_FIELD",
+                          field: "title",
+                          value: e.target.value,
+                        })
+                      }
+                      required
+                      aria-required="true"
+                    />
+                  </div>
+                  <div className="mb-3">
+                    <label className="form-label">Dataset Description</label>
+                    <textarea
+                      className="form-control"
+                      rows={4}
+                      value={datasetEdit.description}
+                      onChange={(e) =>
+                        dispatchDatasetEdit({
+                          type: "SET_FIELD",
+                          field: "description",
+                          value: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="mb-3">
+                    <label className="form-label">Availability</label>
+                    <select
+                      className="form-select"
+                      value={datasetEdit.isPrivate ? "private" : "public"}
+                      onChange={(e) =>
+                        dispatchDatasetEdit({
+                          type: "SET_FIELD",
+                          field: "isPrivate",
+                          value: e.target.value === "private",
+                        })
+                      }
+                    >
+                      <option value="public">Public</option>
+                      <option value="private">Private</option>
+                    </select>
+                  </div>
+                  <div className="mb-3">
+                    <label className="form-label">
+                      Tags (keywords separated by comma){" "}
+                      <span style={{ color: "red" }}>(required)</span>
+                    </label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={datasetEdit.tags}
+                      onChange={(e) =>
+                        dispatchDatasetEdit({
+                          type: "SET_FIELD",
+                          field: "tags",
+                          value: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => dispatchDatasetEdit({ type: "CLOSE" })}
+                    disabled={datasetEdit.submitting}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    disabled={datasetEdit.submitting}
+                  >
+                    {datasetEdit.submitting ? "Submitting..." : "Submit"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
         </div>
       )}
 
@@ -481,6 +948,291 @@ function DatasetInfo() {
                   )}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* File Edit Modal */}
+      {showFileEditModal && fileToEdit && (
+        <div
+          className="modal show d-block"
+          tabIndex="-1"
+          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+        >
+          <div className="modal-dialog modal-lg modal-dialog-scrollable">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">Edit File</h5>
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={() => dispatchFileEdit({ type: "CLOSE" })}
+                  aria-label="Close"
+                />
+              </div>
+              <form onSubmit={handleEditFileSubmit}>
+                <div
+                  className="modal-body"
+                  style={{ maxHeight: "60vh", overflowY: "auto" }}
+                >
+                  {fileEdit.error && (
+                    <div className="alert alert-danger" role="alert">
+                      {fileEdit.error}
+                    </div>
+                  )}
+                  <div className="mb-3">
+                    <label className="form-label">
+                      File Title <span style={{ color: "red" }}>(required)</span>
+                    </label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={fileEdit.title}
+                      onChange={(e) =>
+                        dispatchFileEdit({
+                          type: "SET_FIELD",
+                          field: "title",
+                          value: e.target.value,
+                        })
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="mb-3">
+                    <label className="form-label">File Description</label>
+                    <textarea
+                      className="form-control"
+                      rows={3}
+                      value={fileEdit.description}
+                      onChange={(e) =>
+                        dispatchFileEdit({
+                          type: "SET_FIELD",
+                          field: "description",
+                          value: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="mb-3">
+                    <label className="form-label">Provenance</label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={fileEdit.provenance}
+                      onChange={(e) =>
+                        dispatchFileEdit({
+                          type: "SET_FIELD",
+                          field: "provenance",
+                          value: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="mb-3">
+                    <label className="form-label">Source</label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={fileEdit.source}
+                      onChange={(e) =>
+                        dispatchFileEdit({
+                          type: "SET_FIELD",
+                          field: "source",
+                          value: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="mb-3">
+                    <label className="form-label">Cite As</label>
+                    <textarea
+                      className="form-control"
+                      rows={2}
+                      value={fileEdit.citeAs}
+                      onChange={(e) =>
+                        dispatchFileEdit({
+                          type: "SET_FIELD",
+                          field: "citeAs",
+                          value: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="mb-3">
+                    <label className="form-label me-3">Groundtruthed</label>
+                    <div>
+                      <div className="form-check form-check-inline">
+                        <input
+                          className="form-check-input"
+                          type="radio"
+                          name="fileEditGroundtruthed"
+                          id="fileEdit_gt_no"
+                          checked={!fileEdit.groundtruthed}
+                          onChange={() =>
+                            dispatchFileEdit({
+                              type: "SET_FIELD",
+                              field: "groundtruthed",
+                              value: false,
+                            })
+                          }
+                        />
+                        <label className="form-check-label" htmlFor="fileEdit_gt_no">
+                          No
+                        </label>
+                      </div>
+                      <div className="form-check form-check-inline">
+                        <input
+                          className="form-check-input"
+                          type="radio"
+                          name="fileEditGroundtruthed"
+                          id="fileEdit_gt_yes"
+                          checked={fileEdit.groundtruthed}
+                          onChange={() =>
+                            dispatchFileEdit({
+                              type: "SET_FIELD",
+                              field: "groundtruthed",
+                              value: true,
+                            })
+                          }
+                        />
+                        <label className="form-check-label" htmlFor="fileEdit_gt_yes">
+                          Yes
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mb-3">
+                    <label className="form-label">Permissions</label>
+                    <select
+                      className="form-select"
+                      value={fileEdit.permissions}
+                      onChange={(e) =>
+                        dispatchFileEdit({
+                          type: "SET_FIELD",
+                          field: "permissions",
+                          value: e.target.value,
+                        })
+                      }
+                    >
+                      <option value="CC0: Public Domain">CC0: Public Domain</option>
+                      <option value="CC BY: Attribution">CC BY: Attribution</option>
+                      <option value="CC BY-SA: Attribution-ShareAlike">
+                        CC BY-SA: Attribution-ShareAlike
+                      </option>
+                      <option value="CC BY-NC: Attribution-NonCommercial">
+                        CC BY-NC: Attribution-NonCommercial
+                      </option>
+                      <option value="CC BY-NC-SA: Attribution-NonCommercial-ShareAlike">
+                        CC BY-NC-SA: Attribution-NonCommercial-ShareAlike
+                      </option>
+                      <option value="CC BY-ND: Attribution-NoDerivatives">
+                        CC BY-ND: Attribution-NoDerivatives
+                      </option>
+                      <option value="CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives">
+                        CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives
+                      </option>
+                    </select>
+                  </div>
+                  <div className="mb-3">
+                    <label className="form-label">Duration</label>
+                    <input
+                      type="number"
+                      className="form-control"
+                      value={fileEdit.duration}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10) || 0;
+                        dispatchFileEdit({
+                          type: "SET_FIELD",
+                          field: "duration",
+                          value: Math.max(0, val),
+                        });
+                      }}
+                      min={0}
+                    />
+                  </div>
+                  <div className="mb-3">
+                    <label className="form-label">Value</label>
+                    <select
+                      className="form-select"
+                      value={fileEdit.value}
+                      onChange={(e) =>
+                        dispatchFileEdit({
+                          type: "SET_FIELD",
+                          field: "value",
+                          value: e.target.value,
+                        })
+                      }
+                    >
+                      <option value="high">high</option>
+                      <option value="medium">medium</option>
+                      <option value="low">low</option>
+                    </select>
+                  </div>
+                  <div className="mb-3">
+                    <label className="form-label">Temporal Coverage From</label>
+                    <input
+                      type="datetime-local"
+                      className="form-control"
+                      value={fileEdit.temporalFrom}
+                      onChange={(e) =>
+                        dispatchFileEdit({
+                          type: "SET_FIELD",
+                          field: "temporalFrom",
+                          value: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="mb-3">
+                    <label className="form-label">Temporal Coverage To</label>
+                    <input
+                      type="datetime-local"
+                      className="form-control"
+                      value={fileEdit.temporalTo}
+                      onChange={(e) =>
+                        dispatchFileEdit({
+                          type: "SET_FIELD",
+                          field: "temporalTo",
+                          value: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="mb-3">
+                    <label className="form-label">Geographical Extent</label>
+                    <textarea
+                      className="form-control"
+                      rows={3}
+                      value={fileEdit.geography}
+                      onChange={(e) =>
+                        dispatchFileEdit({
+                          type: "SET_FIELD",
+                          field: "geography",
+                          value: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => dispatchFileEdit({ type: "CLOSE" })}
+                    disabled={fileEdit.submitting}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    disabled={fileEdit.submitting}
+                  >
+                    {fileEdit.submitting ? "Submitting..." : "Submit"}
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         </div>
@@ -721,6 +1473,14 @@ function DatasetInfo() {
                           <i className="bi bi-arrow-down"></i> download
                         </>
                       )}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-primary"
+                      onClick={() => openFileEditModal(file)}
+                      aria-label="Edit file"
+                    >
+                      <i className="bi bi-pencil"></i>
                     </button>
                     <button
                       className="btn btn-sm btn-danger"

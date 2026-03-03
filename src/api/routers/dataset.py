@@ -18,7 +18,7 @@ from models.file import File
 from models.organization import Organization
 from models.user import User
 from routers.upload import get_current_active_user
-from schemas.dataset import DatasetCreate
+from schemas.dataset import DatasetCreate, EditDatasetRequest
 from services.auth import AuthService, RedisStrategy, get_auth_service
 from services.dataset import DatasetService, get_dataset_service
 from services.organization import OrganizationService, get_organization_service
@@ -183,6 +183,68 @@ class DatasetController:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Error creating dataset",
+            )
+
+    async def edit_dataset(
+        self,
+        dataset_id: UUID,
+        dataset_title: str,
+        dataset_description: Optional[str],
+        private: bool,
+        tags: List[str],
+    ) -> JSONResponse:
+        """
+        Update dataset metadata and tags. Caller must have verified creator.
+
+        Returns 404 if dataset not found, 200 with updated dataset JSON otherwise.
+        """
+        try:
+            dataset = await self.dataset_service.update_dataset_metadata_and_tags(
+                dataset_id=dataset_id,
+                dataset_title=dataset_title,
+                dataset_description=dataset_description,
+                private=private,
+                tags=tags or [],
+            )
+            if dataset is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Dataset not found",
+                )
+
+            response_data = {
+                "dataset_id": str(dataset.dataset_id),
+                "dataset_title": dataset.dataset_title,
+                "dataset_description": dataset.dataset_description,
+                "private": dataset.private,
+                "tags": [tag.tag_name for tag in dataset.tags],
+                "creator": str(dataset.creator),
+                "organization": dataset.organization,
+                "downloads": dataset.downloads,
+                "approved": dataset.approved,
+                "approved_by": str(dataset.approved_by)
+                if dataset.approved_by
+                else None,
+                "created_at": dataset.created_at.isoformat()
+                if dataset.created_at
+                else None,
+            }
+            return JSONResponse(
+                content=jsonable_encoder(response_data),
+                status_code=status.HTTP_200_OK,
+            )
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.exception(
+                "Unexpected error editing dataset for dataset_id=%s: %s",
+                dataset_id,
+                e,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error editing dataset",
             )
 
     async def get_dataset_info(self, dataset_id: UUID) -> JSONResponse:
@@ -850,6 +912,58 @@ async def create_dataset(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid input data: {str(e)}",
+        )
+
+
+@router.put("/edit_dataset")
+async def edit_dataset(
+    body: EditDatasetRequest,
+    user: User = Depends(get_current_active_user),
+    user_service: UserService = Depends(get_user_service),
+    controller: DatasetController = Depends(get_dataset_controller),
+):
+    """
+    Update dataset metadata and tags. Only the dataset creator may edit.
+
+    Request body: dataset_id, dataset_title, dataset_description, private, tags.
+    Requires authentication (valid session cookie). Verifies the dataset exists
+    (404 if not), then verifies the user is the dataset creator (403 if not).
+    """
+    try:
+        dataset_id = body.dataset_id
+        exists = await controller.dataset_service.dataset_exists(dataset_id)
+        if not exists:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Dataset not found",
+            )
+        is_creator = await user_service.check_if_dataset_creator_by_id(
+            user.id, dataset_id
+        )
+        if not is_creator:
+            logger.warning(
+                "Edit dataset denied: user %s is not creator of dataset %s",
+                user.id,
+                dataset_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only creator of dataset can edit.",
+            )
+        return await controller.edit_dataset(
+            dataset_id=dataset_id,
+            dataset_title=body.dataset_title,
+            dataset_description=body.dataset_description,
+            private=body.private,
+            tags=body.tags,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unexpected error in /edit_dataset: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error editing dataset",
         )
 
 

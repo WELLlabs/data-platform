@@ -10,15 +10,26 @@ from uuid import UUID, uuid4
 import httpx
 from core.config import settings
 from db.session import get_session
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    status,
+)
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from models.dataset import Dataset
 from models.file import File
 from models.user import User
+from schemas.file import FileEditRequest
 from services.auth import AuthService, RedisStrategy, get_auth_service
 from services.dataset import DatasetService, get_dataset_service
 from services.upload import UploadService, get_upload_service
+from services.user import UserService, get_user_service
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +37,33 @@ from utils.security import sanitize_input
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+ALLOWED_PERMISSIONS = [
+    "CC0: Public Domain",
+    "CC BY: Attribution",
+    "CC BY-SA: Attribution-ShareAlike",
+    "CC BY-NC: Attribution-NonCommercial",
+    "CC BY-NC-SA: Attribution-NonCommercial-ShareAlike",
+    "CC BY-ND: Attribution-NoDerivatives",
+    "CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives",
+]
+
+
+def _validate_permissions(
+    permissions: Optional[str], log: logging.Logger
+) -> str:
+    """Normalize permissions to an allowed CC license or default to CC0."""
+    sanitized = sanitize_input(permissions)
+    if sanitized is None or not sanitized.strip():
+        return "CC0: Public Domain"
+    stripped = sanitized.strip()
+    if stripped not in ALLOWED_PERMISSIONS:
+        log.warning(
+            "Invalid permissions value '%s', defaulting to 'CC0: Public Domain'",
+            stripped,
+        )
+        return "CC0: Public Domain"
+    return stripped
 
 
 async def get_current_active_user(
@@ -104,10 +142,12 @@ class UploadController:
         upload_service: UploadService,
         session: AsyncSession,
         dataset_service: DatasetService,
+        user_service: UserService,
     ):
         self.upload_service = upload_service
         self.session = session
         self.dataset_service = dataset_service
+        self.user_service = user_service
         self.logger = logging.getLogger(__name__)
 
     async def get_upload_url(self, filename: str, user: User) -> JSONResponse:
@@ -467,47 +507,43 @@ class UploadController:
 
             # 3. Sanitize and validate additional fields
             sanitized_provenance = sanitize_input(provenance)
+            if sanitized_provenance and len(sanitized_provenance) > 125:
+                self.logger.warning(
+                    "Provenance truncated for file_key=%s (length %d, max 125)",
+                    sanitized_file_key,
+                    len(sanitized_provenance),
+                )
+                sanitized_provenance = sanitized_provenance[:125]
             sanitized_source = sanitize_input(source)
+            if sanitized_source and len(sanitized_source) > 1000:
+                self.logger.warning(
+                    "Source truncated for file_key=%s (length %d, max 1000)",
+                    sanitized_file_key,
+                    len(sanitized_source),
+                )
+                sanitized_source = sanitized_source[:1000]
             sanitized_cite_as = sanitize_input(cite_as)
             sanitized_geography = sanitize_input(geography)
 
-            # Validate and sanitize permissions - must be one of the allowed CC license values
-            allowed_permissions = [
-                "CC0: Public Domain",
-                "CC BY: Attribution",
-                "CC BY-SA: Attribution-ShareAlike",
-                "CC BY-NC: Attribution-NonCommercial",
-                "CC BY-NC-SA: Attribution-NonCommercial-ShareAlike",
-                "CC BY-ND: Attribution-NoDerivatives",
-                "CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives",
-            ]
-            permissions_value = permissions
-            if permissions_value is None or (
-                isinstance(permissions_value, str) and not permissions_value.strip()
-            ):
-                sanitized_permissions = "CC0: Public Domain"
-            else:
-                permissions_stripped = (
-                    permissions_value.strip()
-                    if isinstance(permissions_value, str)
-                    else str(permissions_value).strip()
-                )
-                if permissions_stripped not in allowed_permissions:
-                    self.logger.warning(
-                        "Invalid permissions value '%s', defaulting to 'CC0: Public Domain'",
-                        permissions_stripped,
-                    )
-                    sanitized_permissions = "CC0: Public Domain"
-                else:
-                    sanitized_permissions = permissions_stripped
+            sanitized_permissions = _validate_permissions(
+                permissions, self.logger
+            )
 
             # Validate duration (default to 0 if None)
             duration_value = duration if duration is not None else 0
 
             # Validate value (must be "high", "medium", or "low" if provided)
-            if value is not None and value not in ["high", "medium", "low"]:
-                self.logger.warning("Invalid value '%s', setting to None", value)
-                value = None
+            val = sanitize_input(value)
+            stripped_value = val.strip() if val else None
+            if stripped_value is not None and stripped_value not in [
+                "high",
+                "medium",
+                "low",
+            ]:
+                self.logger.warning(
+                    "Invalid value '%s', setting to None", stripped_value
+                )
+                stripped_value = None
 
             # Validate temporal range
             if temporal_to is not None and temporal_from is not None:
@@ -540,7 +576,7 @@ class UploadController:
                 groundtruthed=groundtruthed,
                 permissions=sanitized_permissions,
                 duration=duration_value,
-                value=value,
+                value=stripped_value,
                 temporal_from=temporal_from,
                 temporal_to=temporal_to,
                 geography=sanitized_geography,
@@ -775,12 +811,169 @@ class UploadController:
                 detail="Error deleting file",
             )
 
+    async def edit_file(
+        self,
+        file_id: UUID,
+        file_title: str,
+        file_description: Optional[str],
+        provenance: Optional[str],
+        source: Optional[str],
+        cite_as: Optional[str],
+        groundtruthed: Optional[bool],
+        permissions: Optional[str],
+        duration: int,
+        value: Optional[str],
+        temporal_from: Optional[datetime],
+        temporal_to: Optional[datetime],
+        geography: Optional[str],
+        user: User,
+    ) -> JSONResponse:
+        """
+        Update file metadata. Only the dataset creator may edit.
+
+        This method:
+        1. Loads the file by file_id and gets dataset_id
+        2. Checks if the current user is the dataset creator
+        3. Updates the file record with the provided metadata fields
+        """
+        try:
+            self.logger.info(
+                "Processing edit_file request for file_id=%s, user=%s",
+                file_id,
+                user.id,
+            )
+
+            result = await self.session.execute(
+                select(File).where(File.file_id == file_id)
+            )
+            file_record = result.scalar_one_or_none()
+
+            if not file_record:
+                self.logger.warning("File not found: %s", file_id)
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="File not found",
+                )
+
+            dataset_id = file_record.dataset_id
+            is_creator = await self.user_service.check_if_dataset_creator_by_id(
+                user.id, dataset_id
+            )
+            if not is_creator:
+                self.logger.warning(
+                    "Edit denied: user %s is not creator of dataset %s",
+                    user.id,
+                    dataset_id,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Only creator of dataset can edit.",
+                )
+
+            sanitized_title = sanitize_input(file_title)
+            if not sanitized_title or not sanitized_title.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="file_title cannot be empty",
+                )
+
+            file_record.file_title = sanitized_title.strip()
+            file_record.file_description = sanitize_input(file_description)
+            prov = sanitize_input(provenance)
+            if prov and len(prov) > 125:
+                self.logger.warning(
+                    "Provenance truncated for file_id=%s (length %d, max 125)",
+                    file_id,
+                    len(prov),
+                )
+                prov = prov[:125]
+            file_record.provenance = prov if prov else None
+            src = sanitize_input(source)
+            if src and len(src) > 1000:
+                self.logger.warning(
+                    "Source truncated for file_id=%s (length %d, max 1000)",
+                    file_id,
+                    len(src),
+                )
+                src = src[:1000]
+            file_record.source = src if src else None
+            file_record.cite_as = sanitize_input(cite_as)
+            file_record.groundtruthed = groundtruthed
+
+            file_record.permissions = _validate_permissions(
+                permissions, self.logger
+            )
+
+            file_record.duration = max(0, duration)
+
+            val = sanitize_input(value)
+            stripped = val.strip() if val else None
+            if stripped is not None and stripped not in [
+                "high",
+                "medium",
+                "low",
+            ]:
+                self.logger.warning(
+                    "Invalid value '%s', setting to None", stripped
+                )
+                stripped = None
+            file_record.value = stripped
+            file_record.temporal_from = temporal_from
+            file_record.temporal_to = temporal_to
+            file_record.geography = sanitize_input(geography)
+
+            self.session.add(file_record)
+            await self.session.commit()
+            await self.session.refresh(file_record)
+
+            self.logger.info("File updated successfully: file_id=%s", file_id)
+
+            response_data = {
+                "file_id": str(file_record.file_id),
+                "file_title": file_record.file_title,
+                "file_description": file_record.file_description,
+                "provenance": file_record.provenance,
+                "source": file_record.source,
+                "cite_as": file_record.cite_as,
+                "groundtruthed": file_record.groundtruthed,
+                "permissions": file_record.permissions,
+                "duration": file_record.duration,
+                "value": file_record.value,
+                "temporal_from": (
+                    file_record.temporal_from.isoformat()
+                    if file_record.temporal_from
+                    else None
+                ),
+                "temporal_to": (
+                    file_record.temporal_to.isoformat()
+                    if file_record.temporal_to
+                    else None
+                ),
+                "geography": file_record.geography,
+            }
+            return JSONResponse(
+                content=jsonable_encoder(response_data),
+                status_code=status.HTTP_200_OK,
+            )
+
+        except HTTPException:
+            await self.session.rollback()
+            raise
+        except Exception as e:
+            await self.session.rollback()
+            self.logger.exception("Unexpected error editing file: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error editing file",
+            )
+
 
 # Dependency to get upload controller
 async def get_upload_controller(
     upload_service: UploadService = Depends(get_upload_service),
     session: AsyncSession = Depends(get_session),
     dataset_service: DatasetService = Depends(get_dataset_service),
+    user_service: UserService = Depends(get_user_service),
 ) -> UploadController:
     """
     Dependency function to get UploadController instance.
@@ -789,11 +982,12 @@ async def get_upload_controller(
         upload_service: Upload service dependency
         session: Database session dependency
         dataset_service: Dataset service dependency
+        user_service: User service dependency for permission checks
 
     Returns:
         UploadController instance
     """
-    return UploadController(upload_service, session, dataset_service)
+    return UploadController(upload_service, session, dataset_service, user_service)
 
 
 # Route handlers
@@ -1029,3 +1223,43 @@ async def delete_file(
             - 504: S3 handler service timeout
     """
     return await controller.delete_file(file_id, apikey)
+
+
+@router.put("/edit_file")
+async def edit_file(
+    payload: FileEditRequest = Body(..., description="File metadata to update"),
+    user: User = Depends(get_current_active_user),
+    controller: UploadController = Depends(get_upload_controller),
+):
+    """
+    Update file metadata. Only the dataset creator may edit.
+
+    Request body: file_id, file_title, file_description, provenance, source,
+    cite_as, groundtruthed, permissions, duration, value, temporal_from,
+    temporal_to, geography. Requires authentication (valid session cookie).
+    """
+    try:
+        return await controller.edit_file(
+            file_id=payload.file_id,
+            file_title=payload.file_title,
+            file_description=payload.file_description,
+            provenance=payload.provenance,
+            source=payload.source,
+            cite_as=payload.cite_as,
+            groundtruthed=payload.groundtruthed,
+            permissions=payload.permissions,
+            duration=payload.duration,
+            value=payload.value,
+            temporal_from=payload.temporal_from,
+            temporal_to=payload.temporal_to,
+            geography=payload.geography,
+            user=user,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unexpected error in /edit_file: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error editing file",
+        )

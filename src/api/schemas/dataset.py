@@ -168,3 +168,42 @@ class DatasetCreate(BaseModel):
                 raise ValueError("temporal_to must be after temporal_from")
         return v
 
+
+class EditDatasetRequest(BaseModel):
+    """
+    Schema for editing dataset metadata via PUT request body.
+
+    Keeps sensitive fields out of URL query parameters.
+    """
+
+    dataset_id: UUID = Field(..., description="Dataset ID (UUID) to update")
+    dataset_title: str = Field(..., min_length=1, description="Dataset title")
+    dataset_description: Optional[str] = Field(
+        None, description="Dataset description"
+    )
+    private: bool = Field(..., description="Whether dataset is private")
+    tags: List[str] = Field(default=[], description="Tags (list of strings)")
+
+    @validator("dataset_title")
+    def validate_dataset_title(cls, v):
+        """Validate dataset title is non-empty."""
+        if not v or not v.strip():
+            raise ValueError("dataset_title cannot be empty or just whitespace")
+        return v.strip()
+
+    @validator("dataset_description")
+    def validate_dataset_description(cls, v):
+        """Strip whitespace and convert empty or whitespace-only to None."""
+        if v is not None and not v.strip():
+            return None
+        return v.strip() if v else None
+
+    @validator("tags", pre=True)
+    def validate_tags_list(cls, v):
+        """Accept None or missing as empty list."""
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            return []
+        return [str(t).strip() for t in v if t is not None and str(t).strip()]
+

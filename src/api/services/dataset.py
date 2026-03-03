@@ -20,7 +20,7 @@ from schemas.dataset import DatasetCreate
 from services.organization import OrganizationService, get_organization_service
 from services.upload import UploadService, get_upload_service
 from services.user import UserService, get_user_service
-from sqlalchemy import desc, func, or_, select, update
+from sqlalchemy import delete, desc, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -84,6 +84,28 @@ class DatasetService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Error validating creator",
             )
+
+    def _normalize_tags(self, tags: Optional[List[str]]) -> List[str]:
+        """
+        Normalize tag strings: strip, replace internal whitespace with '-', lowercase,
+        and deduplicate while preserving order.
+
+        Args:
+            tags: Optional list of raw tag strings
+
+        Returns:
+            List of normalized, deduplicated tag strings
+        """
+        if not tags:
+            return []
+        result: List[str] = []
+        for tag_str in tags:
+            tag_stripped = tag_str.strip() if tag_str else ""
+            if not tag_stripped:
+                continue
+            normalized_tag = re.sub(r"\s+", "-", tag_stripped).lower()
+            result.append(normalized_tag)
+        return list(dict.fromkeys(result))
 
     async def get_organization_with_private_status(self, org_id: str) -> Organization:
         """
@@ -348,39 +370,31 @@ class DatasetService:
 
             # 8. Process tags: normalize, create/get Tag records, create TagDataset associations
             # Now that dataset is in the session, tag processing can safely reference it
-            if dataset_data.tags:
-                for tag_str in dataset_data.tags:
-                    # Strip whitespace
-                    tag_stripped = tag_str.strip()
-                    if not tag_stripped:
-                        continue
+            normalized_tags = self._normalize_tags(dataset_data.tags)
+            for normalized_tag in normalized_tags:
+                # Check if tag exists (case-insensitive)
+                tag_result = await self.session.execute(
+                    select(Tag).where(func.lower(Tag.tag_name) == normalized_tag)
+                )
+                existing_tag = tag_result.scalar_one_or_none()
 
-                    # Normalize: replace spaces with hyphens, convert to lowercase
-                    normalized_tag = re.sub(r"\s+", "-", tag_stripped).lower()
-
-                    # Check if tag exists (case-insensitive)
-                    tag_result = await self.session.execute(
-                        select(Tag).where(func.lower(Tag.tag_name) == normalized_tag)
-                    )
-                    existing_tag = tag_result.scalar_one_or_none()
-
-                    if existing_tag:
-                        tag_id = existing_tag.tag_id
-                    else:
-                        # Create new tag
-                        tag_id = uuid4()
-                        new_tag = Tag(
-                            tag_id=tag_id,
-                            tag_name=normalized_tag,
-                        )
-                        self.session.add(new_tag)
-
-                    # Create TagDataset association
-                    tag_dataset = TagDataset(
-                        dataset_id=dataset_id,
+                if existing_tag:
+                    tag_id = existing_tag.tag_id
+                else:
+                    # Create new tag
+                    tag_id = uuid4()
+                    new_tag = Tag(
                         tag_id=tag_id,
+                        tag_name=normalized_tag,
                     )
-                    self.session.add(tag_dataset)
+                    self.session.add(new_tag)
+
+                # Create TagDataset association
+                tag_dataset = TagDataset(
+                    dataset_id=dataset_id,
+                    tag_id=tag_id,
+                )
+                self.session.add(tag_dataset)
 
             # 9. Create file record with all moved and new fields
             file = File(
@@ -481,6 +495,112 @@ class DatasetService:
                 detail="Error creating dataset",
             )
 
+    async def update_dataset_metadata_and_tags(
+        self,
+        dataset_id: UUID,
+        dataset_title: str,
+        dataset_description: Optional[str],
+        private: bool,
+        tags: List[str],
+    ) -> Optional[Dataset]:
+        """
+        Update dataset metadata (title, description, private) and replace tags.
+
+        Resolves tag names to Tag records (create if missing), then replaces
+        all tag_dataset rows for this dataset with the new tag set.
+
+        Args:
+            dataset_id: Dataset UUID to update
+            dataset_title: New title
+            dataset_description: New description (optional)
+            private: New private flag
+            tags: List of tag name strings (normalized: strip, spaces->hyphen, lower)
+
+        Returns:
+            Updated Dataset with tags loaded, or None if dataset not found
+        """
+        try:
+            self.logger.info(
+                "Updating dataset metadata and tags for dataset_id=%s", dataset_id
+            )
+
+            sanitized_title = sanitize_input(dataset_title) or ""
+            if not sanitized_title.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="dataset_title cannot be empty",
+                )
+
+            result = await self.session.execute(
+                select(Dataset).where(Dataset.dataset_id == dataset_id)
+            )
+            dataset = result.scalar_one_or_none()
+            if dataset is None:
+                self.logger.info("Dataset not found: dataset_id=%s", dataset_id)
+                return None
+
+            organization = await self.get_organization_with_private_status(
+                dataset.organization
+            )
+            dataset_private = private
+            if dataset_private and not organization.private:
+                self.logger.info(
+                    "Dataset marked private but organization is not private. "
+                    "Setting dataset private=False for org_id=%s",
+                    organization.id,
+                )
+                dataset_private = False
+
+            dataset.dataset_title = sanitized_title.strip()
+            dataset.dataset_description = sanitize_input(dataset_description)
+            dataset.private = dataset_private
+            self.session.add(dataset)
+
+            normalized_tags = self._normalize_tags(tags)
+
+            tag_ids: List[UUID] = []
+            for normalized_tag in normalized_tags:
+                tag_result = await self.session.execute(
+                    select(Tag).where(func.lower(Tag.tag_name) == normalized_tag)
+                )
+                existing_tag = tag_result.scalar_one_or_none()
+                if existing_tag:
+                    tag_ids.append(existing_tag.tag_id)
+                else:
+                    tag_id = uuid4()
+                    new_tag = Tag(tag_id=tag_id, tag_name=normalized_tag)
+                    self.session.add(new_tag)
+                    tag_ids.append(tag_id)
+
+            await self.session.execute(
+                delete(TagDataset).where(TagDataset.dataset_id == dataset_id)
+            )
+            for tag_id in tag_ids:
+                self.session.add(
+                    TagDataset(dataset_id=dataset_id, tag_id=tag_id)
+                )
+
+            await self.session.commit()
+            await self.session.refresh(dataset, ["tags"])
+
+            self.logger.info(
+                "Dataset metadata and tags updated successfully: dataset_id=%s",
+                dataset_id,
+            )
+            return dataset
+
+        except HTTPException:
+            await self.session.rollback()
+            raise
+        except Exception as e:
+            await self.session.rollback()
+            self.logger.exception(
+                "Error updating dataset metadata/tags for dataset_id=%s: %s",
+                dataset_id,
+                e,
+            )
+            raise
+
     async def get_dataset_and_files(
         self, dataset_id: UUID
     ) -> Tuple[Dataset, list[File]]:
@@ -530,6 +650,40 @@ class DatasetService:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Error fetching dataset information",
+            )
+
+    async def dataset_exists(self, dataset_id: UUID) -> bool:
+        """
+        Check if a dataset exists by dataset_id.
+
+        The except HTTPException clause is intentionally defensive to mirror
+        other service methods; the code path here (session.execute/select/
+        scalar_one_or_none) does not raise HTTPException.
+
+        Args:
+            dataset_id: Dataset UUID to check
+
+        Returns:
+            True if the dataset exists, False otherwise
+        """
+        try:
+            result = await self.session.execute(
+                select(Dataset.dataset_id).where(
+                    Dataset.dataset_id == dataset_id
+                )
+            )
+            return result.scalar_one_or_none() is not None
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.exception(
+                "Error checking dataset existence for dataset_id=%s: %s",
+                dataset_id,
+                e,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error checking dataset",
             )
 
     async def get_user_datasets(

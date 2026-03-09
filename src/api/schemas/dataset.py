@@ -182,7 +182,7 @@ class EditDatasetRequest(BaseModel):
         None, description="Dataset description"
     )
     private: bool = Field(..., description="Whether dataset is private")
-    tags: List[str] = Field(default=[], description="Tags (list of strings)")
+    tags: List[str] = Field(..., description="Tags (list of strings, required, at least one)")
 
     @validator("dataset_title")
     def validate_dataset_title(cls, v):
@@ -200,10 +200,13 @@ class EditDatasetRequest(BaseModel):
 
     @validator("tags", pre=True)
     def validate_tags_list(cls, v):
-        """Accept None or missing as empty list."""
+        """Require at least one tag; normalize to list of stripped non-empty strings."""
         if v is None:
-            return []
+            raise ValueError("Tags are required")
         if not isinstance(v, list):
-            return []
-        return [str(t).strip() for t in v if t is not None and str(t).strip()]
+            raise ValueError("Tags are required")
+        normalized = [str(t).strip() for t in v if t is not None and str(t).strip()]
+        if not normalized:
+            raise ValueError("Tags are required")
+        return normalized
 

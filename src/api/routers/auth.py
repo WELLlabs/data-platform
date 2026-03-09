@@ -311,11 +311,13 @@ class AuthController:
                     status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found"
                 )
 
-            # Change password using authenticated user's ID
+            # Change password using authenticated user's ID; pass session token so
+            # the service can invalidate this session (required for random tokens)
             await self.auth_service.change_password(
                 user_id=user_uuid,
                 current_password=current_password,
                 new_password=new_password,
+                session_token=session_token,
             )
 
             return JSONResponse(

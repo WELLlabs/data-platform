@@ -447,6 +447,33 @@ class OrganizationService:
                 detail="Error searching organizations",
             )
 
+    async def list_organization_ids_and_names(
+        self,
+    ) -> List[dict]:
+        """
+        Return all organizations as a list of dicts with id and name only.
+
+        Returns:
+            List of dicts: [{"id": "...", "name": "..."}, ...]
+
+        Raises:
+            HTTPException: If the query fails
+        """
+        try:
+            self.logger.info("Listing organization ids and names")
+            query = select(Organization.id, Organization.name)
+            result = await self.session.execute(query)
+            rows = result.all()
+            items = [{"id": row.id, "name": row.name} for row in rows]
+            self.logger.info("Found %d organizations for list", len(items))
+            return items
+        except Exception as e:
+            self.logger.exception("Error listing organization ids and names: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error listing organizations",
+            )
+
     async def delete_organization(self, org_id: str) -> bool:
         """
         Delete an organization.

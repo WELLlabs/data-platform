@@ -1,17 +1,26 @@
+import json
 import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from redis.asyncio import Redis
 from schemas.organization import (
     OrganizationCreate,
+    OrganizationListItem,
+    OrganizationListResponse,
     OrganizationRead,
     OrganizationSearch,
     OrganizationUpdate,
 )
+from services.auth import get_redis
 from services.organization import OrganizationService, get_organization_service
 from services.user import UserService, get_user_service
+
+from core.config import settings
+
+ORGANIZATION_LIST_CACHE_KEY = "organization:list"
 
 router = APIRouter()
 
@@ -300,6 +309,68 @@ class OrganizationController:
                 detail="Organization validation service error",
             )
 
+    async def list_organizations(self, redis: Redis) -> JSONResponse:
+        """
+        Return list of all organizations (id and name). Uses Redis cache key
+        organization:list; on miss loads from DB and caches the response.
+        """
+        try:
+            cached = await redis.get(ORGANIZATION_LIST_CACHE_KEY)
+            if cached is not None:
+                try:
+                    data = json.loads(cached)
+                    self.logger.info(
+                        "Organization list served from Redis cache (key=%s)",
+                        ORGANIZATION_LIST_CACHE_KEY,
+                    )
+                    return JSONResponse(
+                        content=data,
+                        status_code=status.HTTP_200_OK,
+                    )
+                except (json.JSONDecodeError, TypeError) as e:
+                    self.logger.warning(
+                        "Invalid organization list cache value, refetching: %s", e
+                    )
+            self.logger.info("Organization list cache miss; fetching from database")
+            items = await self.org_service.list_organization_ids_and_names()
+            response_data = OrganizationListResponse(
+                items=[OrganizationListItem(**x) for x in items]
+            )
+            body = jsonable_encoder(response_data)
+            ttl = settings.ORGANIZATION_LIST_CACHE_AGE_SECONDS
+            cache_value = json.dumps(body)
+            try:
+                await redis.setex(
+                    ORGANIZATION_LIST_CACHE_KEY,
+                    ttl,
+                    cache_value,
+                )
+                self.logger.info(
+                    "Organization list cached in Redis (key=%s, TTL=%s seconds)",
+                    ORGANIZATION_LIST_CACHE_KEY,
+                    ttl,
+                )
+            except Exception as e:
+                self.logger.warning(
+                    "Failed to set organization list cache: %s",
+                    e,
+                    exc_info=True,
+                )
+            return JSONResponse(
+                content=body,
+                status_code=status.HTTP_200_OK,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.exception(
+                "Unexpected error listing organizations: %s", e
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Organization list service error",
+            )
+
 
 # Dependency to get organization controller
 async def get_organization_controller(
@@ -314,11 +385,31 @@ async def get_organization_controller(
 async def create_organization(
     org_data: OrganizationCreate,
     controller: OrganizationController = Depends(get_organization_controller),
+    redis: Redis = Depends(get_redis),
 ):
     """
     Create a new organization.
     """
-    return await controller.create_organization(org_data)
+    response = await controller.create_organization(org_data)
+    if response.status_code == status.HTTP_201_CREATED:
+        try:
+            await redis.delete(ORGANIZATION_LIST_CACHE_KEY)
+        except Exception as e:
+            logging.getLogger(__name__).warning(
+                "Failed to invalidate organization list cache: %s", e
+            )
+    return response
+
+
+@router.get("/list_organizations")
+async def list_organizations(
+    controller: OrganizationController = Depends(get_organization_controller),
+    redis: Redis = Depends(get_redis),
+):
+    """
+    List all organizations (id and name). Response is cached in Redis.
+    """
+    return await controller.list_organizations(redis)
 
 
 @router.get("/{org_id}")
@@ -340,11 +431,20 @@ async def update_organization(
     org_id: str,
     org_data: OrganizationUpdate,
     controller: OrganizationController = Depends(get_organization_controller),
+    redis: Redis = Depends(get_redis),
 ):
     """
     Update an existing organization.
     """
-    return await controller.update_organization(org_id, org_data)
+    response = await controller.update_organization(org_id, org_data)
+    if response.status_code == status.HTTP_200_OK:
+        try:
+            await redis.delete(ORGANIZATION_LIST_CACHE_KEY)
+        except Exception as e:
+            logging.getLogger(__name__).warning(
+                "Failed to invalidate organization list cache: %s", e
+            )
+    return response
 
 
 @router.get("/", response_model=List[OrganizationRead], include_in_schema=False)
@@ -368,11 +468,20 @@ async def search_organizations(
 async def delete_organization(
     org_id: str,
     controller: OrganizationController = Depends(get_organization_controller),
+    redis: Redis = Depends(get_redis),
 ):
     """
     Delete an organization.
     """
-    return await controller.delete_organization(org_id)
+    response = await controller.delete_organization(org_id)
+    if response.status_code == status.HTTP_200_OK:
+        try:
+            await redis.delete(ORGANIZATION_LIST_CACHE_KEY)
+        except Exception as e:
+            logging.getLogger(__name__).warning(
+                "Failed to invalidate organization list cache: %s", e
+            )
+    return response
 
 
 @router.get("/validate/{org_id}", include_in_schema=False)

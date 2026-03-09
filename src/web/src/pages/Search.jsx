@@ -2,7 +2,10 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Collapse } from "reactstrap";
 import { useAuth } from "../contexts/AuthContext";
-import { search_endpoint } from "../api/endpoints";
+import {
+  list_organizations_endpoint,
+  search_endpoint,
+} from "../api/endpoints";
 
 const LIMIT = 10;
 
@@ -17,6 +20,8 @@ function Search() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
 
+  const [organizations, setOrganizations] = useState([]);
+  const [organizationsLoading, setOrganizationsLoading] = useState(false);
   const [result, setResult] = useState([]);
   const [total, setTotal] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
@@ -24,7 +29,30 @@ function Search() {
   const [error, setError] = useState("");
   const [hasSearched, setHasSearched] = useState(false);
 
-  // Default organization textbox to signed-in user's organization
+  // Fetch organization list for dropdown
+  useEffect(() => {
+    let cancelled = false;
+    const fetchOrganizations = async () => {
+      setOrganizationsLoading(true);
+      try {
+        const resp = await fetch(list_organizations_endpoint, {
+          credentials: "include",
+        });
+        if (!resp.ok || cancelled) return;
+        const data = await resp.json();
+        const items = data?.items ?? [];
+        if (!cancelled) setOrganizations(Array.isArray(items) ? items : []);
+      } catch {
+        if (!cancelled) setOrganizations([]);
+      } finally {
+        if (!cancelled) setOrganizationsLoading(false);
+      }
+    };
+    fetchOrganizations();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Default organization to signed-in user's organization (id)
   useEffect(() => {
     if (isAuthenticated && user?.organization) {
       setOrgTextbox((prev) => (prev === "" ? user.organization : prev));
@@ -213,15 +241,25 @@ function Search() {
                     htmlFor="search-within-org"
                   >
                     Search within organization
-                    <input
-                      type="text"
-                      className="form-control form-control-sm d-inline-block"
+                    <select
+                      className="form-select form-control form-control-sm d-inline-block"
                       style={{ maxWidth: "200px" }}
-                      placeholder="Organization ID"
                       value={orgTextbox}
                       onChange={(e) => setOrgTextbox(e.target.value)}
-                      aria-label="Organization ID"
-                    />
+                      disabled={organizationsLoading}
+                      aria-label="Organization"
+                    >
+                      <option value="">
+                        {organizationsLoading
+                          ? "Loading..."
+                          : "Select organization"}
+                      </option>
+                      {organizations.map((org) => (
+                        <option key={org.id} value={org.id}>
+                          {org.name}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                 </div>
                 <div className="row">

@@ -1,7 +1,10 @@
 import React, { useMemo, useState, useEffect } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
-import { signup_endpoint } from "../api/endpoints";
+import {
+    list_organizations_endpoint,
+    signup_endpoint,
+} from "../api/endpoints";
 
 function SignUp() {
     const [fullName, setFullName] = useState("");
@@ -10,7 +13,10 @@ function SignUp() {
     const [confirmPassword, setConfirmPassword] = useState("");
     const [isStudent, setIsStudent] = useState(false);
     const [designation, setDesignation] = useState("");
-    const [organization, setOrganization] = useState("well-labs");
+    const [organization, setOrganization] = useState("");
+    const [organizations, setOrganizations] = useState([]);
+    const [organizationsLoading, setOrganizationsLoading] = useState(false);
+    const [organizationsError, setOrganizationsError] = useState(null);
     const [phone, setPhone] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState("");
@@ -22,6 +28,46 @@ function SignUp() {
         if (isStudent) {
             setDesignation("student");
         }
+    }, [isStudent]);
+
+    // Clear organization whenever isStudent changes so dropdown/input reflects current mode
+    useEffect(() => {
+        setOrganization("");
+    }, [isStudent]);
+
+    // Fetch organization list for dropdown when not a student
+    useEffect(() => {
+        if (isStudent) return;
+        let cancelled = false;
+        const controller = new AbortController();
+        const fetchOrganizations = async () => {
+            if (cancelled) return;
+            setOrganizationsError(null);
+            setOrganizationsLoading(true);
+            try {
+                const resp = await axios.get(list_organizations_endpoint, {
+                    withCredentials: true,
+                    signal: controller.signal,
+                });
+                if (cancelled) return;
+                const items = resp?.data?.items ?? [];
+                setOrganizations(Array.isArray(items) ? items : []);
+            } catch (err) {
+                if (axios.isCancel(err) || err?.name === "CanceledError" || err?.code === "ERR_CANCELED") {
+                    return;
+                }
+                if (cancelled) return;
+                setOrganizations([]);
+                setOrganizationsError(err?.message ?? "Failed to load organizations");
+            } finally {
+                if (!cancelled) setOrganizationsLoading(false);
+            }
+        };
+        fetchOrganizations();
+        return () => {
+            cancelled = true;
+            controller.abort();
+        };
     }, [isStudent]);
 
     const passwordsMatch = useMemo(
@@ -370,29 +416,61 @@ function SignUp() {
                                             (required)
                                         </span>
                                     </label>
-                                    <input
-                                        id="organization"
-                                        type="text"
-                                        className="form-control"
-                                        placeholder={
-                                            isStudent
-                                                ? "Enter your institution"
-                                                : "Enter your organization ID"
-                                        }
-                                        value={organization}
-                                        onChange={(e) =>
-                                            setOrganization(
-                                                e.target.value.slice(0, 50)
-                                            )
-                                        }
-                                        required
-                                        maxLength={50}
-                                    />
+                                    {isStudent ? (
+                                        <input
+                                            id="organization"
+                                            type="text"
+                                            className="form-control"
+                                            placeholder="Enter your institution"
+                                            value={organization}
+                                            onChange={(e) =>
+                                                setOrganization(
+                                                    e.target.value.slice(0, 50)
+                                                )
+                                            }
+                                            required
+                                            maxLength={50}
+                                            aria-label="Institution"
+                                        />
+                                    ) : (
+                                        <select
+                                            id="organization"
+                                            className="form-select form-control"
+                                            value={organization}
+                                            onChange={(e) =>
+                                                setOrganization(
+                                                    e.target.value
+                                                )
+                                            }
+                                            required
+                                            disabled={organizationsLoading}
+                                            aria-label="Organization"
+                                        >
+                                            <option value="">
+                                                {organizationsLoading
+                                                    ? "Loading..."
+                                                    : "Select organization"}
+                                            </option>
+                                            {organizations.map((org) => (
+                                                <option
+                                                    key={org.id}
+                                                    value={org.id}
+                                                >
+                                                    {org.name}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    )}
                                 </div>
-                                {!isStudent && (
+                                {!isStudent && organizationsError && (
+                                    <div className="text-danger small mb-2" role="alert">
+                                        {organizationsError}
+                                    </div>
+                                )}
+                                {!isStudent && !organizationsLoading && (
                                     <div className="mb-3">
                                         <small>
-                                            Search for the Organization ID{" "}
+                                            Search for more organizations{" "}
                                             <a
                                                 href="/orgsearch"
                                                 target="_blank"

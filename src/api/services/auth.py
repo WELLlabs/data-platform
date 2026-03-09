@@ -19,7 +19,7 @@ from services.organization import OrganizationService, get_organization_service
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from tasks.email import send_forgot_password_email, send_verify_email
-from utils.security import generate_unique_api_key, sanitize_input
+from utils.security import generate_session_token, generate_unique_api_key, sanitize_input
 
 
 class RedisStrategy:
@@ -74,8 +74,8 @@ class AuthService:
         valid = self.password_helper.verify_and_update(password, user.hashed_password)
         if not valid[0]:
             return None, None
-        # Simulate issuing a session token saved in redis
-        token = f"session:{user.id}"
+        # Issue a random session token and store in Redis (key=token, value=user_id)
+        token = f"session:{generate_session_token()}"
         strategy = RedisStrategy(self.redis, settings.COOKIE_MAX_AGE_SECONDS)
         await strategy.write_token(token, str(user.id))
         cookie = {
@@ -287,15 +287,25 @@ class AuthService:
         return None
 
     async def change_password(
-        self, user_id: UUID, current_password: str, new_password: str
+        self,
+        user_id: UUID,
+        current_password: str,
+        new_password: str,
+        *,
+        session_token: str,
     ) -> None:
         """
         Change user password after verifying current password.
+
+        Requires the current session token so that this session can be invalidated
+        after a successful password change (user must sign in again).
 
         Args:
             user_id: User's UUID
             current_password: User's current password
             new_password: User's new password
+            session_token: Session token from the request cookie; this session is
+                invalidated after password change so the user must sign in again.
 
         Raises:
             HTTPException: If user not found, current password incorrect, or validation fails
@@ -345,11 +355,12 @@ class AuthService:
             # Update user password
             await self.user_db.update(user, {"hashed_password": hashed_password})
 
-            # Invalidate existing sessions by deleting the session token from Redis
-            # This ensures that after password change, user must sign in again
-            session_token = f"session:{user_id}"
+            # Invalidate the current session so the user must sign in again with the new password
             try:
-                await self.redis.delete(session_token)
+                strategy = RedisStrategy(
+                    self.redis, settings.COOKIE_MAX_AGE_SECONDS
+                )
+                await strategy.destroy_token(session_token)
             except Exception as redis_err:
                 self.logger.warning(
                     "Failed to invalidate session for user_id=%s after password change: %s",

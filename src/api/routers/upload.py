@@ -532,18 +532,15 @@ class UploadController:
             # Validate duration (default to 0 if None)
             duration_value = duration if duration is not None else 0
 
-            # Validate value (must be "high", "medium", or "low" if provided)
+            # Validate value (must be "high", "medium", or "low"; invalid defaults to "low")
             val = sanitize_input(value)
             stripped_value = val.strip() if val else None
-            if stripped_value is not None and stripped_value not in [
-                "high",
-                "medium",
-                "low",
-            ]:
-                self.logger.warning(
-                    "Invalid value '%s', setting to None", stripped_value
-                )
-                stripped_value = None
+            if stripped_value not in ["high", "medium", "low"]:
+                if stripped_value:
+                    self.logger.warning(
+                        "Invalid value '%s', defaulting to 'low'", stripped_value
+                    )
+                stripped_value = "low"
 
             # Validate temporal range
             if temporal_to is not None and temporal_from is not None:
@@ -908,15 +905,12 @@ class UploadController:
 
             val = sanitize_input(value)
             stripped = val.strip() if val else None
-            if stripped is not None and stripped not in [
-                "high",
-                "medium",
-                "low",
-            ]:
-                self.logger.warning(
-                    "Invalid value '%s', setting to None", stripped
-                )
-                stripped = None
+            if stripped not in ["high", "medium", "low"]:
+                if stripped:
+                    self.logger.warning(
+                        "Invalid value '%s', defaulting to 'low'", stripped
+                    )
+                stripped = "low"
             file_record.value = stripped
             file_record.temporal_from = temporal_from
             file_record.temporal_to = temporal_to

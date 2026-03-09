@@ -1,105 +1,96 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import { signin_endpoint, me_endpoint } from "../api/endpoints";
+import { signin_endpoint } from "../api/endpoints";
 
 function SignIn() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const { signIn } = useAuth();
+  const { signIn, user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
-  const iframeRef = useRef(null);
   const formRef = useRef(null);
 
-  // Create hidden iframe on mount
+  // Redirect authenticated users to dashboard (single navigation; no navigate in handleSubmit)
   useEffect(() => {
-    const iframe = document.createElement('iframe');
-    iframe.name = 'hidden-form-submit';
-    iframe.style.display = 'none';
-    iframe.style.width = '0';
-    iframe.style.height = '0';
-    iframe.style.border = 'none';
-    document.body.appendChild(iframe);
-    iframeRef.current = iframe;
-
-    return () => {
-      // Cleanup iframe on unmount
-      if (iframeRef.current && iframeRef.current.parentNode) {
-        iframeRef.current.parentNode.removeChild(iframeRef.current);
-      }
-    };
-  }, []);
+    if (!authLoading && user) {
+      navigate(`/dashboard?userId=${user.id}`, { replace: true });
+    }
+  }, [authLoading, user, navigate]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setLoading(true);
 
-    if (!formRef.current || !iframeRef.current) {
-      setError('Form initialization error. Please refresh the page.');
+    if (!formRef.current) {
+      setError("Form initialization error. Please refresh the page.");
       setLoading(false);
       return;
     }
 
     try {
-      // Set form action and target to submit to hidden iframe
-      // This allows Chrome to detect the form submission for password saving
-      formRef.current.action = signin_endpoint;
-      formRef.current.method = 'post';
-      formRef.current.target = 'hidden-form-submit';
-      
-      // Set up iframe load handler to detect when form submission completes
-      const checkLoginStatus = async () => {
-        try {
-          // Wait a bit for the form submission to complete
-          await new Promise(resolve => setTimeout(resolve, 500));
-          
-          // Check if login was successful by calling /api/auth/me
-          const verifyResponse = await fetch(me_endpoint, {
-            credentials: 'include'
-          });
-          
-          if (verifyResponse.ok) {
-            const userData = await verifyResponse.json();
-            
-            // Store user data in context and localStorage
-            signIn(userData);
-            
-            // Additional delay to allow Chrome to detect successful form submission
-            // and prompt to save password before navigation
-            await new Promise(resolve => setTimeout(resolve, 300));
-            
-            // Navigate to dashboard with user ID
-            navigate(`/dashboard?userId=${userData.id}`);
-          } else {
-            // Login failed - the /api/auth/me check failed, so login was unsuccessful
-            setError('Sign in failed. Please check your credentials.');
-            setLoading(false);
-          }
-        } catch (err) {
-          console.error('Error checking login status:', err);
-          setError('Network error. Please try again.');
-          setLoading(false);
-        }
-      };
+      const formData = new FormData(formRef.current);
 
-      // Set up iframe load handler
-      iframeRef.current.onload = checkLoginStatus;
-      
-      // Submit the form - this will trigger Chrome's password detection
-      formRef.current.submit();
-      
-      // Also set up a timeout fallback in case iframe onload doesn't fire
-      setTimeout(checkLoginStatus, 1000);
-      
-    } catch (error) {
-      console.error('Sign in error:', error);
-      setError('Network error. Please try again.');
+      const response = await fetch(signin_endpoint, {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        setError("Sign in failed. Please check your credentials.");
+        setLoading(false);
+        return;
+      }
+
+      const userData = await response.json();
+      signIn(userData);
+      setLoading(false);
+
+      // Offer to save password via Credential Management API when available (secure context)
+      const PasswordCredentialCtor =
+        typeof window !== "undefined" ? window.PasswordCredential : null;
+      if (
+        typeof navigator !== "undefined" &&
+        navigator.credentials &&
+        typeof navigator.credentials.store === "function" &&
+        PasswordCredentialCtor
+      ) {
+        try {
+          const credential = new PasswordCredentialCtor({
+            id: email,
+            password,
+            name: email,
+          });
+          await navigator.credentials.store(credential);
+        } catch (storeErr) {
+          // User may have dismissed; do not break the sign-in flow
+        }
+      }
+    } catch (err) {
+      console.error("Sign in error:", err);
+      setError("Network error. Please try again.");
       setLoading(false);
     }
   };
+
+  if (authLoading) {
+    return (
+      <div className="bg-wave">
+        <section className="container py-5">
+          <div className="row justify-content-center">
+            <div className="col-12 text-center">
+              <div className="spinner-border" role="status" aria-label="Checking session">
+                <span className="visually-hidden">Checking session...</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-wave">
@@ -145,8 +136,8 @@ function SignIn() {
                     disabled={loading}
                   />
                 </div>
-                <button 
-                  type="submit" 
+                <button
+                  type="submit"
                   className="btn btn-primary w-100 auth-submit-btn"
                   disabled={loading}
                 >
@@ -156,7 +147,7 @@ function SignIn() {
                       Signing In...
                     </>
                   ) : (
-                    'Sign In'
+                    "Sign In"
                   )}
                 </button>
               </form>
@@ -168,7 +159,7 @@ function SignIn() {
               </div>
 
               <div className="text-center mt-4">
-                <div className="text-muted mb-2">Don't have an account yet</div>
+                <div className="text-muted mb-2">Don&apos;t have an account yet</div>
                 <Link to="/signup" className="btn btn-outline-primary w-100">Sign Up</Link>
               </div>
             </div>
@@ -180,5 +171,3 @@ function SignIn() {
 }
 
 export default SignIn;
-
-

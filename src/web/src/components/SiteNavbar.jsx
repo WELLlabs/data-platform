@@ -1,21 +1,48 @@
 import React, { useState } from "react";
 import { Navbar, NavbarBrand, Nav, NavItem, NavbarToggler, Collapse } from "reactstrap";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 
 function SiteNavbar() {
   const [isOpen, setIsOpen] = useState(false);
+  const [signOutError, setSignOutError] = useState(null);
+  const navigate = useNavigate();
   const { isAuthenticated, user, signOut } = useAuth();
 
   const toggle = () => setIsOpen(!isOpen);
 
-  const handleSignOut = () => {
-    signOut();
+  const handleSignOut = async () => {
     setIsOpen(false);
+    setSignOutError(null);
+    try {
+      await signOut();
+      navigate("/signin", { replace: true });
+    } catch (error) {
+      const message = error?.message || "Sign out failed. Please try again.";
+      setSignOutError(message);
+      if (process.env.NODE_ENV === "development") {
+        console.error("handleSignOut: signOut failed", { error });
+      }
+    }
   };
 
   return (
-    <Navbar expand="md" light className="navbar-custom px-3">
+    <>
+      {signOutError && (
+        <div
+          className="alert alert-danger alert-dismissible fade show mb-0 rounded-0"
+          role="alert"
+        >
+          {signOutError}
+          <button
+            type="button"
+            className="btn-close"
+            onClick={() => setSignOutError(null)}
+            aria-label="Close"
+          />
+        </div>
+      )}
+      <Navbar expand="md" light className="navbar-custom px-3">
       <NavbarBrand tag={Link} to="/" className="d-flex align-items-center gap-2">
         <img src={process.env.PUBLIC_URL + "/assets/logo/well-labs-logo.png"} alt="WELL Labs" />
       </NavbarBrand>
@@ -84,6 +111,7 @@ function SiteNavbar() {
         </Nav>
       </Collapse>
     </Navbar>
+    </>
   );
 }
 

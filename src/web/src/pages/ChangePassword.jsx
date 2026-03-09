@@ -82,8 +82,9 @@ const ChangePassword = () => {
     setLoading(true);
 
     try {
-      // Create FormData to match backend Form data expectation
-      // Note: user_id is derived from session token on backend for security
+      // FormData: current_password and new_password. Session token is sent via
+      // the auth cookie (credentials: "include"); backend reads it from the request
+      // cookie to invalidate the session after password change.
       const formData = new FormData();
       formData.append("current_password", currentPassword);
       formData.append("new_password", newPassword);
@@ -91,7 +92,7 @@ const ChangePassword = () => {
       const response = await fetch(changepassword_endpoint, {
         method: "POST",
         body: formData,
-        credentials: "include",
+        credentials: "include", // sends session cookie; backend uses it for auth and invalidation
       });
 
       if (!response.ok) {

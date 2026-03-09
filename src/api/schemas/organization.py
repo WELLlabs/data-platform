@@ -117,6 +117,22 @@ class OrganizationUpdate(BaseModel):
         return v
 
 
+class OrganizationListItem(BaseModel):
+    """Schema for a single item in the organization list (id and name only)."""
+
+    id: str = Field(..., description="Organization ID")
+    name: str = Field(..., description="Organization name")
+
+
+class OrganizationListResponse(BaseModel):
+    """Schema for the list organizations API response."""
+
+    items: List[OrganizationListItem] = Field(
+        default_factory=list,
+        description="List of organizations with id and name",
+    )
+
+
 class OrganizationSearch(BaseModel):
     """Schema for organization search parameters"""
 

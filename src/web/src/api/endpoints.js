@@ -18,6 +18,7 @@ export const send_verify_email_endpoint = "/api/auth/send-verify-email";
 
 // Organization endpoints
 export const organizations_endpoint = "/api/organizations";
+export const list_organizations_endpoint = "/api/organizations/list_organizations";
 export const organization_validate_endpoint = "/api/organizations/validate";
 export const organization_by_id_endpoint = (id) => `/api/organizations/${id}`;
 

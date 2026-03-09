@@ -37,7 +37,7 @@ class FileEditRequest(BaseModel):
     )
     duration: int = Field(default=0, ge=0, description="Duration in years")
     value: Optional[Literal["high", "medium", "low"]] = Field(
-        None, description="Value level (high, medium, low)"
+        "low", description="Value level (high, medium, low); invalid/empty defaults to low"
     )
     temporal_from: Optional[datetime] = Field(
         None, description="Temporal coverage start (ISO 8601)"
@@ -48,6 +48,17 @@ class FileEditRequest(BaseModel):
     geography: Optional[str] = Field(
         None, description="Geographic coverage"
     )
+
+    @validator("value", pre=True)
+    def validate_value_default_low(cls, v):
+        """Default invalid or empty value to 'low' for consistency with frontend."""
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return "low"
+        if isinstance(v, str):
+            v = v.strip()
+        if v not in ("high", "medium", "low"):
+            return "low"
+        return v
 
     @validator("file_title")
     def validate_file_title(cls, v):

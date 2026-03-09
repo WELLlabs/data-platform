@@ -73,7 +73,12 @@ export const AuthProvider = ({ children }) => {
         credentials: 'include'
       });
     } catch (error) {
-      console.error('Error during signout:', error);
+      if (process.env.NODE_ENV === 'development') {
+        console.error('Sign-out request failed (network error):', error);
+      }
+      throw new Error(
+        'Unable to reach the server. You have been signed out on this device; try again when the connection is restored.'
+      );
     } finally {
       // Always clear local state regardless of API call success
       setUser(null);

@@ -26,6 +26,19 @@ def generate_api_key(length: int = 32) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
+def generate_session_token() -> str:
+    """
+    Generate a cryptographically secure random session token (URL-safe base64).
+
+    Used for session cookies; combine with a prefix in the caller if needed
+    (e.g. token = f"session:{generate_session_token()}").
+
+    Returns:
+        A random token string suitable for use as a session identifier.
+    """
+    return secrets.token_urlsafe(32)
+
+
 def sanitize_input(text: Optional[str]) -> Optional[str]:
     """
     Sanitize user input to prevent XSS attacks using bleach.

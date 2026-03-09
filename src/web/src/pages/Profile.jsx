@@ -1,7 +1,13 @@
 import React, { useEffect, useState, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import { profile_endpoint, user_datasets_endpoint } from "../api/endpoints";
+import {
+  edit_profile_endpoint,
+  list_organizations_endpoint,
+  profile_endpoint,
+  user_datasets_endpoint,
+} from "../api/endpoints";
 
 function Profile() {
   const [loading, setLoading] = useState(true);
@@ -19,6 +25,19 @@ function Profile() {
   const [hasMore, setHasMore] = useState(true);
   const limit = 10;
   const lastFetchedUserIdRef = useRef(null);
+
+  // Edit profile modal state
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editFullName, setEditFullName] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editDesignation, setEditDesignation] = useState("");
+  const [editOrganization, setEditOrganization] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editOrganizations, setEditOrganizations] = useState([]);
+  const [editOrganizationsLoading, setEditOrganizationsLoading] = useState(false);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [profileRefreshTrigger, setProfileRefreshTrigger] = useState(0);
 
   // Handle authentication and query parameters
   useEffect(() => {
@@ -99,7 +118,7 @@ function Profile() {
     if (searchParams.get("id")) {
       fetchProfile();
     }
-  }, [searchParams, isAuthenticated, user?.apikey]);
+  }, [searchParams, isAuthenticated, user?.apikey, profileRefreshTrigger]);
 
   // Fetch user datasets if privileges.user_datasets is true
   // Wait for profileData to be fetched before checking privileges
@@ -226,6 +245,81 @@ function Profile() {
     }
   };
 
+  const fetchEditOrganizations = async () => {
+    setEditOrganizationsLoading(true);
+    try {
+      const resp = await fetch(list_organizations_endpoint, {
+        credentials: "include",
+      });
+      if (!resp.ok) throw new Error("Failed to load organizations");
+      const data = await resp.json();
+      const items = data?.items ?? [];
+      setEditOrganizations(Array.isArray(items) ? items : []);
+    } catch (err) {
+      setEditOrganizations([]);
+      setEditError(err?.message ?? "Failed to load organizations");
+    } finally {
+      setEditOrganizationsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (showEditModal) {
+      fetchEditOrganizations();
+    }
+  }, [showEditModal]);
+
+  const handleEditPhoneChange = (e) => {
+    const value = e.target.value;
+    if (value === "" || /^\d+$/.test(value)) {
+      setEditPhone(value.slice(0, 10));
+    }
+  };
+
+  const editEmailValid =
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(editEmail.trim());
+
+  const handleEditSubmit = async (e) => {
+    e.preventDefault();
+    setEditError("");
+    if (
+      !editFullName.trim() ||
+      !editEmail.trim() ||
+      !editOrganization.trim() ||
+      !editEmailValid
+    ) {
+      setEditError("Please fill required fields with valid values.");
+      return;
+    }
+    setEditSubmitting(true);
+    try {
+      const params = new URLSearchParams({
+        full_name: editFullName.trim(),
+        email: editEmail.trim(),
+        designation: editDesignation.trim() || "",
+        organization: editOrganization,
+        phone: editPhone.trim() || "",
+      });
+      const response = await fetch(edit_profile_endpoint, {
+        method: "PUT",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: params.toString(),
+        credentials: "include",
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        const detail = data?.detail ?? response.statusText;
+        throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+      }
+      setShowEditModal(false);
+      setProfileRefreshTrigger((k) => k + 1);
+    } catch (err) {
+      setEditError(err?.message ?? "Failed to update profile");
+    } finally {
+      setEditSubmitting(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="container py-5">
@@ -268,11 +362,18 @@ function Profile() {
         {profileData.privileges?.edit && (
           <div className="col-auto">
             <button
+              type="button"
               className="btn btn-search"
               onClick={() => {
-                // TODO: Implement edit functionality
-                console.log("Edit profile clicked");
+                setEditFullName(profileData.full_name ?? "");
+                setEditEmail(profileData.email ?? "");
+                setEditDesignation(profileData.designation ?? "");
+                setEditOrganization(profileData.organization ?? "");
+                setEditPhone(profileData.phone ?? "");
+                setEditError("");
+                setShowEditModal(true);
               }}
+              aria-label="Edit profile"
             >
               Edit
             </button>
@@ -379,6 +480,185 @@ function Profile() {
           </div>
         </div>
       )}
+
+      {/* Edit Profile Modal - rendered via portal at body so it always appears on top (same pattern as DatasetInfo.jsx) */}
+      {showEditModal &&
+        createPortal(
+          <div
+            className="modal show d-block"
+            tabIndex="-1"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="editProfileModalTitle"
+            style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+          >
+            <div className="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title" id="editProfileModalTitle">
+                    Edit Profile
+                  </h5>
+                  <button
+                    type="button"
+                    className="btn-close"
+                    onClick={() => setShowEditModal(false)}
+                    aria-label="Close"
+                  />
+                </div>
+                <div
+                  className="modal-body overflow-auto"
+                  style={{ maxHeight: "70vh" }}
+                >
+                  {editError && (
+                    <div className="alert alert-danger" role="alert">
+                      {editError}
+                    </div>
+                  )}
+                  <form onSubmit={handleEditSubmit} noValidate>
+                    <div className="mb-3">
+                      <label htmlFor="editFullName" className="form-label">
+                        Full Name <span className="text-danger">(required)</span>
+                      </label>
+                      <input
+                        id="editFullName"
+                        type="text"
+                        className="form-control"
+                        placeholder="Enter your full name"
+                        value={editFullName}
+                        onChange={(e) =>
+                          setEditFullName(e.target.value.slice(0, 50))
+                        }
+                        maxLength={50}
+                        required
+                        aria-required="true"
+                      />
+                    </div>
+                    <div className="mb-3">
+                      <label htmlFor="editEmail" className="form-label">
+                        Email <span className="text-danger">(required)</span>
+                      </label>
+                      <input
+                        id="editEmail"
+                        type="email"
+                        className={`form-control ${
+                          editEmail && !editEmailValid ? "is-invalid" : ""
+                        }`}
+                        placeholder="Enter your email"
+                        value={editEmail}
+                        onChange={(e) => setEditEmail(e.target.value)}
+                        required
+                        aria-required="true"
+                      />
+                      {editEmail && !editEmailValid && (
+                        <div className="invalid-feedback">
+                          Please enter a valid email address
+                        </div>
+                      )}
+                    </div>
+                    <div className="mb-3">
+                      <label htmlFor="editDesignation" className="form-label">
+                        Designation
+                      </label>
+                      <input
+                        id="editDesignation"
+                        type="text"
+                        className="form-control"
+                        placeholder="Enter your designation"
+                        value={editDesignation}
+                        onChange={(e) =>
+                          setEditDesignation(e.target.value.slice(0, 25))
+                        }
+                        maxLength={25}
+                      />
+                    </div>
+                    <div className="mb-3">
+                      <label htmlFor="editOrganization" className="form-label">
+                        Organization{" "}
+                        <span className="text-danger">(required)</span>
+                      </label>
+                      <select
+                        id="editOrganization"
+                        className="form-select form-control"
+                        value={editOrganization}
+                        onChange={(e) => setEditOrganization(e.target.value)}
+                        required
+                        disabled={editOrganizationsLoading}
+                        aria-required="true"
+                        aria-label="Organization"
+                      >
+                        <option value="">
+                          {editOrganizationsLoading
+                            ? "Loading..."
+                            : "Select organization"}
+                        </option>
+                        {editOrganization &&
+                          !editOrganizationsLoading &&
+                          !editOrganizations.some(
+                            (org) => String(org.id) === String(editOrganization)
+                          ) && (
+                            <option value={editOrganization}>
+                              {profileData?.organization_name ||
+                                "Current organization (not in list)"}
+                            </option>
+                          )}
+                        {editOrganizations.map((org) => (
+                          <option key={String(org.id)} value={String(org.id)}>
+                            {org.name}
+                          </option>
+                        ))}
+                      </select>
+                      {editOrganization &&
+                        !editOrganizationsLoading &&
+                        !editOrganizations.some(
+                          (org) => String(org.id) === String(editOrganization)
+                        ) && (
+                          <div
+                            className="form-text text-warning"
+                            role="alert"
+                            aria-live="polite"
+                          >
+                            Current organization is not in the list. You can keep
+                            it or choose another.
+                          </div>
+                        )}
+                    </div>
+                    <div className="mb-4">
+                      <label htmlFor="editPhone" className="form-label">
+                        Phone
+                      </label>
+                      <input
+                        id="editPhone"
+                        type="tel"
+                        inputMode="numeric"
+                        pattern="[0-9]{0,10}"
+                        className="form-control"
+                        placeholder="10 digits phone number"
+                        value={editPhone}
+                        onChange={handleEditPhoneChange}
+                        maxLength={10}
+                        aria-label="Phone number"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      className="btn btn-primary w-100"
+                      disabled={
+                        editSubmitting ||
+                        !editFullName.trim() ||
+                        !editEmail.trim() ||
+                        !editOrganization.trim() ||
+                        !editEmailValid
+                      }
+                    >
+                      {editSubmitting ? "Updating..." : "Submit"}
+                    </button>
+                  </form>
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
 
       {/* API Key Overlay */}
       {showApiKeyOverlay && profileData.apikey && (

@@ -61,7 +61,6 @@ class OrganizationRead(OrganizationBase):
 
     id: str = Field(..., description="Organization ID (generated from name)")
     creator: Optional[UUID] = Field(None, description="Creator user ID")
-    contributions: int = Field(default=0, description="Number of contributions")
     created_at: datetime = Field(..., description="Creation timestamp")
     modified_at: Optional[datetime] = Field(None, description="Last modification timestamp")
 
@@ -74,6 +73,10 @@ class OrganizationDetailRead(OrganizationRead):
 
     creator_name: Optional[str] = Field(
         None, description="Full name of the organization creator"
+    )
+    contributions: int = Field(
+        default=0,
+        description="Sum of all members' contributions from user_contributions",
     )
     members: List[Dict] = Field(
         default_factory=list,

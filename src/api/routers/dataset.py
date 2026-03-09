@@ -17,6 +17,7 @@ from models.dataset import Dataset
 from models.file import File
 from models.organization import Organization
 from models.user import User
+from models.user_contribution import UserContribution
 from routers.upload import get_current_active_user
 from schemas.dataset import DatasetCreate, EditDatasetRequest
 from services.auth import AuthService, RedisStrategy, get_auth_service
@@ -532,7 +533,6 @@ class DatasetController:
                 )
 
             creator_id = dataset_record.creator
-            organization_id = dataset_record.organization
 
             # 3. Get S3 settings
             s3_handler_url = settings.S3_HANDLER_URL.rstrip("/")
@@ -654,17 +654,27 @@ class DatasetController:
                     detail="Dataset deletion verification failed",
                 )
 
-            # 8. Decrement contributions for creator and organization
-            await self.dataset_service.session.execute(
-                update(User)
-                .where(User.id == creator_id)
-                .values(contributions=User.contributions - 1)
+            # 8. Decrement user contributions in user_contributions table (only if row exists and contributions > 0)
+            uc_result = await self.dataset_service.session.execute(
+                select(UserContribution).where(UserContribution.user_id == creator_id)
             )
-            await self.dataset_service.session.execute(
-                update(Organization)
-                .where(Organization.id == organization_id)
-                .values(contributions=Organization.contributions - 1)
-            )
+            uc = uc_result.scalar_one_or_none()
+            if uc is None:
+                self.logger.warning(
+                    "No user_contribution row for creator_id=%s; skipping decrement",
+                    creator_id,
+                )
+            elif uc.contributions > 0:
+                result = await self.dataset_service.session.execute(
+                    update(UserContribution)
+                    .where(UserContribution.user_id == creator_id)
+                    .where(UserContribution.contributions > 0)
+                    .values(contributions=UserContribution.contributions - 1)
+                )
+                if result.rowcount == 0:
+                    self.logger.warning(
+                        "Decrement matched 0 rows for creator_id=%s", creator_id
+                    )
             await self.dataset_service.session.commit()
 
             self.logger.info("Dataset deleted successfully: dataset_id=%s", dataset_id)

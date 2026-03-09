@@ -7,7 +7,6 @@ import {
   Card, 
   CardBody, 
   CardHeader, 
-  Badge, 
   Spinner, 
   Alert,
   Button,
@@ -19,7 +18,7 @@ import { organization_by_id_endpoint } from '../api/endpoints';
 const Organization = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { isAuthenticated, user, loading: authLoading, verifyUser } = useAuth();
+  const { isAuthenticated, user, loading: authLoading } = useAuth();
   
   const [organization, setOrganization] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -196,7 +195,7 @@ const Organization = () => {
   return (
     <Container className="py-5">
       <Row>
-        <Col lg="8" className="mx-auto">
+        <Col lg="10" className="mx-auto">
           {/* Header with title and action buttons */}
           <div className="d-flex justify-content-between align-items-center mb-4">
             <h2 className="mb-0">{organization.name}</h2>
@@ -240,12 +239,21 @@ const Organization = () => {
                   </p>
                 </div>
                 <div className="text-end">
-                  <Badge 
-                    color={organization.private ? "warning" : "success"} 
-                    className="fs-6"
+                  <span
+                    title={organization.private
+                      ? 'Organization can have both public and private datasets'
+                      : 'Organization can have only public datasets'}
+                    className="opacity-90"
+                    style={{ cursor: 'default' }}
+                    role="img"
+                    aria-label={organization.private ? 'Private organization' : 'Public organization'}
                   >
-                    {organization.private ? "Private" : "Public"}
-                  </Badge>
+                    {organization.private ? (
+                      <i className="bi bi-lock-fill fs-4" aria-hidden="true" />
+                    ) : (
+                      <i className="bi bi-globe fs-4" aria-hidden="true" />
+                    )}
+                  </span>
                 </div>
               </div>
             </CardHeader>
@@ -293,9 +301,6 @@ const Organization = () => {
                   )}
                 </Col>
                 <Col md="6" className="mb-3">
-                  <strong>Contributions:</strong> {organization.contributions || 0}
-                </Col>
-                <Col md="6" className="mb-3">
                   <strong>Focus:</strong> {formatArray(organization.focus)}
                 </Col>
                 <Col md="6" className="mb-3">
@@ -306,6 +311,9 @@ const Organization = () => {
                 </Col>
                 <Col md="6" className="mb-3">
                   <strong>Modified At:</strong> {formatDate(organization.modified_at)}
+                </Col>
+                <Col md="6" className="mb-3">
+                  <strong>Contributions:</strong> {organization.contributions ?? 0}
                 </Col>
               </Row>
             </CardBody>

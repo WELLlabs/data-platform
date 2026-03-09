@@ -15,6 +15,7 @@ from db.session import get_session
 from fastapi import Depends
 from models.dataset import Dataset
 from models.user import User
+from models.user_contribution import UserContribution
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -61,6 +62,16 @@ class UserService:
                 self.logger.info("User not found for apikey: %s", apikey)
                 return None
 
+            try:
+                contributions = await self.get_contributions_for_user(user.id)
+            except Exception as e:
+                self.logger.warning(
+                    "Contributions fetch failed for user_id=%s, defaulting to 0: %s",
+                    user.id,
+                    e,
+                )
+                contributions = 0
+
             user_data = {
                 "id": user.id,
                 "full_name": user.full_name,
@@ -71,7 +82,7 @@ class UserService:
                 "organization": user.organization,
                 "role": user.role,
                 "phone": user.phone,
-                "contributions": user.contributions,
+                "contributions": contributions,
                 "created_at": user.created_at,
                 "modified_at": user.modified_at,
                 "verified": user.verified,
@@ -85,6 +96,31 @@ class UserService:
         except Exception as e:
             self.logger.exception("Error fetching user by apikey %s: %s", apikey, e)
             return None
+
+    async def get_contributions_for_user(self, user_id: UUID) -> int:
+        """
+        Get contribution count for a user from user_contributions table.
+
+        Args:
+            user_id: User UUID
+
+        Returns:
+            Contribution count, or 0 if no row exists.
+
+        Raises:
+            Exception: Re-raised after logging if the database call fails.
+        """
+        try:
+            result = await self.session.execute(
+                select(UserContribution).where(UserContribution.user_id == user_id)
+            )
+            uc = result.scalar_one_or_none()
+            return uc.contributions if uc else 0
+        except Exception as e:
+            self.logger.exception(
+                "Error fetching contributions for user_id=%s: %s", user_id, e
+            )
+            raise
 
     async def check_if_superuser_by_id(self, user_id: UUID) -> bool:
         """

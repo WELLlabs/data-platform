@@ -35,4 +35,5 @@ export const delete_file_endpoint = "/api/delete_file";
 export const edit_dataset_endpoint = "/api/edit_dataset";
 export const edit_file_endpoint = "/api/edit_file";
 export const profile_endpoint = "/api/profile";
+export const edit_profile_endpoint = "/api/edit_profile";
 export const search_endpoint = "/api/search";

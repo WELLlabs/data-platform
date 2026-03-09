@@ -467,22 +467,6 @@ function SignUp() {
                                         {organizationsError}
                                     </div>
                                 )}
-                                {!isStudent && !organizationsLoading && (
-                                    <div className="mb-3">
-                                        <small>
-                                            Search for more organizations{" "}
-                                            <a
-                                                href="/orgsearch"
-                                                target="_blank"
-                                                rel="noreferrer"
-                                            >
-                                                here
-                                            </a>
-                                            .
-                                        </small>
-                                    </div>
-                                )}
-
                                 <div className="mb-4">
                                     <label
                                         htmlFor="phone"

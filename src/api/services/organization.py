@@ -7,6 +7,7 @@ from db.session import get_session
 from fastapi import Depends, HTTPException, status
 from models.organization import Organization
 from models.user import User
+from models.user_contribution import UserContribution
 from schemas.organization import (
     OrganizationCreate,
     OrganizationSearch,
@@ -150,8 +151,25 @@ class OrganizationService:
             members_result = await self.session.execute(members_query)
             members_users = members_result.scalars().all()
 
+            # Get contributions for all members from user_contributions
+            member_ids = [m.id for m in members_users]
+            contributions_map: dict[UUID, int] = {}
+            if member_ids:
+                uc_result = await self.session.execute(
+                    select(UserContribution).where(
+                        UserContribution.user_id.in_(member_ids)
+                    )
+                )
+                for uc in uc_result.scalars().all():
+                    contributions_map[uc.user_id] = (
+                        contributions_map.get(uc.user_id, 0) + uc.contributions
+                    )
+
             members = []
+            org_contributions_sum = 0
             for member in members_users:
+                contributions = contributions_map.get(member.id, 0)
+                org_contributions_sum += contributions
                 members.append(
                     {
                         "full_name": member.full_name,
@@ -159,14 +177,14 @@ class OrganizationService:
                         "designation": member.designation,
                         "email": member.email,
                         "role": member.role,
-                        "contributions": member.contributions,
+                        "contributions": contributions,
                         "verified": member.verified,
                     }
                 )
 
             self.logger.info("Found %d members for organization %s", len(members), org_id)
 
-            # Build response dictionary
+            # Build response dictionary (contributions = sum of all members' contributions)
             org_dict = {
                 "id": organization.id,
                 "name": organization.name,
@@ -176,12 +194,12 @@ class OrganizationService:
                 "contact": organization.contact,
                 "website": organization.website,
                 "private": organization.private,
-                "contributions": organization.contributions,
                 "focus": organization.focus,
                 "roi_states": organization.roi_states,
                 "created_at": organization.created_at,
                 "modified_at": organization.modified_at,
                 "creator_name": creator_name,
+                "contributions": org_contributions_sum,
                 "members": members,
             }
 

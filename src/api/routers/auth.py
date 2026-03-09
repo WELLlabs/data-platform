@@ -36,6 +36,12 @@ class AuthController:
         self.auth_service = auth_service
         self.logger = logging.getLogger(__name__)
 
+    def _get_redis_strategy(self):
+        """Return a RedisStrategy instance for session token operations."""
+        return RedisStrategy(
+            self.auth_service.redis, settings.COOKIE_MAX_AGE_SECONDS
+        )
+
     async def sign_in(self, email: str, password: str) -> JSONResponse:
         """
         Handle user sign in with security validation.
@@ -75,7 +81,7 @@ class AuthController:
                 )
 
             # Convert user to UserRead schema
-            user_read = self.auth_service._user_to_user_read(user)
+            user_read = await self.auth_service.user_to_user_read(user)
 
             # Create response with user data (ensure UUID/datetime are JSON-serializable)
             response = JSONResponse(
@@ -124,7 +130,7 @@ class AuthController:
             user = await self.auth_service.sign_up(user_data)
 
             # Convert to UserRead schema
-            user_read = self.auth_service._user_to_user_read(user)
+            user_read = await self.auth_service.user_to_user_read(user)
 
             return JSONResponse(
                 content=jsonable_encoder(user_read.model_dump()),
@@ -163,9 +169,7 @@ class AuthController:
                 )
 
             # Verify the session token with Redis
-            strategy = RedisStrategy(
-                self.auth_service.redis, settings.COOKIE_MAX_AGE_SECONDS
-            )
+            strategy = self._get_redis_strategy()
             user_id = await strategy.read_token(session_token)
 
             if not user_id:
@@ -182,7 +186,7 @@ class AuthController:
                 )
 
             # Convert to UserRead schema
-            user_read = self.auth_service._user_to_user_read(user)
+            user_read = await self.auth_service.user_to_user_read(user)
 
             return JSONResponse(
                 content=jsonable_encoder(user_read.model_dump()),
@@ -213,9 +217,7 @@ class AuthController:
             session_token = request.cookies.get(settings.COOKIE_NAME)
             if session_token:
                 # Clear the session from Redis
-                strategy = RedisStrategy(
-                    self.auth_service.redis, settings.COOKIE_MAX_AGE_SECONDS
-                )
+                strategy = self._get_redis_strategy()
                 await strategy.destroy_token(session_token)
 
             # Create response with cookie clearing
@@ -285,9 +287,7 @@ class AuthController:
                 )
 
             # Verify the session token with Redis
-            strategy = RedisStrategy(
-                self.auth_service.redis, settings.COOKIE_MAX_AGE_SECONDS
-            )
+            strategy = self._get_redis_strategy()
             user_id_str = await strategy.read_token(session_token)
 
             if not user_id_str:

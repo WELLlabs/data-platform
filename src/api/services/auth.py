@@ -13,9 +13,11 @@ from fastapi_users.authentication import CookieTransport
 from fastapi_users.password import PasswordHelper
 from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 from models.user import User
+from models.user_contribution import UserContribution
 from redis.asyncio import Redis
 from schemas.user import UserCreate, UserRead
 from services.organization import OrganizationService, get_organization_service
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from tasks.email import send_forgot_password_email, send_verify_email
@@ -87,9 +89,10 @@ class AuthService:
         }
         return user, cookie
 
-    def _user_to_user_read(self, user: User) -> UserRead:
+    async def user_to_user_read(self, user: User) -> UserRead:
         """
         Convert User model to UserRead schema.
+        Contributions are read from user_contributions table by user_id.
 
         Args:
             user: User model instance
@@ -97,6 +100,11 @@ class AuthService:
         Returns:
             UserRead schema instance
         """
+        result = await self.user_db.session.execute(
+            select(UserContribution).where(UserContribution.user_id == user.id)
+        )
+        uc = result.scalar_one_or_none()
+        contributions = uc.contributions if uc else 0
         return UserRead(
             id=user.id,
             email=user.email,
@@ -112,7 +120,7 @@ class AuthService:
             created_at=user.created_at,
             verified=user.verified,
             apikey=user.apikey,
-            contributions=user.contributions,
+            contributions=contributions,
         )
 
     async def sign_up(self, user_data: UserCreate) -> User:
@@ -186,13 +194,41 @@ class AuthService:
                 "is_superuser": False,
                 "is_verified": False,
                 "verified": False,
-                "contributions": 0,
             }
 
             user = await self.user_db.create(create_dict)
             self.logger.info(
                 "User created successfully: user_id=%s email=%s", user.id, user.email
             )
+
+            # Create user_contributions row for the new user (same session; rollback on failure)
+            try:
+                uc = UserContribution(
+                    user_id=user.id,
+                    organization_id=user.organization,
+                    contributions=0,
+                )
+                self.user_db.session.add(uc)
+                await self.user_db.session.flush()
+                await self.user_db.session.commit()
+            except IntegrityError as e:
+                self.logger.exception(
+                    "UserContribution insert failed for user_id=%s: %s", user.id, e
+                )
+                await self.user_db.session.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to create user contribution record",
+                ) from e
+            except Exception as e:
+                self.logger.exception(
+                    "UserContribution insert failed for user_id=%s: %s", user.id, e
+                )
+                await self.user_db.session.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to create user contribution record",
+                ) from e
 
             # Set user as creator of organization if organization doesn't have a creator yet
             try:

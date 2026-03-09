@@ -78,7 +78,7 @@ AuthService responsibilities:
 
 - User sign in (`sign_in`) — fetch user by email via `user_db.get_by_email`, always perform password verification (to help avoid timing attacks), and if valid issue a Redis-backed session token. The token format in code is a simple string: `session:{user.id}`. The token is written to Redis with `setex` and the configured lifetime. `sign_in` returns a tuple `(user, cookie_dict)` where `cookie_dict` contains the parameters used by the controller to set an HTTP-only cookie.
 
-- Convert model to schema (`_user_to_user_read`) — maps a `User` model to `schemas.UserRead`.
+- Convert model to schema (`user_to_user_read`) — maps a `User` model to `schemas.UserRead`.
 
 - Forgot password (`forgot_password`) — placeholder that currently looks up the user by email but does not implement email delivery.
 

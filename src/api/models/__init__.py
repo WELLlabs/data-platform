@@ -8,3 +8,4 @@ from .organization import Organization
 from .tag import Tag
 from .tag_dataset import TagDataset
 from .user import User
+from .user_contribution import UserContribution

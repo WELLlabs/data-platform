@@ -29,9 +29,6 @@ class Organization(Base):
     contact: Mapped[Optional[str]] = mapped_column(String(length=100), nullable=True)
     website: Mapped[Optional[str]] = mapped_column(String(length=200), nullable=True)
 
-    # Numeric fields
-    contributions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-
     # Boolean fields
     private: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 

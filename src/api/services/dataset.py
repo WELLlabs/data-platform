@@ -16,6 +16,7 @@ from models.organization import Organization
 from models.tag import Tag
 from models.tag_dataset import TagDataset
 from models.user import User
+from models.user_contribution import UserContribution
 from schemas.dataset import DatasetCreate
 from services.organization import OrganizationService, get_organization_service
 from services.upload import UploadService, get_upload_service
@@ -422,17 +423,20 @@ class DatasetService:
             )
             self.session.add(file)
 
-            # 10. Increment contributions for user and organization
-            await self.session.execute(
-                update(User)
-                .where(User.id == dataset_data.creator)
-                .values(contributions=User.contributions + 1)
+            # 10. Increment user contributions in user_contributions table (upsert: update or insert when missing)
+            inc_result = await self.session.execute(
+                update(UserContribution)
+                .where(UserContribution.user_id == dataset_data.creator)
+                .values(contributions=UserContribution.contributions + 1)
             )
-            await self.session.execute(
-                update(Organization)
-                .where(Organization.id == dataset_data.organization)
-                .values(contributions=Organization.contributions + 1)
-            )
+            if inc_result.rowcount == 0:
+                self.session.add(
+                    UserContribution(
+                        user_id=dataset_data.creator,
+                        organization_id=dataset_data.organization,
+                        contributions=1,
+                    )
+                )
 
             # 11. Commit all changes (dataset, file, tags, tag_dataset, and counters)
             await self.session.commit()

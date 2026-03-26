@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import {
   dataset_info_endpoint,
@@ -105,6 +105,12 @@ function DatasetInfo() {
   const [error, setError] = useState("");
   const [dataset, setDataset] = useState(null);
   const [files, setFiles] = useState([]);
+  const [privileges, setPrivileges] = useState({
+    edit: false,
+    delete_dataset: false,
+    delete_file: false,
+    add_file: false,
+  });
   const [downloadingFileId, setDownloadingFileId] = useState(null);
   const [downloadError, setDownloadError] = useState("");
   const [showDatasetDeleteModal, setShowDatasetDeleteModal] = useState(false);
@@ -141,26 +147,49 @@ function DatasetInfo() {
     try {
       setLoading(true);
       setError("");
+      const params = new URLSearchParams({ dataset_id: datasetId });
+      if (user?.apikey) params.set("apikey", user.apikey);
       const response = await fetch(
-        `${dataset_info_endpoint}?dataset_id=${encodeURIComponent(datasetId)}`,
+        `${dataset_info_endpoint}?${params.toString()}`,
         { credentials: "include" }
       );
       if (!response.ok) {
-        if (response.status === 404) {
-          throw new Error("Dataset not found");
+        if (response.status === 403) {
+          let msg = "Private dataset, Access permission is not granted.";
+          try {
+            const body = await response.json();
+            if (body?.detail) msg = body.detail;
+          } catch {
+            // use default msg
+          }
+          setError(msg);
+          return;
         }
-        throw new Error(`Failed to fetch dataset: ${response.statusText}`);
+        if (response.status === 404) {
+          setError("Dataset not found");
+          return;
+        }
+        setError(`Failed to fetch dataset: ${response.statusText}`);
+        return;
       }
       const data = await response.json();
       setDataset(data.dataset);
       setFiles(data.files || []);
+      setPrivileges(
+        data.privileges ?? {
+          edit: false,
+          delete_dataset: false,
+          delete_file: false,
+          add_file: false,
+        }
+      );
     } catch (err) {
       console.error("Error fetching dataset info:", err);
       setError(err.message || "Error loading dataset information");
     } finally {
       setLoading(false);
     }
-  }, [searchParams, navigate]);
+  }, [searchParams, navigate, user?.apikey]);
 
   useEffect(() => {
     fetchDatasetInfo();
@@ -201,9 +230,9 @@ function DatasetInfo() {
 
   const handleDownload = async (file) => {
     // Validate required file properties
-    if (!file || !file.file_id || !file.file_key) {
+    if (!file || !file.file_id) {
       setDownloadError("Invalid file information. Cannot download.");
-      console.error("Download failed: Missing file_id or file_key", file);
+      console.error("Download failed: Missing file_id", file);
       return;
     }
 
@@ -212,9 +241,8 @@ function DatasetInfo() {
     setDownloadingFileId(file.file_id);
 
     try {
-      // Build the download URL with query parameters
+      // Build the download URL with query parameters (session cookie sent via credentials)
       const params = new URLSearchParams({
-        file_key: file.file_key,
         file_id: file.file_id,
       });
       const downloadUrl = `${download_url_endpoint}?${params.toString()}`;
@@ -242,6 +270,11 @@ function DatasetInfo() {
         switch (response.status) {
           case 400:
             errorMessage = "Invalid file information. Please try again.";
+            break;
+          case 403:
+            errorMessage =
+              errorMessage ||
+              "Download permission is not granted. You may need to sign in or use a different account.";
             break;
           case 404:
             errorMessage = "File not found. It may have been deleted.";
@@ -677,21 +710,27 @@ function DatasetInfo() {
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h2 className="mb-0">Dataset Information</h2>
         <div className="d-flex gap-2">
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={openDatasetEditModal}
-            aria-label="Edit dataset"
-          >
-            <i className="bi bi-pencil"></i> Edit
-          </button>
-          <button
-            className="btn btn-danger"
-            onClick={() => setShowDatasetDeleteModal(true)}
-            disabled={deletingDataset}
-          >
-            <i className="bi bi-trash"></i> Delete
-          </button>
+          {privileges.edit && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={openDatasetEditModal}
+              aria-label="Edit dataset"
+            >
+              <i className="bi bi-pencil"></i> Edit
+            </button>
+          )}
+          {privileges.delete_dataset && (
+            <button
+              type="button"
+              className="btn btn-danger"
+              onClick={() => setShowDatasetDeleteModal(true)}
+              disabled={deletingDataset}
+              aria-label="Delete dataset"
+            >
+              <i className="bi bi-trash"></i> Delete
+            </button>
+          )}
         </div>
       </div>
 
@@ -1259,7 +1298,13 @@ function DatasetInfo() {
               <strong>Creator:</strong>
             </div>
             <div className="col-md-9">
-              {dataset.full_name || dataset.creator || "N/A"}
+              {dataset.creator ? (
+                <Link to={`/profile?id=${encodeURIComponent(dataset.creator)}`}>
+                  {dataset.creator_name || dataset.creator || "N/A"}
+                </Link>
+              ) : (
+                dataset.creator_name || "N/A"
+              )}
             </div>
           </div>
 
@@ -1274,7 +1319,17 @@ function DatasetInfo() {
             <div className="col-md-3">
               <strong>Organization:</strong>
             </div>
-            <div className="col-md-9">{dataset.organization || "N/A"}</div>
+            <div className="col-md-9">
+              {dataset.organization ? (
+                <Link
+                  to={`/organization?id=${encodeURIComponent(dataset.organization)}`}
+                >
+                  {dataset.organization_name || dataset.organization || "N/A"}
+                </Link>
+              ) : (
+                dataset.organization_name || "N/A"
+              )}
+            </div>
           </div>
 
           <div className="row mb-3">
@@ -1321,18 +1376,20 @@ function DatasetInfo() {
 
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h3 className="mb-0">Files</h3>
-        <button
-          className="btn"
-          style={{ backgroundColor: "#1b75e0", color: "#fff" }}
-          onClick={() => {
-            const datasetId = searchParams.get("dataset_id");
-            if (datasetId) {
-              navigate(`/add-file?dataset_id=${datasetId}`);
-            }
-          }}
-        >
-          <i className="bi bi-plus"></i> Add file
-        </button>
+        {privileges.add_file && (
+          <button
+            className="btn"
+            style={{ backgroundColor: "#1b75e0", color: "#fff" }}
+            onClick={() => {
+              const datasetId = searchParams.get("dataset_id");
+              if (datasetId) {
+                navigate(`/add-file?dataset_id=${datasetId}`);
+              }
+            }}
+          >
+            <i className="bi bi-plus"></i> Add file
+          </button>
+        )}
       </div>
 
       {downloadError && (
@@ -1474,21 +1531,27 @@ function DatasetInfo() {
                         </>
                       )}
                     </button>
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-primary"
-                      onClick={() => openFileEditModal(file)}
-                      aria-label="Edit file"
-                    >
-                      <i className="bi bi-pencil"></i>
-                    </button>
-                    <button
-                      className="btn btn-sm btn-danger"
-                      onClick={() => openFileDeleteModal(file)}
-                      disabled={deletingFileId === file.file_id}
-                    >
-                      <i className="bi bi-trash"></i>
-                    </button>
+                    {privileges.edit && (
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-primary"
+                        onClick={() => openFileEditModal(file)}
+                        aria-label="Edit file"
+                      >
+                        <i className="bi bi-pencil"></i>
+                      </button>
+                    )}
+                    {privileges.delete_file && (
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-danger"
+                        onClick={() => openFileDeleteModal(file)}
+                        disabled={deletingFileId === file.file_id}
+                        aria-label="Delete file"
+                      >
+                        <i className="bi bi-trash"></i>
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>

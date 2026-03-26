@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     SEARCH_CACHE_AGE_SECONDS: int = 120
     # Organization list cache (Redis) TTL in seconds; default 604800 (7 days) if not set
     ORGANIZATION_LIST_CACHE_AGE_SECONDS: int = 604800
+    # Dataset info cache (Redis) TTL in seconds; default 300 (5 minutes) if not set
+    DATASET_INFO_CACHE_AGE_SECONDS: int = 300
 
     class Config:
         env_file = ".env"

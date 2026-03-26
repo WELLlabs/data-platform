@@ -2,13 +2,15 @@
 Dataset router for handling dataset creation.
 """
 
+import json
 import logging
 import re
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 import httpx
+from redis.asyncio import Redis
 from core.config import settings
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.encoders import jsonable_encoder
@@ -20,14 +22,32 @@ from models.user import User
 from models.user_contribution import UserContribution
 from routers.upload import get_current_active_user
 from schemas.dataset import DatasetCreate, EditDatasetRequest
-from services.auth import AuthService, RedisStrategy, get_auth_service
+from services.auth import AuthService, RedisStrategy, get_auth_service, get_redis
 from services.dataset import DatasetService, get_dataset_service
 from services.organization import OrganizationService, get_organization_service
 from services.user import UserService, get_user_service
 from sqlalchemy import delete, select, update
+from utils.security import sanitize_input
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+async def _invalidate_dataset_cache(
+    dataset_id: UUID, redis: Redis, log: logging.Logger
+) -> None:
+    """Remove dataset info cache entry if it exists."""
+    try:
+        cache_key = f"dataset:{dataset_id}"
+        if await redis.exists(cache_key):
+            await redis.delete(cache_key)
+            log.info("Cleared dataset cache key: %s", cache_key)
+    except Exception as e:
+        log.warning(
+            "Failed to clear dataset cache for dataset_id=%s: %s",
+            dataset_id,
+            e,
+        )
 
 
 async def get_current_active_user_optional(
@@ -73,13 +93,57 @@ async def get_current_active_user_optional(
         return None
 
 
+async def _compute_privileges(
+    dataset_id: UUID,
+    files_count: int,
+    current_user: Optional[User],
+    apikey: Optional[str],
+    user_service: UserService,
+    dataset_service: DatasetService,
+) -> Dict[str, bool]:
+    """
+    Compute privileges for dataset_info response.
+    Returns dict with keys: edit, delete_dataset, delete_file, add_file.
+    """
+    default_privileges = {
+        "edit": False,
+        "delete_dataset": False,
+        "delete_file": False,
+        "add_file": False,
+    }
+    if current_user is None and not (apikey and apikey.strip()):
+        return default_privileges
+    user_id: Optional[UUID] = current_user.id if current_user else None
+    apikey_val = apikey.strip() if apikey and apikey.strip() else None
+    # edit and add_file: creator only
+    is_creator = False
+    if user_id is not None:
+        is_creator = await user_service.check_if_dataset_creator_by_id(
+            user_id, dataset_id
+        )
+    elif apikey_val:
+        is_creator = await user_service.check_if_dataset_creator_by_key(
+            apikey_val, dataset_id
+        )
+    has_perm = await dataset_service.check_dataset_permission(
+        user_id, apikey_val, dataset_id
+    )
+    return {
+        "edit": is_creator,
+        "add_file": is_creator,
+        "delete_dataset": has_perm,
+        "delete_file": has_perm and files_count > 1,
+    }
+
+
 class DatasetController:
     """
     Class-based dataset controller with comprehensive error handling and security.
     """
 
-    def __init__(self, dataset_service: DatasetService):
+    def __init__(self, dataset_service: DatasetService, redis: Redis):
         self.dataset_service = dataset_service
+        self.redis = redis
         self.logger = logging.getLogger(__name__)
 
     async def create_dataset(
@@ -123,7 +187,7 @@ class DatasetController:
                     "tags": [tag.tag_name for tag in dataset.tags],
                     "organization": dataset.organization,
                     "private": dataset.private,
-                    "downloads": dataset.downloads,
+                    "downloads": 0,
                     "approved": dataset.approved,
                     "approved_by": str(dataset.approved_by)
                     if dataset.approved_by
@@ -141,7 +205,7 @@ class DatasetController:
                     "file_description": file.file_description,
                     "file_format": file.file_format,
                     "dataset_id": str(file.dataset_id),
-                    "downloads": file.downloads,
+                    "downloads": 0,
                     "provenance": file.provenance,
                     "source": file.source,
                     "cite_as": file.cite_as,
@@ -213,6 +277,9 @@ class DatasetController:
                     detail="Dataset not found",
                 )
 
+            download_totals = await self.dataset_service.get_download_totals_for_datasets(
+                [dataset.dataset_id]
+            )
             response_data = {
                 "dataset_id": str(dataset.dataset_id),
                 "dataset_title": dataset.dataset_title,
@@ -221,7 +288,7 @@ class DatasetController:
                 "tags": [tag.tag_name for tag in dataset.tags],
                 "creator": str(dataset.creator),
                 "organization": dataset.organization,
-                "downloads": dataset.downloads,
+                "downloads": download_totals.get(dataset.dataset_id, 0),
                 "approved": dataset.approved,
                 "approved_by": str(dataset.approved_by)
                 if dataset.approved_by
@@ -230,6 +297,7 @@ class DatasetController:
                 if dataset.created_at
                 else None,
             }
+            await _invalidate_dataset_cache(dataset_id, self.redis, self.logger)
             return JSONResponse(
                 content=jsonable_encoder(response_data),
                 status_code=status.HTTP_200_OK,
@@ -248,9 +316,17 @@ class DatasetController:
                 detail="Error editing dataset",
             )
 
-    async def get_dataset_info(self, dataset_id: UUID) -> JSONResponse:
+    async def get_dataset_info(
+        self,
+        dataset_id: UUID,
+        org_service: OrganizationService,
+        user_service: UserService,
+        current_user: Optional[User],
+        apikey: Optional[str],
+    ) -> Dict[str, Any]:
         """
-        Get dataset and associated files by dataset_id.
+        Load dataset and files, build payload (dataset, files, privileges).
+        Caller is responsible for caching {dataset, files} in Redis if desired.
         """
         try:
             self.logger.info("Fetching dataset info for %s", dataset_id)
@@ -259,25 +335,39 @@ class DatasetController:
                 dataset_id
             )
 
-            # Fetch creator user to get full_name
-            from models.user import User
-
             creator_result = await self.dataset_service.session.execute(
                 select(User).where(User.id == dataset.creator)
             )
             creator_user = creator_result.scalar_one_or_none()
+            creator_name = (
+                creator_user.full_name if creator_user else None
+            )
+
+            file_downloads = await self.dataset_service.get_download_counts_for_files(
+                [f.file_id for f in files]
+            )
+            dataset_downloads = sum(
+                file_downloads.get(f.file_id, 0) for f in files
+            )
+
+            org = await org_service.get_organization_by_id(dataset.organization)
+            organization_name = org.name if org else None
 
             dataset_obj = {
                 "dataset_id": str(dataset.dataset_id),
                 "dataset_title": dataset.dataset_title,
                 "creator": str(dataset.creator),
-                "full_name": creator_user.full_name if creator_user else None,
+                "creator_name": creator_name,
                 "created_at": dataset.created_at.isoformat()
                 if dataset.created_at
                 else None,
+                "modified_at": dataset.modified_at.isoformat()
+                if dataset.modified_at
+                else None,
                 "organization": dataset.organization,
+                "organization_name": organization_name,
                 "private": dataset.private,
-                "downloads": dataset.downloads,
+                "downloads": dataset_downloads,
                 "dataset_description": dataset.dataset_description,
                 "tags": [tag.tag_name for tag in dataset.tags],
                 "approved": dataset.approved,
@@ -290,13 +380,11 @@ class DatasetController:
                 {
                     "file_id": str(f.file_id),
                     "file_title": f.file_title,
-                    "file_key": f.file_key,
-                    "bucket": f.bucket,
                     "file_size": f.file_size,
                     "file_description": f.file_description,
                     "file_format": f.file_format,
                     "dataset_id": str(f.dataset_id),
-                    "downloads": f.downloads,
+                    "downloads": file_downloads.get(f.file_id, 0),
                     "provenance": f.provenance,
                     "source": f.source,
                     "cite_as": f.cite_as,
@@ -307,18 +395,31 @@ class DatasetController:
                     "temporal_from": f.temporal_from.isoformat()
                     if f.temporal_from
                     else None,
-                    "temporal_to": f.temporal_to.isoformat() if f.temporal_to else None,
+                    "temporal_to": f.temporal_to.isoformat()
+                    if f.temporal_to
+                    else None,
                     "geography": f.geography,
-                    "created_at": f.created_at.isoformat() if f.created_at else None,
+                    "created_at": f.created_at.isoformat()
+                    if f.created_at
+                    else None,
                 }
                 for f in files
             ]
 
-            return JSONResponse(
-                content=jsonable_encoder({"dataset": dataset_obj, "files": files_arr}),
-                status_code=status.HTTP_200_OK,
+            privileges = await _compute_privileges(
+                dataset_id,
+                len(files_arr),
+                current_user,
+                apikey,
+                user_service,
+                self.dataset_service,
             )
 
+            return {
+                "dataset": dataset_obj,
+                "files": files_arr,
+                "privileges": privileges,
+            }
         except HTTPException:
             raise
         except Exception as e:
@@ -364,6 +465,10 @@ class DatasetController:
             for ds in datasets:
                 await self.dataset_service.session.refresh(ds, ["tags"])
 
+            download_totals = await self.dataset_service.get_download_totals_for_datasets(
+                [ds.dataset_id for ds in datasets]
+            )
+
             datasets_arr = [
                 {
                     "dataset_id": str(ds.dataset_id),
@@ -372,7 +477,7 @@ class DatasetController:
                     "created_at": ds.created_at.isoformat() if ds.created_at else None,
                     "organization": ds.organization,
                     "private": ds.private,
-                    "downloads": ds.downloads,
+                    "downloads": download_totals.get(ds.dataset_id, 0),
                     "dataset_description": ds.dataset_description,
                     "tags": [tag.tag_name for tag in ds.tags],
                     "approved": ds.approved,
@@ -428,6 +533,10 @@ class DatasetController:
             for ds in datasets:
                 await self.dataset_service.session.refresh(ds, ["tags"])
 
+            download_totals = await self.dataset_service.get_download_totals_for_datasets(
+                [ds.dataset_id for ds in datasets]
+            )
+
             datasets_arr = [
                 {
                     "dataset_id": str(ds.dataset_id),
@@ -436,7 +545,7 @@ class DatasetController:
                     "created_at": ds.created_at.isoformat() if ds.created_at else None,
                     "organization": ds.organization,
                     "private": ds.private,
-                    "downloads": ds.downloads,
+                    "downloads": download_totals.get(ds.dataset_id, 0),
                     "dataset_description": ds.dataset_description,
                     "tags": [tag.tag_name for tag in ds.tags],
                     "approved": ds.approved,
@@ -501,9 +610,9 @@ class DatasetController:
                 apikey,
             )
 
-            # 1. Check permission
+            # 1. Check permission (apikey only for delete_dataset endpoint)
             has_permission = await self.dataset_service.check_dataset_permission(
-                apikey, dataset_id
+                None, apikey, dataset_id
             )
 
             if not has_permission:
@@ -677,6 +786,7 @@ class DatasetController:
                     )
             await self.dataset_service.session.commit()
 
+            await _invalidate_dataset_cache(dataset_id, self.redis, self.logger)
             self.logger.info("Dataset deleted successfully: dataset_id=%s", dataset_id)
 
             return JSONResponse(
@@ -699,6 +809,7 @@ class DatasetController:
 # Dependency to get dataset controller
 async def get_dataset_controller(
     dataset_service: DatasetService = Depends(get_dataset_service),
+    redis: Redis = Depends(get_redis),
 ) -> DatasetController:
     """
     Dependency function to get DatasetController instance.
@@ -709,7 +820,7 @@ async def get_dataset_controller(
     Returns:
         DatasetController instance
     """
-    return DatasetController(dataset_service)
+    return DatasetController(dataset_service, redis)
 
 
 def process_tags(tags: str | None) -> str | None:
@@ -979,27 +1090,121 @@ async def edit_dataset(
 
 @router.get("/dataset_info")
 async def dataset_info(
-    dataset_id: str,
+    request: Request,
+    dataset_id: str = Query(..., description="Dataset ID (UUID)"),
+    apikey: Optional[str] = Query(None, description="Optional API key for access and privileges"),
     controller: DatasetController = Depends(get_dataset_controller),
+    current_user: Optional[User] = Depends(get_current_active_user_optional),
+    redis: Redis = Depends(get_redis),
+    user_service: UserService = Depends(get_user_service),
+    org_service: OrganizationService = Depends(get_organization_service),
 ):
     """
-    Get dataset info and associated files by dataset_id (query parameter).
+    Get dataset info and associated files by dataset_id.
+    Validates access for private datasets (session cookie or apikey).
+    Returns dataset, files, and privileges. Response may be served from Redis cache.
     """
     try:
+        sanitized_ds_id = sanitize_input(dataset_id)
+        if not sanitized_ds_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or missing dataset_id",
+            )
+        sanitized_apikey = sanitize_input(apikey) if apikey else None
         try:
-            ds_uuid = UUID(dataset_id)
+            ds_uuid = UUID(sanitized_ds_id)
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid dataset_id UUID format",
             )
 
-        return await controller.get_dataset_info(ds_uuid)
+        # Early lookup: private and organization for access check
+        result = await controller.dataset_service.session.execute(
+            select(Dataset.private, Dataset.organization).where(
+                Dataset.dataset_id == ds_uuid
+            )
+        )
+        row = result.one_or_none()
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Dataset not found",
+            )
+        is_private, dataset_organization = row[0], row[1]
 
+        if is_private:
+            user_organization: Optional[str] = None
+            if current_user is not None:
+                user_organization = current_user.organization
+            elif sanitized_apikey:
+                user_data = await user_service.get_user_by_apikey(sanitized_apikey)
+                if user_data is not None:
+                    user_organization = user_data.get("organization")
+            if user_organization is None or user_organization != dataset_organization:
+                return JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={
+                        "detail": "Private dataset, Access permission is not granted."
+                    },
+                )
+
+        cache_key = f"dataset:{ds_uuid}"
+        cached = await redis.get(cache_key)
+        if cached is not None:
+            try:
+                data = json.loads(cached)
+                dataset_obj = data.get("dataset")
+                files_arr = data.get("files", [])
+                if dataset_obj is not None and files_arr is not None:
+                    privileges = await _compute_privileges(
+                        ds_uuid,
+                        len(files_arr),
+                        current_user,
+                        sanitized_apikey,
+                        user_service,
+                        controller.dataset_service,
+                    )
+                    return JSONResponse(
+                        content=jsonable_encoder({
+                            "dataset": dataset_obj,
+                            "files": files_arr,
+                            "privileges": privileges,
+                        }),
+                        status_code=status.HTTP_200_OK,
+                    )
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.warning("Invalid dataset cache value for %s: %s", ds_uuid, e)
+
+        response_payload = await controller.get_dataset_info(
+            ds_uuid,
+            org_service,
+            user_service,
+            current_user,
+            sanitized_apikey,
+        )
+        ttl = settings.DATASET_INFO_CACHE_AGE_SECONDS
+        try:
+            await redis.setex(
+                cache_key,
+                ttl,
+                json.dumps({
+                    "dataset": response_payload["dataset"],
+                    "files": response_payload["files"],
+                }),
+            )
+        except Exception as e:
+            logger.warning("Failed to cache dataset info for %s: %s", ds_uuid, e)
+
+        return JSONResponse(
+            content=jsonable_encoder(response_payload),
+            status_code=status.HTTP_200_OK,
+        )
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Unexpected error in /dataset-info: %s", e)
+        logger.exception("Unexpected error in /dataset_info: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error processing dataset info request",

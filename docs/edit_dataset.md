@@ -60,7 +60,8 @@ Schema: `src/api/schemas/dataset.py` — `EditDatasetRequest`. Validators: title
 3. Check dataset exists: `controller.dataset_service.dataset_exists(dataset_id)` → 404 if not.
 4. Check creator: `user_service.check_if_dataset_creator_by_id(user.id, dataset_id)` → 403 with message `"Only creator of dataset can edit."` if False.
 5. Call `controller.edit_dataset(dataset_id, dataset_title, dataset_description, private, tags)`.
-6. Return 200 with updated dataset JSON, or 500 on unexpected errors.
+6. Before returning success response, clear Redis cache key `dataset:{dataset_id}` (if present) so subsequent `/api/dataset_info` fetch recomputes fresh data.
+7. Return 200 with updated dataset JSON, or 500 on unexpected errors.
 
 ### 2.4 Controller and Service Logic
 
@@ -135,7 +136,8 @@ Schema: `src/api/schemas/file.py` — `FileEditRequest`. Validators: file_title 
    - `value`: must be `"high"`, `"medium"`, or `"low"`; invalid or empty defaults to `"low"` (aligned with frontend).
    - `temporal_from`, `temporal_to`: used as provided (schema parses ISO 8601; invalid/empty → null; order validated).
 5. **Update** the file record with all edited fields; `session.add(file_record)`; commit; refresh.
-6. Return 200 with JSON of updated file (file_id, file_title, file_description, provenance, source, cite_as, groundtruthed, permissions, duration, value, temporal_from, temporal_to, geography).
+6. **Cache invalidation:** Before returning success response, clear Redis cache key `dataset:{dataset_id}` (if present) to invalidate `/api/dataset_info` cache for the parent dataset.
+7. Return 200 with JSON of updated file (file_id, file_title, file_description, provenance, source, cite_as, groundtruthed, permissions, duration, value, temporal_from, temporal_to, geography).
 
 ### 3.5 Permissions and Value
 
@@ -227,7 +229,7 @@ Schema: `src/api/schemas/file.py` — `FileEditRequest`. Validators: file_title 
 3. User changes fields and clicks Submit.
 4. Frontend builds `tags` array (split by comma, strip, replace spaces with `-`), validates title and at least one tag, sends PUT `/api/edit_dataset` with JSON body and cookies.
 5. API resolves user from session; checks dataset exists; checks `check_if_dataset_creator_by_id` → 403 if not creator.
-6. Service updates `datasets` row and replaces `tag_dataset`/`tags` as described; returns updated dataset.
+6. Service updates `datasets` row and replaces `tag_dataset`/`tags` as described; controller clears Redis key `dataset:{dataset_id}` if present before returning success response.
 7. API returns 200 with updated dataset JSON; frontend closes modal and refreshes dataset info.
 
 ### 6.2 Edit File
@@ -237,5 +239,5 @@ Schema: `src/api/schemas/file.py` — `FileEditRequest`. Validators: file_title 
 3. User changes fields and clicks Submit.
 4. Frontend validates title and temporal range, sends PUT `/api/edit_file` with JSON body and cookies.
 5. API resolves user; loads file by `file_id`, gets `dataset_id`; checks `check_if_dataset_creator_by_id(user.id, dataset_id)` → 403 if not creator.
-6. Controller sanitizes/validates and updates the file row; returns 200 with updated file JSON.
+6. Controller sanitizes/validates and updates the file row; clears Redis key `dataset:{dataset_id}` if present; returns 200 with updated file JSON.
 7. Frontend closes modal and refreshes dataset info (so file list and file cards reflect changes).

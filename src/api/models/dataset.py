@@ -14,7 +14,6 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
-    Integer,
     String,
     Text,
 )
@@ -70,11 +69,6 @@ class Dataset(Base):
     private: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
-        nullable=False,
-    )
-    downloads: Mapped[int] = mapped_column(
-        Integer,
-        default=0,
         nullable=False,
     )
 

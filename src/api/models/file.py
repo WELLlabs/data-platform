@@ -66,11 +66,6 @@ class File(Base):
         nullable=False,
         index=True,
     )
-    downloads: Mapped[int] = mapped_column(
-        Integer,
-        default=0,
-        nullable=False,
-    )
 
     # Optional fields
     bucket: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

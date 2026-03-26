@@ -4,7 +4,7 @@ Dataset service for handling dataset and file creation.
 
 import logging
 import re
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from uuid import UUID, uuid4
 
 from core.config import settings
@@ -12,6 +12,7 @@ from db.session import get_session
 from fastapi import Depends, HTTPException, status
 from models.dataset import Dataset
 from models.file import File
+from models.file_download import FileDownloadCount
 from models.organization import Organization
 from models.tag import Tag
 from models.tag_dataset import TagDataset
@@ -28,6 +29,18 @@ from sqlalchemy.orm import selectinload
 from utils.security import sanitize_input
 
 logger = logging.getLogger(__name__)
+
+
+def _mask_apikey(apikey: Optional[str]) -> str:
+    """Return a masked API key representation safe for logs."""
+    if not apikey:
+        return "none"
+    stripped_apikey = apikey.strip()
+    if not stripped_apikey:
+        return "empty"
+    if len(stripped_apikey) <= 4:
+        return f"***{stripped_apikey}"
+    return f"{'*' * (len(stripped_apikey) - 4)}{stripped_apikey[-4:]}"
 
 
 class DatasetService:
@@ -180,9 +193,56 @@ class DatasetService:
                 detail="Error validating file existence",
             )
 
-    async def check_dataset_permission(self, apikey: str, dataset_id: UUID) -> bool:
+    async def get_download_totals_for_datasets(
+        self, dataset_ids: List[UUID]
+    ) -> Dict[UUID, int]:
         """
-        Check if the user associated with the apikey has permission to modify/delete the dataset.
+        Return total download count per dataset (sum of file_download_counts).
+        Missing dataset_ids get 0.
+        """
+        if not dataset_ids:
+            return {}
+        result = await self.session.execute(
+            select(FileDownloadCount.dataset_id, func.sum(FileDownloadCount.downloads))
+            .where(FileDownloadCount.dataset_id.in_(dataset_ids))
+            .group_by(FileDownloadCount.dataset_id)
+        )
+        rows = result.all()
+        out: Dict[UUID, int] = {did: 0 for did in dataset_ids}
+        for row in rows:
+            out[row[0]] = int(row[1])
+        return out
+
+    async def get_download_counts_for_files(
+        self, file_ids: List[UUID]
+    ) -> Dict[UUID, int]:
+        """
+        Return download count per file_id from file_download_counts.
+        Missing file_ids get 0.
+        """
+        if not file_ids:
+            return {}
+        result = await self.session.execute(
+            select(FileDownloadCount.file_id, FileDownloadCount.downloads).where(
+                FileDownloadCount.file_id.in_(file_ids)
+            )
+        )
+        rows = result.all()
+        out: Dict[UUID, int] = {fid: 0 for fid in file_ids}
+        for row in rows:
+            out[row[0]] = int(row[1])
+        return out
+
+    async def check_dataset_permission(
+        self,
+        user_id: Optional[UUID],
+        apikey: Optional[str],
+        dataset_id: UUID,
+    ) -> bool:
+        """
+        Check if the user has permission to modify/delete the dataset.
+
+        Uses apikey when provided (preferred over user_id). Otherwise uses user_id from session.
 
         Permission check order:
         1. Check if user is the dataset creator
@@ -190,66 +250,122 @@ class DatasetService:
         3. Check if user is superuser
 
         Args:
-            apikey: API key of the user
+            user_id: User ID (from session); used when apikey is not provided
+            apikey: API key of the user; when provided, takes precedence over user_id
             dataset_id: UUID of the dataset
 
         Returns:
             True if user has permission, False otherwise
         """
         try:
-            # 1. First check: Is the user the dataset creator?
-            is_creator = await self.user_service.check_if_dataset_creator_by_key(
-                apikey, dataset_id
-            )
-            if is_creator:
-                self.logger.info(
-                    "Permission granted: user with apikey %s is creator of dataset %s",
-                    apikey,
-                    dataset_id,
-                )
-                return True
-
-            # 2. Second check: Does user have high role AND belong to dataset's organization?
-            has_high_role = await self.user_service.check_if_high_role_by_key(apikey)
-            belongs_to_org = (
-                await self.user_service.check_user_belongs_to_dataset_organization_by_key(
+            # Prefer apikey over user_id when both provided
+            if apikey and apikey.strip():
+                return await self._check_dataset_permission_by_apikey(
                     apikey, dataset_id
                 )
-            )
-            if has_high_role and belongs_to_org:
-                self.logger.info(
-                    "Permission granted: user with apikey %s has high role and belongs to dataset %s organization",
-                    apikey,
-                    dataset_id,
+            if user_id is not None:
+                return await self._check_dataset_permission_by_user_id(
+                    user_id, dataset_id
                 )
-                return True
-
-            # 3. Third check: Is the user a superuser?
-            is_superuser = await self.user_service.check_if_superuser_by_key(apikey)
-            if is_superuser:
-                self.logger.info(
-                    "Permission granted: user with apikey %s is superuser for dataset %s",
-                    apikey,
-                    dataset_id,
-                )
-                return True
-
-            # All checks failed
             self.logger.info(
-                "Permission denied: user with apikey %s does not have permission for dataset %s",
-                apikey,
-                dataset_id,
+                "Permission denied: no user_id or apikey for dataset %s", dataset_id
             )
             return False
-
         except Exception as e:
+            masked_apikey = _mask_apikey(apikey)
             self.logger.exception(
-                "Error checking dataset permission: apikey=%s, dataset_id=%s, error=%s",
-                apikey,
+                "Error checking dataset permission: user_id=%s, apikey=%s, dataset_id=%s, error=%s",
+                user_id,
+                masked_apikey,
                 dataset_id,
                 e,
             )
             return False
+
+    async def _check_dataset_permission_by_apikey(
+        self, apikey: str, dataset_id: UUID
+    ) -> bool:
+        """Run permission checks using apikey."""
+        masked_apikey = _mask_apikey(apikey)
+        is_creator = await self.user_service.check_if_dataset_creator_by_key(
+            apikey, dataset_id
+        )
+        if is_creator:
+            self.logger.info(
+                "Permission granted: user with apikey %s is creator of dataset %s",
+                masked_apikey,
+                dataset_id,
+            )
+            return True
+        has_high_role = await self.user_service.check_if_high_role_by_key(apikey)
+        belongs_to_org = (
+            await self.user_service.check_user_belongs_to_dataset_organization_by_key(
+                apikey, dataset_id
+            )
+        )
+        if has_high_role and belongs_to_org:
+            self.logger.info(
+                "Permission granted: user with apikey %s has high role and belongs to dataset %s organization",
+                masked_apikey,
+                dataset_id,
+            )
+            return True
+        is_superuser = await self.user_service.check_if_superuser_by_key(apikey)
+        if is_superuser:
+            self.logger.info(
+                "Permission granted: user with apikey %s is superuser for dataset %s",
+                masked_apikey,
+                dataset_id,
+            )
+            return True
+        self.logger.info(
+            "Permission denied: apikey %s does not have permission for dataset %s",
+            masked_apikey,
+            dataset_id,
+        )
+        return False
+
+    async def _check_dataset_permission_by_user_id(
+        self, user_id: UUID, dataset_id: UUID
+    ) -> bool:
+        """Run permission checks using user_id."""
+        is_creator = await self.user_service.check_if_dataset_creator_by_id(
+            user_id, dataset_id
+        )
+        if is_creator:
+            self.logger.info(
+                "Permission granted: user %s is creator of dataset %s",
+                user_id,
+                dataset_id,
+            )
+            return True
+        has_high_role = await self.user_service.check_if_high_role_by_id(user_id)
+        belongs_to_org = (
+            await self.user_service.check_user_belongs_to_dataset_organization_by_id(
+                user_id, dataset_id
+            )
+        )
+        if has_high_role and belongs_to_org:
+            self.logger.info(
+                "Permission granted: user %s has high role and belongs to dataset %s organization",
+                user_id,
+                dataset_id,
+            )
+            return True
+        is_superuser = await self.user_service.check_if_superuser_by_id(user_id)
+        if is_superuser:
+            self.logger.info(
+                "Permission granted: user %s is superuser for dataset %s",
+                user_id,
+                dataset_id,
+            )
+            return True
+        self.logger.info(
+            "Permission denied: user %s does not have permission for dataset %s",
+            user_id,
+            dataset_id,
+        )
+        return False
 
     async def create_dataset_with_file(
         self, dataset_data: DatasetCreate, current_user: User
@@ -363,7 +479,6 @@ class DatasetService:
                 dataset_description=sanitized_dataset_desc,
                 organization=dataset_data.organization,
                 private=dataset_private,
-                downloads=0,
                 approved=False,
                 approved_by=None,
             )
@@ -407,7 +522,6 @@ class DatasetService:
                 file_description=sanitized_file_desc,
                 file_format=sanitized_file_format,
                 dataset_id=dataset_id,
-                downloads=0,
                 provenance=sanitized_provenance,
                 source=sanitized_source,
                 cite_as=sanitized_cite_as,
@@ -422,6 +536,13 @@ class DatasetService:
                 geography=sanitized_geography,
             )
             self.session.add(file)
+            self.session.add(
+                FileDownloadCount(
+                    file_id=file_id,
+                    dataset_id=dataset_id,
+                    downloads=0,
+                )
+            )
 
             # 10. Increment user contributions in user_contributions table (upsert: update or insert when missing)
             inc_result = await self.session.execute(
@@ -637,9 +758,11 @@ class DatasetService:
                     detail="Dataset not found",
                 )
 
-            # Fetch files
+            # Fetch files sorted by created_at descending (latest first)
             result_files = await self.session.execute(
-                select(File).where(File.dataset_id == dataset_id)
+                select(File)
+                .where(File.dataset_id == dataset_id)
+                .order_by(desc(File.created_at))
             )
             files: list[File] = list(result_files.scalars().all())
 

@@ -97,6 +97,25 @@ class UserService:
             self.logger.exception("Error fetching user by apikey %s: %s", apikey, e)
             return None
 
+    async def get_user_model_by_apikey(self, apikey: str) -> Optional[User]:
+        """
+        Get User model by API key. Returns the ORM User model directly for auth
+        middleware use (e.g. download URL when session is not present).
+
+        Args:
+            apikey: API key of the user
+
+        Returns:
+            User instance or None if not found
+        """
+        try:
+            query = select(User).where(User.apikey == apikey)
+            result = await self.session.execute(query)
+            return result.scalar_one_or_none()
+        except Exception:
+            self.logger.exception("Failed to fetch user by apikey")
+            return None
+
     async def get_contributions_for_user(self, user_id: UUID) -> int:
         """
         Get contribution count for a user from user_contributions table.
@@ -470,6 +489,52 @@ class UserService:
             self.logger.exception(
                 "Error checking user belongs to dataset organization by apikey: apikey=%s, dataset_id=%s, error=%s",
                 apikey,
+                dataset_id,
+                e,
+            )
+            return False
+
+    async def check_user_belongs_to_dataset_organization_by_id(
+        self, user_id: UUID, dataset_id: UUID
+    ) -> bool:
+        """
+        Check if user (by user ID) belongs to the same organization as the dataset.
+
+        Args:
+            user_id: User ID to check
+            dataset_id: Dataset ID to check
+
+        Returns:
+            True if user's organization matches dataset's organization, False otherwise or if user/dataset not found
+        """
+        try:
+            self.logger.info(
+                "Checking if user %s belongs to dataset %s organization",
+                user_id,
+                dataset_id,
+            )
+            query = select(User).where(User.id == user_id)
+            result = await self.session.execute(query)
+            user: Optional[User] = result.scalar_one_or_none()
+            if user is None:
+                self.logger.info("User not found for user_id: %s", user_id)
+                return False
+            organization_id = user.organization
+            belongs = await self.check_dataset_belongs_to_organization(
+                dataset_id, organization_id
+            )
+            self.logger.info(
+                "User belongs to dataset organization check result: user_id=%s, dataset_id=%s, user_org=%s, result=%s",
+                user_id,
+                dataset_id,
+                organization_id,
+                belongs,
+            )
+            return belongs
+        except Exception as e:
+            self.logger.exception(
+                "Error checking user belongs to dataset organization by id: user_id=%s, dataset_id=%s, error=%s",
+                user_id,
                 dataset_id,
                 e,
             )

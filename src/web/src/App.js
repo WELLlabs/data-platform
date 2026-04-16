@@ -27,6 +27,7 @@ import FAQ from "./pages/FAQ";
 import Terms from "./pages/Terms";
 import Datasets from "./pages/Datasets";
 import Search from "./pages/Search";
+import Approvals from "./pages/Approvals";
 
 const ApiDocs = () => (
   <div className="container py-5">
@@ -54,6 +55,7 @@ function App() {
             <Route path="/verify-email" element={<VerifyEmail />} />
             <Route path="/orgsearch" element={<OrgSearch />} />
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/approvals" element={<Approvals />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/createorg" element={<CreateOrg />} />
             <Route path="/createorgsuccess" element={<CreateOrgSuccess />} />

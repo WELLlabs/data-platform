@@ -81,6 +81,13 @@ function SiteNavbar() {
                   Profile
                 </Link>
               </NavItem>
+              {Number(user?.role) > 0 && (
+                <NavItem>
+                  <Link className="nav-link" to="/approvals" onClick={() => setIsOpen(false)}>
+                    Approvals
+                  </Link>
+                </NavItem>
+              )}
               <NavItem className="ms-2">
                 <button 
                   className="btn btn-outline-light" 

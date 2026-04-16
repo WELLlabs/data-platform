@@ -74,8 +74,9 @@ class File(Base):
         nullable=True,
     )
     file_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # VARCHAR(50): upload pipeline allows longer format labels (e.g. "application/vnd.geo+json").
     file_format: Mapped[Optional[str]] = mapped_column(
-        String(length=20),
+        String(length=50),
         nullable=True,
     )
     # Moved fields from datasets table

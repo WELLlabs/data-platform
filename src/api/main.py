@@ -15,7 +15,7 @@ from routers.upload import router as upload_router
 from routers.user import router as user_router
 from starlette.responses import JSONResponse
 
-__version__ = "0.5.3"
+__version__ = "1.0.0"
 
 
 def _get_log_level() -> int:

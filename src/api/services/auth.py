@@ -20,7 +20,11 @@ from services.organization import OrganizationService, get_organization_service
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from tasks.email import send_forgot_password_email, send_verify_email
+from tasks.email import (
+    send_forgot_password_email,
+    send_user_approval_request,
+    send_verify_email,
+)
 from utils.security import generate_session_token, generate_unique_api_key, sanitize_input
 
 
@@ -44,6 +48,11 @@ class RedisStrategy:
 
 async def get_redis() -> Redis:
     return Redis.from_url(settings.REDIS_URL, decode_responses=True)
+
+
+async def get_upload_jobs_redis() -> Redis:
+    """Redis client for upload job keys (UPLOAD_JOBS_BACKEND). Not session/cache REDIS_URL."""
+    return Redis.from_url(settings.UPLOAD_JOBS_BACKEND, decode_responses=True)
 
 
 class AuthService:
@@ -277,9 +286,48 @@ class AuthService:
                         email_error,
                         exc_info=True,
                     )
+
+                # Notify organization admins that a new user approval is pending
+                try:
+                    admin_email_result = await self.user_db.session.execute(
+                        select(User.email).where(
+                            User.organization == user.organization,
+                            User.role == 1,
+                            User.id != user.id,
+                        )
+                    )
+                    admin_emails = admin_email_result.scalars().all()
+
+                    if not admin_emails:
+                        self.logger.info(
+                            "No organization admins found for approval notification "
+                            "for user_id=%s org_id=%s",
+                            user.id,
+                            user.organization,
+                        )
+                    else:
+                        for admin_email in admin_emails:
+                            send_user_approval_request.apply_async(
+                                args=[admin_email, user.full_name],
+                                queue="email",
+                            )
+                        self.logger.info(
+                            "Queued user approval request emails for user_id=%s to %d admins",
+                            user.id,
+                            len(admin_emails),
+                        )
+                except Exception as approval_email_error:
+                    self.logger.error(
+                        "Failed to queue user approval request emails for user_id=%s: %s. "
+                        "User was created successfully but admin notifications may not be sent.",
+                        user.id,
+                        approval_email_error,
+                        exc_info=True,
+                    )
             else:
                 self.logger.info(
-                    "Skipping verification email for user_id=%s (already verified as organization creator)",
+                    "Skipping verification and user approval request emails for user_id=%s "
+                    "(already verified as organization creator)",
                     user.id,
                 )
 

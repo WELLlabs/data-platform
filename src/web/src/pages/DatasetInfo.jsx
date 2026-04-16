@@ -2,12 +2,15 @@ import React, { useCallback, useEffect, useReducer, useRef, useState } from "rea
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import {
+  approve_dataset_endpoint,
   dataset_info_endpoint,
   download_url_endpoint,
   delete_dataset_endpoint,
   delete_file_endpoint,
   edit_dataset_endpoint,
   edit_file_endpoint,
+  organization_by_id_endpoint,
+  transfer_dataset_endpoint,
 } from "../api/endpoints";
 
 const initialDatasetEdit = {
@@ -110,13 +113,22 @@ function DatasetInfo() {
     delete_dataset: false,
     delete_file: false,
     add_file: false,
+    approval: false,
+    transfer: false,
   });
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [transferMembers, setTransferMembers] = useState([]);
+  const [transferSelectedUserId, setTransferSelectedUserId] = useState("");
+  const [transferFetchError, setTransferFetchError] = useState("");
+  const [transferLoadingOrg, setTransferLoadingOrg] = useState(false);
+  const [transferSubmitting, setTransferSubmitting] = useState(false);
   const [downloadingFileId, setDownloadingFileId] = useState(null);
   const [downloadError, setDownloadError] = useState("");
   const [showDatasetDeleteModal, setShowDatasetDeleteModal] = useState(false);
   const [showFileDeleteModal, setShowFileDeleteModal] = useState(false);
   const [fileToDelete, setFileToDelete] = useState(null);
   const [deletingDataset, setDeletingDataset] = useState(false);
+  const [approvingDataset, setApprovingDataset] = useState(false);
   const [deletingFileId, setDeletingFileId] = useState(null);
   const [deleteError, setDeleteError] = useState("");
 
@@ -129,6 +141,9 @@ function DatasetInfo() {
   const editDatasetModalRef = useRef(null);
   const editDatasetTitleInputRef = useRef(null);
   const previousActiveElementRef = useRef(null);
+  const transferModalDialogRef = useRef(null);
+  const transferMemberSelectRef = useRef(null);
+  const transferPreviousActiveElementRef = useRef(null);
 
   // File edit modal state
   const [fileEdit, dispatchFileEdit] = useReducer(
@@ -181,6 +196,8 @@ function DatasetInfo() {
           delete_dataset: false,
           delete_file: false,
           add_file: false,
+          approval: false,
+          transfer: false,
         }
       );
     } catch (err) {
@@ -405,6 +422,141 @@ function DatasetInfo() {
     }
   };
 
+  const handleApproveDataset = async () => {
+    if (!dataset?.dataset_id) {
+      setDeleteError("Missing dataset information.");
+      return;
+    }
+
+    const isConfirmed = window.confirm(
+      "Are you sure you want to approve this dataset?"
+    );
+    if (!isConfirmed) return;
+
+    setApprovingDataset(true);
+    setDeleteError("");
+
+    try {
+      const response = await fetch(approve_dataset_endpoint(dataset.dataset_id), {
+        method: "PUT",
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        let errorMessage = "Failed to approve dataset";
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.detail || errorData.message || errorMessage;
+        } catch {
+          errorMessage = response.statusText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+
+      window.location.reload();
+    } catch (err) {
+      console.error("Error approving dataset:", err);
+      setDeleteError(err.message || "Failed to approve dataset. Please try again.");
+      setTimeout(() => {
+        setDeleteError("");
+      }, 5000);
+    } finally {
+      setApprovingDataset(false);
+    }
+  };
+
+  const roleLabelForTransfer = (role) => {
+    if (role === 0) return "Member";
+    if (role === 1) return "Admin";
+    if (role === 2) return "Reviewer";
+    return "Member";
+  };
+
+  const handleOpenTransferModal = async () => {
+    if (!dataset?.organization) {
+      setDeleteError("Missing organization for this dataset.");
+      return;
+    }
+    setShowTransferModal(true);
+    setTransferMembers([]);
+    setTransferSelectedUserId("");
+    setTransferFetchError("");
+    setTransferLoadingOrg(true);
+    try {
+      const params = new URLSearchParams();
+      if (user?.apikey) params.set("apikey", user.apikey);
+      const qs = params.toString();
+      const base = organization_by_id_endpoint(dataset.organization);
+      const url = qs ? `${base}?${qs}` : base;
+      const response = await fetch(url, { credentials: "include" });
+      if (!response.ok) {
+        let msg = "Failed to load organization members.";
+        try {
+          const errBody = await response.json();
+          if (errBody?.detail) msg = errBody.detail;
+        } catch {
+          msg = response.statusText || msg;
+        }
+        setTransferFetchError(msg);
+        return;
+      }
+      const orgData = await response.json();
+      const members = Array.isArray(orgData.members) ? orgData.members : [];
+      setTransferMembers(members);
+    } catch (err) {
+      console.error("Error loading organization:", err);
+      setTransferFetchError(err.message || "Failed to load organization members.");
+    } finally {
+      setTransferLoadingOrg(false);
+    }
+  };
+
+  const handleCloseTransferModal = useCallback(() => {
+    setShowTransferModal(false);
+    setTransferMembers([]);
+    setTransferSelectedUserId("");
+    setTransferFetchError("");
+  }, []);
+
+  const handleSubmitTransfer = async () => {
+    if (!dataset?.dataset_id || !transferSelectedUserId) {
+      setTransferFetchError("Please select a member to transfer to.");
+      return;
+    }
+    setTransferSubmitting(true);
+    setTransferFetchError("");
+    try {
+      const params = new URLSearchParams({
+        dataset_id: dataset.dataset_id,
+        user_id: transferSelectedUserId,
+      });
+      const response = await fetch(
+        `${transfer_dataset_endpoint}?${params.toString()}`,
+        {
+          method: "POST",
+          credentials: "include",
+        }
+      );
+      if (!response.ok) {
+        let errorMessage = "Failed to transfer dataset.";
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.detail || errorData.message || errorMessage;
+        } catch {
+          errorMessage = response.statusText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+      handleCloseTransferModal();
+      await fetchDatasetInfo();
+    } catch (err) {
+      console.error("Error transferring dataset:", err);
+      setTransferFetchError(err.message || "Transfer failed. Please try again.");
+    } finally {
+      setTransferSubmitting(false);
+    }
+  };
+
   const handleDeleteFile = async () => {
     if (!user?.apikey || !fileToDelete?.file_id) {
       setDeleteError("Missing user authentication or file information.");
@@ -516,6 +668,61 @@ function DatasetInfo() {
       previousActiveElementRef.current?.focus?.();
     };
   }, [showDatasetEditModal]);
+
+  // Transfer modal: focus management (select when ready, else close button)
+  useEffect(() => {
+    if (!showTransferModal) return;
+    const timer = requestAnimationFrame(() => {
+      const canFocusSelect =
+        !transferLoadingOrg &&
+        transferMembers.length > 0 &&
+        transferMemberSelectRef.current;
+      if (canFocusSelect) {
+        transferMemberSelectRef.current?.focus();
+      } else {
+        const closeBtn =
+          transferModalDialogRef.current?.querySelector(".btn-close");
+        closeBtn?.focus();
+      }
+    });
+    return () => cancelAnimationFrame(timer);
+  }, [showTransferModal, transferLoadingOrg, transferMembers.length]);
+
+  // Transfer modal: Escape + Tab focus trap (aligned with dataset edit modal)
+  useEffect(() => {
+    if (!showTransferModal) return;
+    transferPreviousActiveElementRef.current = document.activeElement;
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        handleCloseTransferModal();
+        return;
+      }
+      if (e.key !== "Tab" || !transferModalDialogRef.current) return;
+      const focusableSelector =
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+      const focusables = [
+        ...transferModalDialogRef.current.querySelectorAll(focusableSelector),
+      ].filter((el) => el.offsetParent !== null);
+      const len = focusables.length;
+      if (len === 0) return;
+      const currentIndex = focusables.indexOf(document.activeElement);
+      if (e.shiftKey) {
+        if (currentIndex <= 0) {
+          e.preventDefault();
+          focusables[len - 1].focus();
+        }
+      } else if (currentIndex === -1 || currentIndex >= len - 1) {
+        e.preventDefault();
+        focusables[0].focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      transferPreviousActiveElementRef.current?.focus?.();
+    };
+  }, [showTransferModal, handleCloseTransferModal]);
 
   const processTagsForSubmit = (tagsText) => {
     if (!tagsText || !String(tagsText).trim()) return [];
@@ -708,8 +915,57 @@ function DatasetInfo() {
   return (
     <div className="container py-5">
       <div className="d-flex justify-content-between align-items-center mb-4">
-        <h2 className="mb-0">Dataset Information</h2>
+        <div className="d-flex align-items-center gap-2 flex-wrap">
+          <h2 className="mb-0">Dataset Information</h2>
+          <span
+            className={`badge ${dataset.private ? "text-bg-secondary" : "text-bg-success"}`}
+            aria-label={
+              dataset.private ? "This dataset is private" : "This dataset is public"
+            }
+          >
+            {dataset.private ? "Private" : "Public"}
+          </span>
+        </div>
         <div className="d-flex gap-2">
+          {privileges.transfer && (
+            <button
+              type="button"
+              className="btn text-white"
+              style={{ backgroundColor: "#0d6efd", borderColor: "#0d6efd" }}
+              onMouseEnter={(event) => {
+                event.currentTarget.style.backgroundColor = "#0b5ed7";
+                event.currentTarget.style.borderColor = "#0b5ed7";
+              }}
+              onMouseLeave={(event) => {
+                event.currentTarget.style.backgroundColor = "#0d6efd";
+                event.currentTarget.style.borderColor = "#0d6efd";
+              }}
+              onClick={handleOpenTransferModal}
+              aria-label="Transfer dataset ownership"
+            >
+              Transfer
+            </button>
+          )}
+          {privileges.approval && (
+            <button
+              type="button"
+              className="btn text-white"
+              style={{ backgroundColor: "#0d6efd", borderColor: "#0d6efd" }}
+              onMouseEnter={(event) => {
+                event.currentTarget.style.backgroundColor = "#0b5ed7";
+                event.currentTarget.style.borderColor = "#0b5ed7";
+              }}
+              onMouseLeave={(event) => {
+                event.currentTarget.style.backgroundColor = "#0d6efd";
+                event.currentTarget.style.borderColor = "#0d6efd";
+              }}
+              onClick={handleApproveDataset}
+              disabled={approvingDataset}
+              aria-label="Approve dataset"
+            >
+              {approvingDataset ? "Approving..." : "Approve"}
+            </button>
+          )}
           {privileges.edit && (
             <button
               type="button"
@@ -743,6 +999,145 @@ function DatasetInfo() {
             onClick={() => setDeleteError("")}
             aria-label="Close"
           ></button>
+        </div>
+      )}
+
+      {/* Transfer dataset modal */}
+      {showTransferModal && (
+        <div
+          className="modal show d-block"
+          tabIndex="-1"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="transfer-dataset-modal-title"
+          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+        >
+          <div
+            className="modal-dialog modal-dialog-scrollable"
+            ref={transferModalDialogRef}
+          >
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 id="transfer-dataset-modal-title" className="modal-title">
+                  Transfer dataset
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={handleCloseTransferModal}
+                  aria-label="Close transfer dialog"
+                />
+              </div>
+              <div className="modal-body">
+                {transferLoadingOrg && (
+                  <div className="text-center py-3" role="status">
+                    <div className="spinner-border spinner-border-sm" aria-hidden="true" />
+                    <span className="visually-hidden">Loading members</span>
+                  </div>
+                )}
+                {transferFetchError && (
+                  <div className="alert alert-danger" role="alert">
+                    {transferFetchError}
+                  </div>
+                )}
+                {!transferLoadingOrg && !transferFetchError && transferMembers.length === 0 && (
+                  <p className="text-muted mb-0">No members found for this organization.</p>
+                )}
+                {!transferLoadingOrg && transferMembers.length > 0 && (
+                  <>
+                    <div className="row mb-3 align-items-center">
+                      <div className="col-sm-4">
+                        <label htmlFor="transfer-member-select" className="col-form-label">
+                          Transfer to:{" "}
+                        </label>
+                      </div>
+                      <div className="col-sm-8">
+                        <select
+                          id="transfer-member-select"
+                          ref={transferMemberSelectRef}
+                          className="form-select"
+                          value={transferSelectedUserId}
+                          onChange={(e) => setTransferSelectedUserId(e.target.value)}
+                          aria-label="Select member to transfer dataset to"
+                        >
+                          <option value="">Select a member…</option>
+                          {transferMembers.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.full_name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    {(() => {
+                      const sel = transferMembers.find(
+                        (m) =>
+                          String(m.id) === String(transferSelectedUserId)
+                      );
+                      return (
+                        <>
+                          <div className="row mb-2">
+                            <div className="col-sm-4">
+                              <span className="fw-semibold">Name: </span>
+                            </div>
+                            <div className="col-sm-8">
+                              {sel ? sel.full_name : "—"}
+                            </div>
+                          </div>
+                          <div className="row mb-2">
+                            <div className="col-sm-4">
+                              <span className="fw-semibold">Email: </span>
+                            </div>
+                            <div className="col-sm-8">{sel ? sel.email : "—"}</div>
+                          </div>
+                          <div className="row mb-2">
+                            <div className="col-sm-4">
+                              <span className="fw-semibold">Designation: </span>
+                            </div>
+                            <div className="col-sm-8">
+                              {sel?.designation != null && sel.designation !== ""
+                                ? sel.designation
+                                : "—"}
+                            </div>
+                          </div>
+                          <div className="row mb-4">
+                            <div className="col-sm-4">
+                              <span className="fw-semibold">Role: </span>
+                            </div>
+                            <div className="col-sm-8">
+                              {sel ? roleLabelForTransfer(sel.role) : "—"}
+                            </div>
+                          </div>
+                        </>
+                      );
+                    })()}
+                    <div className="mt-4 pt-2">
+                      <button
+                        type="button"
+                        className="btn text-white"
+                        style={{ backgroundColor: "#0d6efd", borderColor: "#0d6efd" }}
+                        onMouseEnter={(event) => {
+                          event.currentTarget.style.backgroundColor = "#0b5ed7";
+                          event.currentTarget.style.borderColor = "#0b5ed7";
+                        }}
+                        onMouseLeave={(event) => {
+                          event.currentTarget.style.backgroundColor = "#0d6efd";
+                          event.currentTarget.style.borderColor = "#0d6efd";
+                        }}
+                        onClick={handleSubmitTransfer}
+                        disabled={
+                          transferSubmitting || !transferSelectedUserId
+                        }
+                        aria-label="Submit dataset transfer"
+                      >
+                        {transferSubmitting ? "Submitting…" : "Submit"}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1322,7 +1717,7 @@ function DatasetInfo() {
             <div className="col-md-9">
               {dataset.organization ? (
                 <Link
-                  to={`/organization?id=${encodeURIComponent(dataset.organization)}`}
+                  to={`/organisation?id=${encodeURIComponent(dataset.organization)}`}
                 >
                   {dataset.organization_name || dataset.organization || "N/A"}
                 </Link>
@@ -1358,7 +1753,7 @@ function DatasetInfo() {
               {dataset.approved ? (
                 <span className="badge bg-success">Yes</span>
               ) : (
-                <span className="badge bg-warning">No</span>
+                <span className="badge bg-warning text-dark">No</span>
               )}
             </div>
           </div>
@@ -1368,7 +1763,11 @@ function DatasetInfo() {
               <div className="col-md-3">
                 <strong>Approved By:</strong>
               </div>
-              <div className="col-md-9">{dataset.approved_by}</div>
+              <div className="col-md-9">
+                <Link to={`/profile?id=${encodeURIComponent(dataset.approved_by)}`}>
+                  {dataset.approver_name || dataset.approved_by}
+                </Link>
+              </div>
             </div>
           )}
         </div>

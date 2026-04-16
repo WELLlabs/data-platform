@@ -3,7 +3,10 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import {
     upload_url_endpoint,
+    create_upload_job_endpoint,
+    complete_upload_job_endpoint,
     create_dataset_endpoint,
+    add_files_url_endpoint,
     organization_by_id_endpoint,
 } from "../api/endpoints";
 import HelpTooltip from "../components/HelpTooltip";
@@ -18,6 +21,7 @@ function CreateDataset() {
     const [submitting, setSubmitting] = useState(false);
     const [progress, setProgress] = useState(0);
     const [error, setError] = useState("");
+    const [success, setSuccess] = useState(false);
 
     // Form state
     const [title, setTitle] = useState("");
@@ -155,6 +159,7 @@ function CreateDataset() {
     const onSubmit = async (e) => {
         e.preventDefault();
         setError("");
+        setSuccess(false);
         if (!user) {
             navigate("/signin");
             return;
@@ -180,12 +185,68 @@ function CreateDataset() {
             setSubmitting(true);
             setProgress(0);
 
-            // 1) Get upload URL for selected filename
+            // 1) Create upload job
+            const uploadJobResp = await fetch(create_upload_job_endpoint, {
+                method: "POST",
+                credentials: "include",
+            });
+            if (!uploadJobResp.ok) {
+                const txt = await uploadJobResp.text();
+                throw new Error(`Failed to create upload job: ${txt}`);
+            }
+            const uploadJobData = await uploadJobResp.json();
+            const jobId = uploadJobData.job_id;
+            if (!jobId) {
+                throw new Error("Upload job ID missing in response.");
+            }
+
+            // 2) Stage dataset metadata using job_id
+            const datasetForm = new FormData();
+            datasetForm.append("title", constrained(title, 200));
+            datasetForm.append(
+                "description",
+                constrained(datasetDescription, 2000)
+            );
+            datasetForm.append(
+                "private",
+                orgPrivate && isPrivate ? "true" : "false"
+            );
+            datasetForm.append("job_id", jobId);
+
+            // Process tags: split by comma, strip whitespace, replace internal spaces with hyphens, send as array
+            if (tags && tags.trim()) {
+                const tagsArray = tags
+                    .split(",")
+                    .map((tag) => tag.trim())
+                    .filter((tag) => tag.length > 0)
+                    .map((tag) => tag.replace(/\s+/g, "-"));
+                tagsArray.forEach((tag) => {
+                    datasetForm.append("tags", tag);
+                });
+            }
+
+            const createResp = await fetch(create_dataset_endpoint, {
+                method: "POST",
+                body: datasetForm,
+                credentials: "include",
+            });
+            if (!createResp.ok) {
+                const txt = await createResp.text();
+                throw new Error(`Create dataset failed: ${txt}`);
+            }
+            const datasetResult = await createResp.json();
+            const datasetId = datasetResult.dataset_id;
+            const datasetJobId = datasetResult.job_id || jobId;
+            if (!datasetId) {
+                throw new Error("Dataset ID not found in response.");
+            }
+
+            // 3) Get upload URL for selected filename
             const filenameOnly = file.name; // do not include path
             const uploadResp = await fetch(
-                `${upload_url_endpoint}?filename=${encodeURIComponent(
-                    filenameOnly
-                )}`,
+                `${upload_url_endpoint}?job_id=${encodeURIComponent(
+                    datasetJobId
+                )}&filename=${encodeURIComponent(filenameOnly)}`,
                 { credentials: "include" }
             );
             if (!uploadResp.ok) {
@@ -194,9 +255,16 @@ function CreateDataset() {
             }
             const uploadData = await uploadResp.json();
             const uploadUrl =
-                uploadData.upload_url || uploadData.url || uploadData.uploadUrl;
+                uploadData.presigned_upload_url ||
+                uploadData.upload_url ||
+                uploadData.url ||
+                uploadData.uploadUrl;
+            const fileId = uploadData.file_id;
             if (!uploadUrl) {
                 throw new Error("Upload URL missing in response.");
+            }
+            if (!fileId) {
+                throw new Error("File ID missing in response.");
             }
 
             // Use the content_type from the response (matches what was used to sign the presigned URL)
@@ -228,65 +296,59 @@ function CreateDataset() {
                 xhr.send(file);
             });
 
-            // 3) Call create_dataset endpoint with FormData
-            const userId = user.id;
-            const organizationId = user.organization;
-            const fileKey = `${userId}/${filenameOnly}`;
-
-            const form = new FormData();
-            form.append("title", constrained(title, 200));
-            form.append("creator", userId);
-            form.append(
-                "dataset_description",
-                constrained(datasetDescription, 2000)
+            // 4) Stage file metadata using job_id + file_id
+            const addFileForm = new FormData();
+            addFileForm.append("job_id", datasetJobId);
+            addFileForm.append("file_id", fileId);
+            addFileForm.append("file_title", constrained(fileTitle, 200));
+            addFileForm.append(
+                "file_description",
+                constrained(fileDescription, 1000)
             );
-            // Process tags: split by comma, strip whitespace, replace internal spaces with hyphens, send as array
-            if (tags && tags.trim()) {
-                const tagsArray = tags
-                    .split(",")
-                    .map(tag => tag.trim())
-                    .filter(tag => tag.length > 0)
-                    .map(tag => tag.replace(/\s+/g, "-")); // Replace one or more spaces with single hyphen
-                tagsArray.forEach(tag => {
-                    form.append("tags", tag);
-                });
+            addFileForm.append("file_format", constrained(fileFormat, 20));
+            addFileForm.append("dataset_id", datasetId);
+            if (groundtruthed) addFileForm.append("groundtruthed", "true");
+            addFileForm.append("provenance", constrained(provenance, 125));
+            addFileForm.append("source", constrained(source, 1000));
+            addFileForm.append("cite_as", constrained(citeAs, 1500));
+            addFileForm.append("permissions", constrained(permissions, 1000));
+            addFileForm.append("duration", duration.toString());
+            if (value) addFileForm.append("value", value);
+            if (temporalFrom) addFileForm.append("temporal_from", temporalFrom);
+            if (temporalTo) addFileForm.append("temporal_to", temporalTo);
+            if (geography) {
+                addFileForm.append("geography", constrained(geography, 2000));
             }
-            form.append("organization", organizationId);
-            form.append("private", orgPrivate && isPrivate ? "true" : "false");
 
-            form.append("filename", constrained(fileTitle, 200));
-            form.append("file_key", fileKey);
-            form.append("file_description", constrained(fileDescription, 1000));
-            form.append("file_format", constrained(fileFormat, 20));
-            form.append("provenance", constrained(provenance, 125));
-            form.append("source", constrained(source, 1000));
-            form.append("cite_as", constrained(citeAs, 1500));
-            if (groundtruthed) form.append("groundtruthed", "true");
-            form.append("permissions", constrained(permissions, 1000));
-            form.append("duration", duration.toString());
-            if (value) form.append("value", value);
-            if (temporalFrom) form.append("temporal_from", temporalFrom);
-            if (temporalTo) form.append("temporal_to", temporalTo);
-            if (geography) form.append("geography", constrained(geography, 2000));
-
-            const createResp = await fetch(create_dataset_endpoint, {
+            const addFileResp = await fetch(add_files_url_endpoint, {
                 method: "POST",
-                body: form,
+                body: addFileForm,
                 credentials: "include",
             });
-            if (!createResp.ok) {
-                const txt = await createResp.text();
-                throw new Error(`Create dataset failed: ${txt}`);
+            if (!addFileResp.ok) {
+                const txt = await addFileResp.text();
+                throw new Error(`Failed to add file: ${txt}`);
             }
-            const result = await createResp.json();
+            await addFileResp.json();
 
-            // 4) Redirect to dataset-info with dataset_id
-            const datasetId = result.dataset?.dataset_id || result.dataset_id;
-            if (datasetId) {
-                navigate(`/dataset-info?dataset_id=${datasetId}`);
-            } else {
-                throw new Error("Dataset ID not found in response");
+            // 5) Complete upload job
+            const completeResp = await fetch(
+                `${complete_upload_job_endpoint}?job_id=${encodeURIComponent(
+                    datasetJobId
+                )}`,
+                {
+                    method: "POST",
+                    credentials: "include",
+                }
+            );
+            if (!completeResp.ok) {
+                const txt = await completeResp.text();
+                throw new Error(`Failed to complete upload job: ${txt}`);
             }
+            await completeResp.json();
+
+            setProgress(100);
+            setSuccess(true);
         } catch (err) {
             console.error(err);
             setError(err.message || "Unexpected error");
@@ -306,6 +368,33 @@ function CreateDataset() {
     }
 
     if (!user) return null;
+
+    if (success) {
+        return (
+            <div className="container py-5 min-vh-100 d-flex align-items-center justify-content-center">
+                <div className="text-center">
+                    <p className="fs-4 mb-4">
+                        Dataset upload is in progress, it will soon be
+                        available in your dashboard.
+                    </p>
+                    <button
+                        type="button"
+                        className="btn text-white"
+                        style={{ backgroundColor: "#0d6efd" }}
+                        onMouseEnter={(e) => {
+                            e.currentTarget.style.backgroundColor = "#0b5ed7";
+                        }}
+                        onMouseLeave={(e) => {
+                            e.currentTarget.style.backgroundColor = "#0d6efd";
+                        }}
+                        onClick={() => navigate("/dashboard")}
+                    >
+                        Dashboard
+                    </button>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="container py-4">

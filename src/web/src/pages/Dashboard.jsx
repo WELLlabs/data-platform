@@ -52,7 +52,7 @@ function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigate]);
 
-  // Second useEffect: Fetch datasets when user.id is available, page changes, or apikey changes
+  // Second useEffect: Fetch datasets when user.id is available or page changes
   useEffect(() => {
     const fetchUserDatasets = async (userId) => {
       try {
@@ -65,11 +65,6 @@ function Dashboard() {
           limit: limit.toString(),
           offset: offset.toString(),
         });
-
-        // If user is signed in, add apikey
-        if (isAuthenticated && user?.apikey) {
-          params.append("apikey", user.apikey);
-        }
 
         const response = await fetch(
           `${user_datasets_endpoint}?${params.toString()}`,
@@ -114,7 +109,7 @@ function Dashboard() {
       }
       fetchUserDatasets(user.id);
     }
-  }, [user?.id, currentPage, isAuthenticated, user?.apikey]);
+  }, [user?.id, currentPage]);
 
   // Third useEffect: Refresh user data when window regains focus
   // This ensures user verification status is updated after email verification
@@ -315,11 +310,21 @@ function Dashboard() {
                     </div>
                     <div className="mb-2">
                       <small className="text-muted">
-                        <strong>Private:</strong>{" "}
+                        <strong>Availability:</strong>{" "}
                         {dataset.private ? (
                           <span className="badge bg-warning">Private</span>
                         ) : (
                           <span className="badge bg-success">Public</span>
+                        )}
+                      </small>
+                    </div>
+                    <div className="mb-2">
+                      <small className="text-muted">
+                        <strong>Approved:</strong>{" "}
+                        {dataset.approved === true ? (
+                          <span className="badge bg-success">Yes</span>
+                        ) : (
+                          <span className="badge bg-secondary">No</span>
                         )}
                       </small>
                     </div>

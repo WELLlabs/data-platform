@@ -10,7 +10,7 @@ from urllib.parse import urlparse, urlunparse
 from kombu import Exchange, Queue
 
 from celery import Celery
-from core.config import settings
+from core.config import parse_celery_accept_content, settings
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,9 @@ celery_app.conf.task_routes = {
 }
 
 # Apply Celery settings from environment variables
-celery_app.conf.accept_content = settings.CELERY_ACCEPT_CONTENT
+celery_app.conf.accept_content = parse_celery_accept_content(
+    settings.CELERY_ACCEPT_CONTENT
+)
 celery_app.conf.task_serializer = settings.CELERY_TASK_SERIALIZER
 celery_app.conf.result_serializer = settings.CELERY_RESULT_SERIALIZER
 celery_app.conf.timezone = settings.CELERY_TIMEZONE

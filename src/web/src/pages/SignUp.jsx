@@ -329,6 +329,7 @@ function SignUp() {
                                     )}
                                 </div>
 
+                                {/*
                                 <div className="mb-3">
                                     <label className="form-label d-block">
                                         Are you a student?{" "}
@@ -375,6 +376,7 @@ function SignUp() {
                                         </div>
                                     </div>
                                 </div>
+                                */}
 
                                 <div className="mb-3">
                                     <label

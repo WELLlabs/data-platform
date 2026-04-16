@@ -1,6 +1,26 @@
-from typing import List
+import json
+from pathlib import Path
+from typing import Any, List
 
-from pydantic_settings import BaseSettings
+from pydantic import AliasChoices, Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Repo root .env: src/api/core/config.py -> parent^4 = repository root (not src/)
+_REPO_ROOT_ENV = Path(__file__).resolve().parent.parent.parent.parent / ".env"
+
+
+def parse_celery_accept_content(raw: str) -> List[str]:
+    """Parse CELERY_ACCEPT_CONTENT from .env (str) — tolerates CRLF and malformed `[json]`."""
+    s = raw.replace("\r", "").strip()
+    if s == "[json]":
+        return ["json"]
+    try:
+        parsed = json.loads(s)
+        if isinstance(parsed, list):
+            return [str(x) for x in parsed]
+        return ["json"]
+    except json.JSONDecodeError:
+        return ["json"]
 
 
 class Settings(BaseSettings):
@@ -24,9 +44,21 @@ class Settings(BaseSettings):
     EMAIL_SENDER: str
     FORGOT_PASSWORD_TEMPLATE_ID: int
     VERIFY_EMAIL_TEMPLATE_ID: int
+    UPLOAD_APPROVAL_TEMPLATE_ID: int
+    UPLOAD_APPROVAL_RESPONSE_TEMPLATE_ID: int
+    USER_APPROVAL_REQUEST_TEMPLATE_ID: int
+    USER_APPROVAL_RESPONSE_TEMPLATE_ID: int
+    DATASET_TRANSFER_TEMPLATE_ID: int
 
-    # Celery configuration
-    CELERY_ACCEPT_CONTENT: List[str] = ["json"]
+    # Upload jobs (dedicated Redis DB — not session REDIS_URL)
+    UPLOAD_JOBS_BACKEND: str = Field(
+        ...,
+        validation_alias=AliasChoices("UPLOAD_JOBS_BACKEND", "UPLOAD_JOBS_BACKED"),
+    )
+    UPLOAD_JOB_CACHE_AGE_SECONDS: int = 86400
+
+    # Celery configuration (str avoids pydantic-settings json.loads on List before validators)
+    CELERY_ACCEPT_CONTENT: str = '["json"]'
     CELERY_TASK_SERIALIZER: str = "json"
     CELERY_RESULT_SERIALIZER: str = "json"
     CELERY_TIMEZONE: str = "UTC"
@@ -46,9 +78,24 @@ class Settings(BaseSettings):
     # Dataset info cache (Redis) TTL in seconds; default 300 (5 minutes) if not set
     DATASET_INFO_CACHE_AGE_SECONDS: int = 300
 
-    class Config:
-        env_file = ".env"
-        extra = "ignore"  # ignores unexpected variables
+    model_config = SettingsConfigDict(
+        env_file=(
+            str(_REPO_ROOT_ENV) if _REPO_ROOT_ENV.is_file() else ".env",
+        ),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_cr_from_env_values(cls, data: Any) -> Any:
+        """CRLF .env files can leave '\\r' on values (breaks bool parsing)."""
+        if not isinstance(data, dict):
+            return data
+        return {
+            k: v.replace("\r", "") if isinstance(v, str) else v
+            for k, v in data.items()
+        }
 
 
 settings = Settings()  # type: ignore[call-arg]

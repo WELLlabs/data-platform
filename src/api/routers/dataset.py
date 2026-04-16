@@ -5,12 +5,13 @@ Dataset router for handling dataset creation.
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 from redis.asyncio import Redis
+from redis.exceptions import ResponseError
 from core.config import settings
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.encoders import jsonable_encoder
@@ -21,8 +22,8 @@ from models.organization import Organization
 from models.user import User
 from models.user_contribution import UserContribution
 from routers.upload import get_current_active_user
-from schemas.dataset import DatasetCreate, EditDatasetRequest
-from services.auth import AuthService, RedisStrategy, get_auth_service, get_redis
+from schemas.dataset import EditDatasetRequest
+from services.auth import AuthService, RedisStrategy, get_auth_service, get_redis, get_upload_jobs_redis
 from services.dataset import DatasetService, get_dataset_service
 from services.organization import OrganizationService, get_organization_service
 from services.user import UserService, get_user_service
@@ -95,6 +96,8 @@ async def get_current_active_user_optional(
 
 async def _compute_privileges(
     dataset_id: UUID,
+    dataset_organization: str,
+    is_approved: bool,
     files_count: int,
     current_user: Optional[User],
     apikey: Optional[str],
@@ -103,13 +106,15 @@ async def _compute_privileges(
 ) -> Dict[str, bool]:
     """
     Compute privileges for dataset_info response.
-    Returns dict with keys: edit, delete_dataset, delete_file, add_file.
+    Returns dict with keys: edit, delete_dataset, delete_file, add_file, approval, transfer.
     """
     default_privileges = {
         "edit": False,
         "delete_dataset": False,
         "delete_file": False,
         "add_file": False,
+        "approval": False,
+        "transfer": False,
     }
     if current_user is None and not (apikey and apikey.strip()):
         return default_privileges
@@ -128,12 +133,106 @@ async def _compute_privileges(
     has_perm = await dataset_service.check_dataset_permission(
         user_id, apikey_val, dataset_id
     )
+    has_approval = False
+    if not is_approved:
+        if user_id is not None:
+            belongs_to_org = await user_service.check_user_belongs_to_organization_by_id(
+                user_id, dataset_organization
+            )
+            has_high_role = await user_service.check_if_high_role_by_id(user_id)
+            has_approval = belongs_to_org and has_high_role
+        elif apikey_val:
+            belongs_to_org = await user_service.check_user_belongs_to_organization_by_key(
+                apikey_val, dataset_organization
+            )
+            has_high_role = await user_service.check_if_high_role_by_key(apikey_val)
+            has_approval = belongs_to_org and has_high_role
+
+    is_org_admin = False
+    if user_id is not None:
+        is_org_admin = await user_service.check_if_admin_by_id(
+            dataset_organization, user_id
+        )
+    elif apikey_val:
+        is_org_admin = await user_service.check_if_admin_by_key(
+            dataset_organization, apikey_val
+        )
+    transfer = bool(is_approved and is_org_admin)
+
     return {
         "edit": is_creator,
         "add_file": is_creator,
         "delete_dataset": has_perm,
         "delete_file": has_perm and files_count > 1,
+        "approval": has_approval,
+        "transfer": transfer,
     }
+
+
+def _job_ttl() -> int:
+    return settings.UPLOAD_JOB_CACHE_AGE_SECONDS
+
+
+# Atomically: append "dataset" to :events, set event:dataset payload, EXPIRE job (no job JSON rewrite).
+# Uses Redis Lua + cjson (available in standard Redis Lua environment).
+_DATASET_STAGE_LUA = """
+local ttl = tonumber(ARGV[1])
+local payload = ARGV[2]
+local ev_key = KEYS[1]
+local job_key = KEYS[2]
+local ds_key = KEYS[3]
+
+local ev_raw = redis.call('GET', ev_key)
+local ev_list = cjson.decode(ev_raw or '[]')
+for i = 1, #ev_list do
+  if ev_list[i] == 'dataset' then
+    return redis.error_reply('ERR_DUPLICATE_DATASET')
+  end
+end
+table.insert(ev_list, 'dataset')
+
+if redis.call('EXISTS', job_key) == 0 then
+  return redis.error_reply('ERR_JOB_MISSING')
+end
+
+redis.call('SETEX', ev_key, ttl, cjson.encode(ev_list))
+redis.call('SETEX', ds_key, ttl, payload)
+redis.call('EXPIRE', job_key, ttl)
+return 1
+"""
+
+
+async def _atomic_stage_dataset_event(
+    redis_jobs: Redis,
+    jid: str,
+    ttl: int,
+    payload: Dict[str, Any],
+) -> None:
+    """Single atomic Redis op: events list + job TTL + job:{jid}:event:dataset."""
+    payload_json = json.dumps(payload, default=str)
+    try:
+        await redis_jobs.eval(
+            _DATASET_STAGE_LUA,
+            3,
+            f"job:{jid}:events",
+            f"job:{jid}",
+            f"job:{jid}:event:dataset",
+            str(ttl),
+            payload_json,
+        )
+    except ResponseError as exc:
+        err = str(exc)
+        if "ERR_DUPLICATE_DATASET" in err:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"dataset information already exist for the job {jid}.",
+            ) from exc
+        if "ERR_JOB_MISSING" in err:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"job {jid} does not exist.",
+            ) from exc
+        raise
 
 
 class DatasetController:
@@ -141,110 +240,121 @@ class DatasetController:
     Class-based dataset controller with comprehensive error handling and security.
     """
 
-    def __init__(self, dataset_service: DatasetService, redis: Redis):
+    def __init__(
+        self,
+        dataset_service: DatasetService,
+        redis: Redis,
+        redis_jobs: Redis,
+        user_service: UserService,
+    ):
         self.dataset_service = dataset_service
         self.redis = redis
+        self.redis_jobs = redis_jobs
+        self.user_service = user_service
         self.logger = logging.getLogger(__name__)
 
     async def create_dataset(
-        self, dataset_data: DatasetCreate, user: User
+        self,
+        title: str,
+        description: Optional[str],
+        private: bool,
+        tags: List[str],
+        job_id: str,
+        user: User,
     ) -> JSONResponse:
         """
-        Create a dataset with associated file record.
-
-        Args:
-            dataset_data: Dataset creation data from form
-            user: Authenticated user making the request
-
-        Returns:
-            JSONResponse containing created dataset and file information
-
-        Raises:
-            HTTPException: If validation fails or creation fails
+        Stage dataset creation in Redis (job event); no DB insert.
         """
         try:
-            self.logger.info(
-                "Processing dataset creation request for user %s, title: %s",
-                user.id,
-                dataset_data.title,
+            jid = sanitize_input(job_id)
+            if not jid or not jid.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid job_id",
+                )
+            jid = jid.strip()
+            try:
+                UUID(jid)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid job_id",
+                )
+
+            raw = await self.redis_jobs.get(f"job:{jid}")
+            if not raw:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"job {jid} does not exist.",
+                )
+            job = json.loads(raw)
+            if str(job.get("creator")) != str(user.id):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Job does not belong to this user",
+                )
+            if str(job.get("organization")) != str(user.organization):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Job organization does not match user",
+                )
+
+            sanitized_title = sanitize_input(title)
+            if not sanitized_title or not sanitized_title.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid title",
+                )
+            sanitized_desc = sanitize_input(description) if description else None
+            norm_tags = self.dataset_service._normalize_tags(tags or [])
+
+            org = await self.dataset_service.get_organization_with_private_status(
+                user.organization
             )
+            dataset_private = private
+            if private and not org.private:
+                dataset_private = False
 
-            # Create dataset and file
-            dataset, file = await self.dataset_service.create_dataset_with_file(
-                dataset_data, user
-            )
+            dataset_id = uuid4()
+            approved = False
+            approved_by = None
+            if await self.user_service.check_if_high_role_by_id(user.id):
+                approved = True
+                approved_by = user.id
 
-            # Refresh dataset to load tags relationship
-            await self.dataset_service.session.refresh(dataset, ["tags"])
+            ttl = _job_ttl()
+            now = datetime.now(timezone.utc)
+            now_iso = now.isoformat()
 
-            # Prepare response data
-            response_data = {
-                "dataset": {
-                    "dataset_id": str(dataset.dataset_id),
-                    "title": dataset.dataset_title,
-                    "creator": str(dataset.creator),
-                    "description": dataset.dataset_description,
-                    "tags": [tag.tag_name for tag in dataset.tags],
-                    "organization": dataset.organization,
-                    "private": dataset.private,
-                    "downloads": 0,
-                    "approved": dataset.approved,
-                    "approved_by": str(dataset.approved_by)
-                    if dataset.approved_by
-                    else None,
-                    "created_at": dataset.created_at.isoformat()
-                    if dataset.created_at
-                    else None,
-                },
-                "file": {
-                    "file_id": str(file.file_id),
-                    "filename": file.file_title,
-                    "file_key": file.file_key,
-                    "bucket": file.bucket,
-                    "file_size": file.file_size,
-                    "file_description": file.file_description,
-                    "file_format": file.file_format,
-                    "dataset_id": str(file.dataset_id),
-                    "downloads": 0,
-                    "provenance": file.provenance,
-                    "source": file.source,
-                    "cite_as": file.cite_as,
-                    "groundtruthed": file.groundtruthed,
-                    "permissions": file.permissions,
-                    "duration": file.duration,
-                    "value": file.value,
-                    "temporal_from": file.temporal_from.isoformat()
-                    if file.temporal_from
-                    else None,
-                    "temporal_to": file.temporal_to.isoformat()
-                    if file.temporal_to
-                    else None,
-                    "geography": file.geography,
-                    "created_at": file.created_at.isoformat()
-                    if file.created_at
-                    else None,
-                },
+            payload = {
+                "event_id": "dataset",
+                "job_id": jid,
+                "type": "create_dataset",
+                "status": "pending",
+                "error": None,
+                "started_at": now_iso,
+                "finished_at": None,
+                "dataset_id": str(dataset_id),
+                "title": sanitized_title,
+                "description": sanitized_desc,
+                "private": dataset_private,
+                "tags": norm_tags,
+                "creator": str(user.id),
+                "organization": user.organization,
+                "approved": approved,
+                "approved_by": str(approved_by) if approved_by else None,
+                "created_at": now_iso,
             }
-
-            self.logger.info(
-                "Dataset created successfully: dataset_id=%s, file_id=%s",
-                dataset.dataset_id,
-                file.file_id,
-            )
+            await _atomic_stage_dataset_event(self.redis_jobs, jid, ttl, payload)
 
             return JSONResponse(
-                content=jsonable_encoder(response_data),
-                status_code=status.HTTP_201_CREATED,
+                content={"job_id": jid, "dataset_id": str(dataset_id)},
+                status_code=status.HTTP_200_OK,
             )
-
         except HTTPException:
             raise
         except Exception as e:
-            self.logger.exception(
-                "Unexpected error creating dataset for user %s: %s",
-                user.id if user else "unknown",
-                e,
-            )
+            self.logger.exception("create_dataset job error: %s", e)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Error creating dataset",
@@ -316,6 +426,37 @@ class DatasetController:
                 detail="Error editing dataset",
             )
 
+    async def transfer_dataset(
+        self,
+        user: User,
+        dataset_id: UUID,
+        new_creator_id: UUID,
+    ) -> JSONResponse:
+        """Transfer dataset ownership to another org member (admin only; service enforces rules)."""
+        try:
+            payload = await self.dataset_service.transfer_dataset_creator(
+                admin_user=user,
+                dataset_id=dataset_id,
+                new_creator_id=new_creator_id,
+            )
+            await _invalidate_dataset_cache(dataset_id, self.redis, self.logger)
+            return JSONResponse(
+                content=jsonable_encoder(payload),
+                status_code=status.HTTP_200_OK,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.exception(
+                "Unexpected error transferring dataset dataset_id=%s: %s",
+                dataset_id,
+                e,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error transferring dataset",
+            )
+
     async def get_dataset_info(
         self,
         dataset_id: UUID,
@@ -342,6 +483,14 @@ class DatasetController:
             creator_name = (
                 creator_user.full_name if creator_user else None
             )
+
+            approver_name = None
+            if dataset.approved_by:
+                approver_result = await self.dataset_service.session.execute(
+                    select(User).where(User.id == dataset.approved_by)
+                )
+                approver_user = approver_result.scalar_one_or_none()
+                approver_name = approver_user.full_name if approver_user else None
 
             file_downloads = await self.dataset_service.get_download_counts_for_files(
                 [f.file_id for f in files]
@@ -374,6 +523,7 @@ class DatasetController:
                 "approved_by": str(dataset.approved_by)
                 if dataset.approved_by
                 else None,
+                "approver_name": approver_name,
             }
 
             files_arr = [
@@ -408,6 +558,8 @@ class DatasetController:
 
             privileges = await _compute_privileges(
                 dataset_id,
+                dataset.organization,
+                dataset.approved,
                 len(files_arr),
                 current_user,
                 apikey,
@@ -434,7 +586,7 @@ class DatasetController:
         user_id: UUID,
         limit: int,
         offset: int,
-        authenticated_user: Optional[User] = None,
+        requesting_user: Optional[User] = None,
     ) -> JSONResponse:
         """
         Get datasets created by a specific user with pagination and privacy filtering.
@@ -443,22 +595,22 @@ class DatasetController:
             user_id: UUID of the user (creator)
             limit: Maximum number of results
             offset: Number of results to skip
-            authenticated_user: Optional authenticated user for privacy filtering
+            requesting_user: Optional requesting user resolved from session/apikey
 
         Returns:
             JSONResponse containing list of datasets
         """
         try:
             self.logger.info(
-                "Fetching user datasets for user_id=%s, limit=%d, offset=%d, authenticated=%s",
+                "Fetching user datasets for user_id=%s, limit=%d, offset=%d, requesting_user=%s",
                 user_id,
                 limit,
                 offset,
-                authenticated_user.id if authenticated_user else None,
+                requesting_user.id if requesting_user else None,
             )
 
             datasets = await self.dataset_service.get_user_datasets(
-                user_id, limit, offset, authenticated_user
+                user_id, limit, offset, requesting_user
             )
 
             # Eagerly load tags for all datasets
@@ -502,6 +654,7 @@ class DatasetController:
 
     async def get_datasets(
         self,
+        current_user: Optional[User] = None,
         apikey: Optional[str] = None,
         limit: int = 10,
         offset: int = 0,
@@ -518,15 +671,17 @@ class DatasetController:
             JSONResponse containing list of datasets
         """
         try:
+            auth_source = "session" if current_user else ("apikey" if apikey else "anonymous")
             self.logger.info(
-                "Fetching datasets: apikey=%s, limit=%d, offset=%d",
+                "Fetching datasets: auth_source=%s, apikey=%s, limit=%d, offset=%d",
+                auth_source,
                 "provided" if apikey else "not provided",
                 limit,
                 offset,
             )
 
             datasets = await self.dataset_service.get_datasets(
-                apikey=apikey, limit=limit, offset=offset
+                current_user=current_user, apikey=apikey, limit=limit, offset=offset
             )
 
             # Eagerly load tags for all datasets
@@ -555,8 +710,9 @@ class DatasetController:
             ]
 
             self.logger.info(
-                "Successfully fetched %d datasets (apikey=%s, limit=%d, offset=%d)",
+                "Successfully fetched %d datasets (auth_source=%s, apikey=%s, limit=%d, offset=%d)",
                 len(datasets_arr),
+                auth_source,
                 "provided" if apikey else "not provided",
                 limit,
                 offset,
@@ -810,6 +966,8 @@ class DatasetController:
 async def get_dataset_controller(
     dataset_service: DatasetService = Depends(get_dataset_service),
     redis: Redis = Depends(get_redis),
+    redis_jobs: Redis = Depends(get_upload_jobs_redis),
+    user_service: UserService = Depends(get_user_service),
 ) -> DatasetController:
     """
     Dependency function to get DatasetController instance.
@@ -820,7 +978,7 @@ async def get_dataset_controller(
     Returns:
         DatasetController instance
     """
-    return DatasetController(dataset_service, redis)
+    return DatasetController(dataset_service, redis, redis_jobs, user_service)
 
 
 def process_tags(tags: str | None) -> str | None:
@@ -862,178 +1020,24 @@ def process_tags(tags: str | None) -> str | None:
 @router.post("/create_dataset")
 async def create_dataset(
     title: str = Form(..., description="Dataset title"),
-    creator: str = Form(..., description="Creator user ID (UUID)"),
-    dataset_description: str | None = Form(None, description="Dataset description"),
-    tags: List[str] | None = Form(
-        None, description="Tags for the dataset (list of strings)"
-    ),
-    organization: str = Form(..., description="Organization ID"),
+    description: str | None = Form(None, description="Dataset description"),
     private: bool = Form(False, description="Whether dataset is private"),
-    filename: str = Form(..., description="File name"),
-    file_key: str = Form(..., description="S3 file key"),
-    file_description: str | None = Form(None, description="File description"),
-    file_format: str | None = Form(None, description="File format/extension"),
-    provenance: str | None = Form(None, description="Provenance"),
-    source: str | None = Form(None, description="Source"),
-    cite_as: str | None = Form(None, description="Citation information"),
-    groundtruthed: bool | None = Form(
-        None, description="Whether dataset is groundtruthed"
-    ),
-    permissions: str | None = Form(None, description="Permissions"),
-    duration: int = Form(0, description="Duration in years"),
-    value: str | None = Form(None, description="Value level (high, medium, low)"),
-    temporal_from: str | None = Form(
-        None, description="Temporal coverage start date (ISO format)"
-    ),
-    temporal_to: str | None = Form(
-        None, description="Temporal coverage end date (ISO format)"
-    ),
-    geography: str | None = Form(None, description="Geographic coverage"),
+    tags: List[str] = Form(..., description="Tags for the dataset"),
+    job_id: str = Form(..., description="Upload job id"),
     user: User = Depends(get_current_active_user),
     controller: DatasetController = Depends(get_dataset_controller),
-    org_service: OrganizationService = Depends(get_organization_service),
 ):
     """
-    Create a dataset with associated file record.
-
-    This endpoint:
-    - Requires authentication (valid session cookie)
-    - Checks if the user is active and valid
-    - Validates that the organization exists in the organization table
-    - Validates that file exists in S3
-    - Creates records in both datasets and files tables
-
-    Args:
-        title: Dataset title
-        creator: Creator user ID (UUID)
-        dataset_description: Dataset description (optional)
-        tags: Tags for the dataset (optional, max 500 chars)
-        organization: Organization ID
-        provenance: Provenance (optional, max 125 chars)
-        source: Source (optional, max 1000 chars)
-        cite_as: Citation information (optional, validated to 1500 chars)
-        groundtruthed: Whether dataset is groundtruthed (optional)
-        private: Whether dataset is private (default: False)
-        permissions: Permissions (optional, max 1000 chars)
-        duration: Duration in years (default: 0)
-        value: Value level - high, medium, or low (optional)
-        filename: File name
-        file_key: S3 file key
-        file_description: File description (optional)
-        file_format: File format/extension (optional, max 20 chars)
-        user: Authenticated user (from dependency)
-        controller: Dataset controller (from dependency)
-        org_service: Organization service (from dependency)
-
-    Returns:
-        JSON response containing created dataset and file information
-
-    Raises:
-        HTTPException:
-            - 401: Not authenticated
-            - 403: User account not active or creator mismatch
-            - 404: Organization not found or file doesn't exist in S3
-            - 409: Dataset/file already exists
-            - 500: Internal server error
-            - 502: S3 handler service unavailable
-            - 504: S3 handler service timeout
+    Stage dataset metadata on the upload job in Redis (no datasets row until complete).
     """
-    try:
-        # Parse creator UUID
-        try:
-            creator_uuid = UUID(creator)
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid creator UUID format",
-            )
-
-        # Authorization check: verify creator matches authenticated user
-        if creator_uuid != user.id:
-            logger.warning(
-                "Creator mismatch: creator=%s, authenticated_user=%s",
-                creator_uuid,
-                user.id,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Creator must match authenticated user",
-            )
-
-        # Parse datetime strings for temporal_from and temporal_to
-        parsed_temporal_from = None
-        parsed_temporal_to = None
-        if temporal_from:
-            try:
-                parsed_temporal_from = datetime.fromisoformat(
-                    temporal_from.replace("Z", "+00:00")
-                )
-            except (ValueError, AttributeError):
-                logger.warning("Invalid temporal_from format: %s", temporal_from)
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid temporal_from format. Use ISO format (e.g., 2024-01-01T00:00:00Z)",
-                )
-        if temporal_to:
-            try:
-                parsed_temporal_to = datetime.fromisoformat(
-                    temporal_to.replace("Z", "+00:00")
-                )
-            except (ValueError, AttributeError):
-                logger.warning("Invalid temporal_to format: %s", temporal_to)
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid temporal_to format. Use ISO format (e.g., 2024-01-01T00:00:00Z)",
-                )
-
-        # Validate organization exists
-        logger.info("Validating organization exists: %s", organization)
-        org_exists = await org_service.validate_organization_id(organization)
-        if not org_exists:
-            logger.warning(
-                "Organization not found during dataset creation: %s (user: %s)",
-                organization,
-                user.id,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Organization '{organization}' not found",
-            )
-
-        # Create DatasetCreate schema from form data
-        dataset_data = DatasetCreate(
-            title=title,
-            creator=creator_uuid,
-            dataset_description=dataset_description,
-            tags=tags,  # Already a list from Form parameter
-            organization=organization,
-            private=private,
-            filename=filename,
-            file_key=file_key,
-            file_description=file_description,
-            file_format=file_format,
-            provenance=provenance,
-            source=source,
-            cite_as=cite_as,
-            groundtruthed=groundtruthed,
-            permissions=permissions,
-            duration=duration,
-            value=value,
-            temporal_from=parsed_temporal_from,
-            temporal_to=parsed_temporal_to,
-            geography=geography,
-        )
-
-        return await controller.create_dataset(dataset_data, user)
-
-    except HTTPException:
-        raise
-    except ValueError as e:
-        logger.exception("Validation error in create_dataset: %s", e)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid input data: {str(e)}",
-        )
+    return await controller.create_dataset(
+        title=title,
+        description=description,
+        private=private,
+        tags=tags,
+        job_id=job_id,
+        user=user,
+    )
 
 
 @router.put("/edit_dataset")
@@ -1088,6 +1092,33 @@ async def edit_dataset(
         )
 
 
+@router.post("/transfer_dataset")
+async def transfer_dataset(
+    dataset_id: UUID = Query(..., description="Dataset ID to transfer"),
+    user_id: UUID = Query(..., description="User ID of the new creator"),
+    user: User = Depends(get_current_active_user),
+    controller: DatasetController = Depends(get_dataset_controller),
+):
+    """
+    Transfer dataset creator to another user in the same organization.
+    Requires session cookie; caller must be org admin (role 1) for the dataset's org.
+    """
+    try:
+        return await controller.transfer_dataset(
+            user=user,
+            dataset_id=dataset_id,
+            new_creator_id=user_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unexpected error in /transfer_dataset: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error transferring dataset",
+        )
+
+
 @router.get("/dataset_info")
 async def dataset_info(
     request: Request,
@@ -1101,7 +1132,8 @@ async def dataset_info(
 ):
     """
     Get dataset info and associated files by dataset_id.
-    Validates access for private datasets (session cookie or apikey).
+    Validates access for private datasets (session cookie or apikey) with
+    organization and verified-user checks.
     Returns dataset, files, and privileges. Response may be served from Redis cache.
     """
     try:
@@ -1120,9 +1152,9 @@ async def dataset_info(
                 detail="Invalid dataset_id UUID format",
             )
 
-        # Early lookup: private and organization for access check
+        # Early lookup: private, organization, and approval state for access checks
         result = await controller.dataset_service.session.execute(
-            select(Dataset.private, Dataset.organization).where(
+            select(Dataset.private, Dataset.organization, Dataset.approved).where(
                 Dataset.dataset_id == ds_uuid
             )
         )
@@ -1132,22 +1164,81 @@ async def dataset_info(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Dataset not found",
             )
-        is_private, dataset_organization = row[0], row[1]
+        is_private, dataset_organization, is_approved = row[0], row[1], row[2]
 
         if is_private:
             user_organization: Optional[str] = None
+            is_requesting_user_verified = False
             if current_user is not None:
                 user_organization = current_user.organization
+                is_requesting_user_verified = (
+                    await user_service.check_if_user_verified_by_id(current_user.id)
+                )
             elif sanitized_apikey:
                 user_data = await user_service.get_user_by_apikey(sanitized_apikey)
                 if user_data is not None:
                     user_organization = user_data.get("organization")
+                    is_requesting_user_verified = (
+                        await user_service.check_if_user_verified_by_apikey(
+                            sanitized_apikey
+                        )
+                    )
             if user_organization is None or user_organization != dataset_organization:
                 return JSONResponse(
                     status_code=status.HTTP_403_FORBIDDEN,
                     content={
                         "detail": "Private dataset, Access permission is not granted."
                     },
+                )
+            if not is_requesting_user_verified:
+                logger.info(
+                    "Private dataset access denied due to unverified requester: dataset_id=%s",
+                    ds_uuid,
+                )
+                return JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={
+                        "detail": "private dataset. Please check if email address verified or organization approved."
+                    },
+                )
+
+        if not is_approved:
+            has_unapproved_dataset_access = False
+            if current_user is not None:
+                is_creator = await user_service.check_if_dataset_creator_by_id(
+                    current_user.id, ds_uuid
+                )
+                belongs_to_dataset_org = (
+                    await user_service.check_user_belongs_to_dataset_organization_by_id(
+                        current_user.id, ds_uuid
+                    )
+                )
+                has_high_role = await user_service.check_if_high_role_by_id(
+                    current_user.id
+                )
+                has_unapproved_dataset_access = is_creator or (
+                    belongs_to_dataset_org and has_high_role
+                )
+            elif sanitized_apikey:
+                is_creator = await user_service.check_if_dataset_creator_by_key(
+                    sanitized_apikey, ds_uuid
+                )
+                belongs_to_dataset_org = (
+                    await user_service.check_user_belongs_to_dataset_organization_by_key(
+                        sanitized_apikey, ds_uuid
+                    )
+                )
+                has_high_role = await user_service.check_if_high_role_by_key(
+                    sanitized_apikey
+                )
+                has_unapproved_dataset_access = is_creator or (
+                    belongs_to_dataset_org and has_high_role
+                )
+
+            if not has_unapproved_dataset_access:
+                return JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={"detail": "Dataset is still pending approval."},
                 )
 
         cache_key = f"dataset:{ds_uuid}"
@@ -1160,6 +1251,8 @@ async def dataset_info(
                 if dataset_obj is not None and files_arr is not None:
                     privileges = await _compute_privileges(
                         ds_uuid,
+                        str(dataset_obj.get("organization", "")),
+                        bool(dataset_obj.get("approved")),
                         len(files_arr),
                         current_user,
                         sanitized_apikey,
@@ -1217,24 +1310,24 @@ async def user_datasets(
     limit: int = Query(10, ge=1, le=100, description="Maximum number of results"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
     apikey: Optional[str] = Query(None, description="Optional API key for privacy filtering"),
+    current_user: Optional[User] = Depends(get_current_active_user_optional),
     controller: DatasetController = Depends(get_dataset_controller),
     user_service: UserService = Depends(get_user_service),
 ):
     """
     Get datasets created by a specific user with pagination and privacy filtering.
 
-    Privacy rules:
-    - If no apikey provided: returns only public datasets (private=False)
-    - If apikey provided:
-      - If requesting user's organization matches creator's organization:
-        returns all datasets (no privacy filter)
-      - If organizations don't match: returns only public datasets (private=False)
+    Authentication precedence:
+    - If session cookie user is present, use it as requester context.
+    - Otherwise, use apikey requester context when a valid apikey is provided.
+    - Otherwise, treat request as anonymous.
 
     Args:
         user_id: User ID (UUID) - required query parameter (creator of datasets)
         limit: Maximum number of results (default: 10, min: 1, max: 100)
         offset: Number of results to skip for pagination (default: 0, min: 0)
-        apikey: Optional API key for privacy filtering
+        apikey: Optional API key fallback for requester context
+        current_user: Optional authenticated user from session cookie
         controller: Dataset controller (from dependency)
         user_service: User service (from dependency)
 
@@ -1255,10 +1348,15 @@ async def user_datasets(
                 detail="Invalid user_id UUID format",
             )
 
-        # Get user by apikey if provided
-        requesting_user = None
-        if apikey:
-            user_data = await user_service.get_user_by_apikey(apikey)
+        requesting_user = current_user
+        sanitized_apikey_raw = sanitize_input(apikey) if apikey else None
+        sanitized_apikey = (
+            sanitized_apikey_raw.strip()
+            if sanitized_apikey_raw and sanitized_apikey_raw.strip()
+            else None
+        )
+        if requesting_user is None and sanitized_apikey:
+            user_data = await user_service.get_user_by_apikey(sanitized_apikey)
             if user_data:
                 # Fetch User model instance from database using user ID
                 user_result = await controller.dataset_service.session.execute(
@@ -1287,6 +1385,7 @@ async def datasets(
     ),
     limit: int = Query(10, ge=1, le=50, description="Maximum number of results"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
+    current_user: Optional[User] = Depends(get_current_active_user_optional),
     controller: DatasetController = Depends(get_dataset_controller),
 ):
     """
@@ -1317,7 +1416,12 @@ async def datasets(
             - 500: Internal server error
     """
     try:
-        return await controller.get_datasets(apikey=apikey, limit=limit, offset=offset)
+        return await controller.get_datasets(
+            current_user=current_user,
+            apikey=apikey,
+            limit=limit,
+            offset=offset,
+        )
 
     except HTTPException:
         raise

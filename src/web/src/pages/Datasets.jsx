@@ -48,11 +48,6 @@ function Datasets() {
           offset: offset.toString(),
         });
 
-        // If user is signed in, add apikey
-        if (isAuthenticated && user?.apikey) {
-          params.append("apikey", user.apikey);
-        }
-
         const response = await fetch(
           `${datasets_endpoint}?${params.toString()}`,
           { credentials: "include" }
@@ -87,7 +82,7 @@ function Datasets() {
     };
 
     fetchDatasets();
-  }, [currentPage, isAuthenticated, user?.apikey]);
+  }, [currentPage, isAuthenticated, user?.id]);
 
   const formatDate = (dateString) => {
     if (!dateString) return "N/A";

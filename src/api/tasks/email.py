@@ -6,6 +6,7 @@ using Brevo's transactional email API with template support.
 """
 
 import logging
+import re
 import threading
 from collections.abc import Iterable
 from typing import Any
@@ -19,6 +20,16 @@ from core.celery import celery_app
 from core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _recipient_display_name_for_email(addr: str, display_name: str) -> str:
+    """Use template name when provided; otherwise humanize the email local-part."""
+    if display_name and str(display_name).strip():
+        return str(display_name).strip()
+    local = addr.split("@")[0] if "@" in addr else addr
+    parts = [p.capitalize() for p in re.split(r"[._-]+", local) if p]
+    return " ".join(parts) if parts else local
+
 
 # Module-level default sensitive parameters for URL sanitization
 SENSITIVE_PARAMS = ["token", "reset_token", "verify_token"]
@@ -348,4 +359,310 @@ def send_verify_email(
             )
 
         # Re-raise to mark original task as failed
+        raise
+
+
+@celery_app.task(
+    name="email.send_upload_approval",
+    bind=True,
+    max_retries=None,
+    default_retry_delay=settings.CELERY_TASK_DEFAULT_RETRY_DELAY,
+)
+def send_upload_approval(
+    self: Any, email: str, title: str, name: str
+) -> dict[str, Any]:
+    """
+    Send upload-approval notification (Brevo template: title + name params).
+
+    Args:
+        email: Recipient address
+        title: Dataset title (template param)
+        name: Display name for template (e.g. uploader full_name from job meta)
+    """
+    try:
+        logger.debug(
+            "Sending upload approval email to %s template_id=%s",
+            email,
+            settings.UPLOAD_APPROVAL_TEMPLATE_ID,
+        )
+        api_instance = _get_brevo_client()
+        params = {"title": title, "name": name}
+
+        send_smtp_email = SendSmtpEmail(
+            to=[
+                SendSmtpEmailTo(
+                    email=email,
+                    name=_recipient_display_name_for_email(email, name),
+                )
+            ],
+            template_id=settings.UPLOAD_APPROVAL_TEMPLATE_ID,
+            params=params,
+            sender={"name": "WELL Labs Data Portal", "email": settings.EMAIL_SENDER},
+        )
+        api_response = api_instance.send_transac_email(send_smtp_email)
+        message_id = api_response.message_id
+        logger.info(
+            "Upload approval email sent to %s message_id=%s", email, message_id
+        )
+        return {"status": "success", "message_id": message_id, "email": email}
+    except Exception as exc:
+        logger.exception(
+            "Error sending upload approval to %s: %s retries=%s",
+            email,
+            exc,
+            self.request.retries,
+        )
+        if self.request.retries < settings.CELERY_TASK_MAX_RETRIES:
+            raise self.retry(
+                exc=exc,
+                countdown=settings.CELERY_TASK_DEFAULT_RETRY_DELAY,
+                max_retries=settings.CELERY_TASK_MAX_RETRIES,
+            )
+        raise
+
+
+@celery_app.task(
+    name="email.send_upload_approval_response",
+    bind=True,
+    max_retries=None,
+    default_retry_delay=settings.CELERY_TASK_DEFAULT_RETRY_DELAY,
+)
+def send_upload_approval_response(
+    self: Any, email: str, title: str, name: str
+) -> dict[str, Any]:
+    """
+    Send upload-approval response notification (Brevo template: title + name params).
+
+    Args:
+        email: Recipient address
+        title: Dataset title (template param)
+        name: Approver full name (template param)
+    """
+    try:
+        logger.debug(
+            "Sending upload approval response email to %s template_id=%s",
+            email,
+            settings.UPLOAD_APPROVAL_RESPONSE_TEMPLATE_ID,
+        )
+        api_instance = _get_brevo_client()
+        params = {"title": title, "name": name}
+
+        send_smtp_email = SendSmtpEmail(
+            to=[
+                SendSmtpEmailTo(
+                    email=email,
+                    name=_recipient_display_name_for_email(email, ""),
+                )
+            ],
+            template_id=settings.UPLOAD_APPROVAL_RESPONSE_TEMPLATE_ID,
+            params=params,
+            sender={"name": "WELL Labs Data Portal", "email": settings.EMAIL_SENDER},
+        )
+        api_response = api_instance.send_transac_email(send_smtp_email)
+        message_id = api_response.message_id
+        logger.info(
+            "Upload approval response email sent to %s message_id=%s",
+            email,
+            message_id,
+        )
+        return {"status": "success", "message_id": message_id, "email": email}
+    except Exception as exc:
+        logger.exception(
+            "Error sending upload approval response to %s: %s retries=%s",
+            email,
+            exc,
+            self.request.retries,
+        )
+        if self.request.retries < settings.CELERY_TASK_MAX_RETRIES:
+            raise self.retry(
+                exc=exc,
+                countdown=settings.CELERY_TASK_DEFAULT_RETRY_DELAY,
+                max_retries=settings.CELERY_TASK_MAX_RETRIES,
+            )
+        raise
+
+
+@celery_app.task(
+    name="email.send_user_approval_response",
+    bind=True,
+    max_retries=None,
+    default_retry_delay=settings.CELERY_TASK_DEFAULT_RETRY_DELAY,
+)
+def send_user_approval_response(
+    self: Any, email: str, action: str, name: str, message: str
+) -> dict[str, Any]:
+    """
+    Send user approval/rejection notification (Brevo template: action, name, message).
+
+    Args:
+        email: Recipient address
+        action: Template param (e.g. accepted / rejected)
+        name: Approver display name (template param)
+        message: Body copy (template param)
+    """
+    try:
+        logger.debug(
+            "Sending user approval response email to %s template_id=%s action=%s",
+            email,
+            settings.USER_APPROVAL_RESPONSE_TEMPLATE_ID,
+            action,
+        )
+        api_instance = _get_brevo_client()
+        params = {"action": action, "name": name, "message": message}
+
+        send_smtp_email = SendSmtpEmail(
+            to=[
+                SendSmtpEmailTo(
+                    email=email,
+                    name=_recipient_display_name_for_email(email, ""),
+                )
+            ],
+            template_id=settings.USER_APPROVAL_RESPONSE_TEMPLATE_ID,
+            params=params,
+            sender={"name": "WELL Labs Data Portal", "email": settings.EMAIL_SENDER},
+        )
+        api_response = api_instance.send_transac_email(send_smtp_email)
+        message_id = api_response.message_id
+        logger.info(
+            "User approval response email sent to %s message_id=%s action=%s",
+            email,
+            message_id,
+            action,
+        )
+        return {"status": "success", "message_id": message_id, "email": email}
+    except Exception as exc:
+        logger.exception(
+            "Error sending user approval response to %s: %s retries=%s",
+            email,
+            exc,
+            self.request.retries,
+        )
+        if self.request.retries < settings.CELERY_TASK_MAX_RETRIES:
+            raise self.retry(
+                exc=exc,
+                countdown=settings.CELERY_TASK_DEFAULT_RETRY_DELAY,
+                max_retries=settings.CELERY_TASK_MAX_RETRIES,
+            )
+        raise
+
+
+@celery_app.task(
+    name="email.send_user_approval_request",
+    bind=True,
+    max_retries=None,
+    default_retry_delay=settings.CELERY_TASK_DEFAULT_RETRY_DELAY,
+)
+def send_user_approval_request(self: Any, email: str, name: str) -> dict[str, Any]:
+    """
+    Send user approval request notification to organization admins.
+
+    Args:
+        email: Recipient admin email address
+        name: New signup user full name (template param)
+    """
+    try:
+        logger.debug(
+            "Sending user approval request email to %s template_id=%s name=%s",
+            email,
+            settings.USER_APPROVAL_REQUEST_TEMPLATE_ID,
+            name,
+        )
+        api_instance = _get_brevo_client()
+        params = {"name": name}
+
+        send_smtp_email = SendSmtpEmail(
+            to=[
+                SendSmtpEmailTo(
+                    email=email,
+                    name=_recipient_display_name_for_email(email, ""),
+                )
+            ],
+            template_id=settings.USER_APPROVAL_REQUEST_TEMPLATE_ID,
+            params=params,
+            sender={"name": "WELL Labs Data Portal", "email": settings.EMAIL_SENDER},
+        )
+        api_response = api_instance.send_transac_email(send_smtp_email)
+        message_id = api_response.message_id
+        logger.info(
+            "User approval request email sent to %s message_id=%s",
+            email,
+            message_id,
+        )
+        return {"status": "success", "message_id": message_id, "email": email}
+    except Exception as exc:
+        logger.exception(
+            "Error sending user approval request to %s: %s retries=%s",
+            email,
+            exc,
+            self.request.retries,
+        )
+        if self.request.retries < settings.CELERY_TASK_MAX_RETRIES:
+            raise self.retry(
+                exc=exc,
+                countdown=settings.CELERY_TASK_DEFAULT_RETRY_DELAY,
+                max_retries=settings.CELERY_TASK_MAX_RETRIES,
+            )
+        raise
+
+
+@celery_app.task(
+    name="email.send_dataset_transfer",
+    bind=True,
+    max_retries=None,
+    default_retry_delay=settings.CELERY_TASK_DEFAULT_RETRY_DELAY,
+)
+def send_dataset_transfer(
+    self: Any, email: str, title: str, new_creator: str, admin_name: str
+) -> dict[str, Any]:
+    """
+    Notify previous creator and/or new creator about a dataset ownership transfer (Brevo template).
+
+    Args:
+        email: Recipient address
+        title: Dataset title (template param)
+        new_creator: New creator display name (template param)
+        admin_name: Admin who performed the transfer (template param)
+    """
+    try:
+        logger.debug(
+            "Sending dataset transfer email to %s template_id=%s",
+            email,
+            settings.DATASET_TRANSFER_TEMPLATE_ID,
+        )
+        api_instance = _get_brevo_client()
+        params = {
+            "title": title,
+            "new_creator": new_creator,
+            "admin_name": admin_name,
+        }
+        send_smtp_email = SendSmtpEmail(
+            to=[
+                SendSmtpEmailTo(
+                    email=email,
+                    name=_recipient_display_name_for_email(email, new_creator),
+                )
+            ],
+            template_id=settings.DATASET_TRANSFER_TEMPLATE_ID,
+            params=params,
+            sender={"name": "WELL Labs Data Portal", "email": settings.EMAIL_SENDER},
+        )
+        api_response = api_instance.send_transac_email(send_smtp_email)
+        message_id = api_response.message_id
+        logger.info(
+            "Dataset transfer email sent to %s message_id=%s", email, message_id
+        )
+        return {"status": "success", "message_id": message_id, "email": email}
+    except Exception as exc:
+        logger.exception(
+            "Error sending dataset transfer to %s: %s retries=%s",
+            email,
+            exc,
+            self.request.retries,
+        )
+        if self.request.retries < settings.CELERY_TASK_MAX_RETRIES:
+            raise self.retry(
+                exc=exc,
+                countdown=settings.CELERY_TASK_DEFAULT_RETRY_DELAY,
+                max_retries=settings.CELERY_TASK_MAX_RETRIES,
+            )
         raise

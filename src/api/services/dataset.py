@@ -4,7 +4,7 @@ Dataset service for handling dataset and file creation.
 
 import logging
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID, uuid4
 
 from core.config import settings
@@ -23,6 +23,7 @@ from services.organization import OrganizationService, get_organization_service
 from services.upload import UploadService, get_upload_service
 from services.user import UserService, get_user_service
 from sqlalchemy import delete, desc, func, or_, select, update
+from tasks.email import send_dataset_transfer
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -120,6 +121,45 @@ class DatasetService:
             normalized_tag = re.sub(r"\s+", "-", tag_stripped).lower()
             result.append(normalized_tag)
         return list(dict.fromkeys(result))
+
+    async def attach_tags_to_dataset(
+        self, dataset_id: UUID, tags: Optional[List[str]]
+    ) -> None:
+        """Create/link Tag rows and TagDataset rows for an existing dataset."""
+        try:
+            ds_check = await self.session.execute(
+                select(Dataset).where(Dataset.dataset_id == dataset_id)
+            )
+            if ds_check.scalar_one_or_none() is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Dataset not found",
+                )
+            await self.session.execute(
+                delete(TagDataset).where(TagDataset.dataset_id == dataset_id)
+            )
+            normalized_tags = self._normalize_tags(tags)
+            for normalized_tag in normalized_tags:
+                tag_result = await self.session.execute(
+                    select(Tag).where(func.lower(Tag.tag_name) == normalized_tag)
+                )
+                existing_tag = tag_result.scalar_one_or_none()
+                if existing_tag:
+                    tag_id = existing_tag.tag_id
+                else:
+                    tag_id = uuid4()
+                    self.session.add(Tag(tag_id=tag_id, tag_name=normalized_tag))
+                self.session.add(
+                    TagDataset(dataset_id=dataset_id, tag_id=tag_id),
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            await self.session.rollback()
+            self.logger.exception(
+                "attach_tags_to_dataset failed for dataset_id=%s: %s", dataset_id, e
+            )
+            raise
 
     async def get_organization_with_private_status(self, org_id: str) -> Organization:
         """
@@ -242,30 +282,30 @@ class DatasetService:
         """
         Check if the user has permission to modify/delete the dataset.
 
-        Uses apikey when provided (preferred over user_id). Otherwise uses user_id from session.
+        Uses session user_id first when provided; otherwise uses apikey. This matches
+        _compute_privileges and avoids mixed identity when both are present.
 
-        Permission check order:
+        Permission check order (for the resolved identity):
         1. Check if user is the dataset creator
         2. Check if user has high role (role > 0) AND belongs to dataset's organization
         3. Check if user is superuser
 
         Args:
-            user_id: User ID (from session); used when apikey is not provided
-            apikey: API key of the user; when provided, takes precedence over user_id
+            user_id: User ID (from session); preferred when set
+            apikey: API key of the user; used when user_id is not provided
             dataset_id: UUID of the dataset
 
         Returns:
             True if user has permission, False otherwise
         """
         try:
-            # Prefer apikey over user_id when both provided
-            if apikey and apikey.strip():
-                return await self._check_dataset_permission_by_apikey(
-                    apikey, dataset_id
-                )
             if user_id is not None:
                 return await self._check_dataset_permission_by_user_id(
                     user_id, dataset_id
+                )
+            if apikey and apikey.strip():
+                return await self._check_dataset_permission_by_apikey(
+                    apikey, dataset_id
                 )
             self.logger.info(
                 "Permission denied: no user_id or apikey for dataset %s", dataset_id
@@ -818,23 +858,22 @@ class DatasetService:
         user_id: UUID,
         limit: int = 10,
         offset: int = 0,
-        authenticated_user: Optional[User] = None,
+        requesting_user: Optional[User] = None,
     ) -> List[Dataset]:
         """
-        Get datasets created by a specific user with pagination and privacy filtering.
+        Get datasets created by a specific user with pagination and visibility filtering.
 
-        Privacy rules:
-        - If not authenticated: return only public datasets (private=False)
-        - If authenticated:
-          - If authenticated user's organization matches creator's organization:
-            return all datasets (no privacy filter)
-          - If organizations don't match: return only public datasets (private=False)
+        Visibility rules:
+        - If requester is the same as user_id (creator): return all creator datasets.
+        - If requester is from same organization as creator: return creator datasets with approved=True.
+        - If requester is anonymous or from different organization:
+          return creator datasets with private=False and approved=True.
 
         Args:
             user_id: UUID of the user (creator)
             limit: Maximum number of results (default: 10)
             offset: Number of results to skip (default: 0)
-            authenticated_user: Optional authenticated user for privacy filtering
+            requesting_user: Optional requesting user resolved from session/apikey
 
         Returns:
             List of Dataset objects ordered by created_at (latest first)
@@ -844,11 +883,11 @@ class DatasetService:
         """
         try:
             self.logger.info(
-                "Fetching datasets for user_id=%s, limit=%d, offset=%d, authenticated=%s",
+                "Fetching datasets for user_id=%s, limit=%d, offset=%d, requesting_user=%s",
                 user_id,
                 limit,
                 offset,
-                authenticated_user.id if authenticated_user else None,
+                requesting_user.id if requesting_user else None,
             )
 
             # Build base query with eager loading of tags
@@ -859,14 +898,14 @@ class DatasetService:
                 .order_by(desc(Dataset.created_at))
             )
 
-            # Apply privacy filtering based on authentication and organization match
-            if authenticated_user is None:
-                # Not authenticated: only public datasets
-                self.logger.debug("User not authenticated, filtering private=False")
-                query = query.where(Dataset.private.is_(False))
+            # Requesting own datasets: no privacy or approval filtering.
+            if requesting_user is not None and requesting_user.id == user_id:
+                self.logger.debug(
+                    "Requester matches creator (%s), returning all datasets without visibility filters",
+                    user_id,
+                )
             else:
-                # Authenticated: check organization match
-                # Fetch the creator's user record to get their organization
+                # Fetch creator to evaluate organization relationship.
                 creator_user_result = await self.session.execute(
                     select(User).where(User.id == user_id)
                 )
@@ -874,26 +913,27 @@ class DatasetService:
 
                 if creator_user is None:
                     self.logger.warning("Creator user not found: %s", user_id)
-                    # Creator doesn't exist, return empty list
                     return []
 
-                # Compare organizations
-                authenticated_org = authenticated_user.organization
-                creator_org = creator_user.organization
-
-                if authenticated_org != creator_org:
-                    # Organizations don't match: only public datasets
+                if (
+                    requesting_user is not None
+                    and requesting_user.organization == creator_user.organization
+                ):
+                    # Same organization, different requester: approved-only filter.
                     self.logger.debug(
-                        "Organizations don't match (auth: %s, creator: %s), filtering private=False",
-                        authenticated_org,
-                        creator_org,
+                        "Same-organization requester for creator=%s, applying approved=True filter only",
+                        user_id,
                     )
-                    query = query.where(Dataset.private.is_(False))
+                    query = query.where(Dataset.approved.is_(True))
                 else:
-                    # Organizations match: return all datasets (no privacy filter)
+                    # Anonymous or different organization: public + approved only.
                     self.logger.debug(
-                        "Organizations match (%s), returning all datasets",
-                        authenticated_org,
+                        "Anonymous/different-organization requester for creator=%s, applying private=False and approved=True filters",
+                        user_id,
+                    )
+                    query = query.where(
+                        Dataset.private.is_(False),
+                        Dataset.approved.is_(True),
                     )
 
             # Apply pagination
@@ -917,27 +957,183 @@ class DatasetService:
                 detail="Error fetching user datasets",
             )
 
+    async def transfer_dataset_creator(
+        self,
+        admin_user: User,
+        dataset_id: UUID,
+        new_creator_id: UUID,
+    ) -> dict[str, Any]:
+        """
+        Transfer dataset ownership to another user in the same organization.
+        Updates datasets.creator and commits first; queues notification emails only after commit succeeds.
+        """
+        result = await self.session.execute(
+            select(Dataset).where(Dataset.dataset_id == dataset_id)
+        )
+        dataset: Optional[Dataset] = result.scalar_one_or_none()
+        if dataset is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Dataset not found",
+            )
+
+        if admin_user.role != 1:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Unauthorized to transfer dataset",
+            )
+
+        if admin_user.organization != dataset.organization:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Unauthorized to transfer dataset",
+            )
+
+        target_result = await self.session.execute(
+            select(User).where(User.id == new_creator_id)
+        )
+        target_user: Optional[User] = target_result.scalar_one_or_none()
+        if target_user is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+
+        if target_user.organization != dataset.organization:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Unauthorized to transfer dataset",
+            )
+
+        old_result = await self.session.execute(
+            select(User).where(User.id == dataset.creator)
+        )
+        old_creator: Optional[User] = old_result.scalar_one_or_none()
+        if old_creator is None:
+            self.logger.warning(
+                "Previous dataset creator user missing: dataset_id=%s creator_id=%s",
+                dataset_id,
+                dataset.creator,
+            )
+
+        title = dataset.dataset_title
+        admin_name = admin_user.full_name
+        new_creator_name = target_user.full_name
+        old_creator_id = dataset.creator
+
+        recipient_emails: list[str] = []
+        if old_creator and old_creator.email and str(old_creator.email).strip():
+            recipient_emails.append(str(old_creator.email).strip())
+        if target_user.email and str(target_user.email).strip():
+            recipient_emails.append(str(target_user.email).strip())
+
+        deduped_emails: list[str] = []
+        seen_lower: set[str] = set()
+        for addr in recipient_emails:
+            key = addr.lower()
+            if key in seen_lower:
+                continue
+            seen_lower.add(key)
+            deduped_emails.append(addr)
+
+        try:
+            await self.session.execute(
+                update(Dataset)
+                .where(Dataset.dataset_id == dataset_id)
+                .values(creator=new_creator_id)
+            )
+            if old_creator_id == new_creator_id:
+                self.logger.debug(
+                    "Dataset transfer contribution rebalance skipped: old_creator and new_creator are same dataset_id=%s user_id=%s",
+                    dataset_id,
+                    new_creator_id,
+                )
+            else:
+                dec_result = await self.session.execute(
+                    update(UserContribution)
+                    .where(UserContribution.user_id == old_creator_id)
+                    .values(
+                        contributions=func.greatest(
+                            UserContribution.contributions - 1, 0
+                        )
+                    )
+                )
+                if dec_result.rowcount == 0:
+                    self.logger.warning(
+                        "Dataset transfer contribution decrement skipped: no user_contributions row dataset_id=%s old_creator_id=%s",
+                        dataset_id,
+                        old_creator_id,
+                    )
+
+                inc_result = await self.session.execute(
+                    update(UserContribution)
+                    .where(UserContribution.user_id == new_creator_id)
+                    .values(contributions=UserContribution.contributions + 1)
+                )
+                if inc_result.rowcount == 0:
+                    self.session.add(
+                        UserContribution(
+                            user_id=new_creator_id,
+                            organization_id=dataset.organization,
+                            contributions=1,
+                        )
+                    )
+            await self.session.commit()
+        except Exception as exc:
+            await self.session.rollback()
+            self.logger.error(
+                "transfer_dataset_creator failed during update/commit: dataset_id=%s new_creator_id=%s error=%s",
+                dataset_id,
+                new_creator_id,
+                exc,
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error transferring dataset",
+            ) from exc
+
+        for addr in deduped_emails:
+            send_dataset_transfer.apply_async(
+                args=[addr, title, new_creator_name, admin_name]
+            )
+
+        self.logger.info(
+            "Dataset transfer complete: dataset_id=%s new_creator=%s admin=%s",
+            dataset_id,
+            new_creator_id,
+            admin_user.id,
+        )
+        return {
+            "dataset_id": str(dataset_id),
+            "creator": str(new_creator_id),
+            "detail": "Dataset transferred successfully",
+        }
+
     async def get_datasets(
         self,
+        current_user: Optional[User] = None,
         apikey: Optional[str] = None,
         limit: int = 10,
         offset: int = 0,
     ) -> List[Dataset]:
         """
-        Get datasets with optional API key filtering and pagination.
+        Get approved datasets with session-first auth precedence and pagination.
 
-        If apikey is not provided:
-            - Returns all datasets where private=False
+        If session user and apikey are both absent:
+            - Returns all datasets where private=False AND approved=True
             - Sorted by created_at (latest first)
 
-        If apikey is provided:
-            - Finds user by apikey
+        If session user is present OR apikey is provided:
+            - Resolves user from session first; if no session, falls back to apikey
             - Gets user's organization UUID
-            - Returns datasets where (private=False OR organization=user's organization)
+            - Returns datasets where approved=True AND
+              (private=False OR organization=user's organization)
             - Sorted by created_at (latest first)
 
         Args:
-            apikey: Optional API key to filter by user's organization
+            current_user: Optional authenticated user from session cookie
+            apikey: Optional API key fallback when session user is unavailable
             limit: Maximum number of results (default: 10)
             offset: Number of results to skip (default: 0)
 
@@ -948,9 +1144,27 @@ class DatasetService:
             HTTPException: If there's an error fetching datasets or invalid apikey
         """
         try:
+            sanitized_apikey = apikey.strip() if apikey and apikey.strip() else None
+            resolved_user: Optional[User] = current_user
+            auth_source = "session" if current_user else "anonymous"
+
+            if resolved_user is None and sanitized_apikey:
+                auth_source = "apikey"
+                user_result = await self.session.execute(
+                    select(User).where(User.apikey == sanitized_apikey)
+                )
+                resolved_user = user_result.scalar_one_or_none()
+                if resolved_user is None:
+                    self.logger.warning("User not found for provided apikey")
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Invalid API key",
+                    )
+
             self.logger.info(
-                "Fetching datasets: apikey=%s, limit=%d, offset=%d",
-                "provided" if apikey else "not provided",
+                "Fetching datasets: auth_source=%s, apikey=%s, limit=%d, offset=%d",
+                auth_source,
+                "provided" if sanitized_apikey else "not provided",
                 limit,
                 offset,
             )
@@ -959,41 +1173,29 @@ class DatasetService:
             query = (
                 select(Dataset)
                 .options(selectinload(Dataset.tags))
+                .where(Dataset.approved.is_(True))
                 .order_by(desc(Dataset.created_at))
             )
 
-            # Apply filtering based on apikey
-            if apikey is None:
-                # No apikey: only public datasets
-                self.logger.debug("No apikey provided, filtering private=False")
+            # Apply filtering based on resolved user (session first, then apikey fallback)
+            if resolved_user is None:
+                self.logger.debug(
+                    "No authenticated requester, filtering private=False and approved=True"
+                )
                 query = query.where(Dataset.private.is_(False))
             else:
-                # Apikey provided: find user and get organization
-                user_result = await self.session.execute(
-                    select(User).where(User.apikey == apikey)
-                )
-                user: Optional[User] = user_result.scalar_one_or_none()
-
-                if user is None:
-                    self.logger.warning("User not found for provided apikey")
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail="Invalid API key",
-                    )
-
-                # Get user's organization UUID
-                user_organization = user.organization
                 self.logger.debug(
-                    "User found for apikey: user_id=%s, organization=%s",
-                    user.id,
-                    user_organization,
+                    "Authenticated requester resolved from %s: user_id=%s, organization=%s",
+                    auth_source,
+                    resolved_user.id,
+                    resolved_user.organization,
                 )
 
                 # Filter: private=False OR organization=user's organization
                 query = query.where(
                     or_(
                         Dataset.private.is_(False),
-                        Dataset.organization == user_organization,
+                        Dataset.organization == resolved_user.organization,
                     )
                 )
 
@@ -1004,9 +1206,10 @@ class DatasetService:
             datasets: List[Dataset] = list(result.scalars().all())
 
             self.logger.info(
-                "Found %d datasets (apikey=%s, limit=%d, offset=%d)",
+                "Found %d datasets (auth_source=%s, apikey=%s, limit=%d, offset=%d)",
                 len(datasets),
-                "provided" if apikey else "not provided",
+                auth_source,
+                "provided" if sanitized_apikey else "not provided",
                 limit,
                 offset,
             )
@@ -1017,7 +1220,8 @@ class DatasetService:
             raise
         except Exception as e:
             self.logger.exception(
-                "Unexpected error fetching datasets: apikey=%s, error=%s",
+                "Unexpected error fetching datasets: auth_source=%s, apikey=%s, error=%s",
+                "session" if current_user else ("apikey" if apikey else "anonymous"),
                 "provided" if apikey else "not provided",
                 e,
             )

@@ -299,3 +299,27 @@
   }
 }
 
+/* Organization.jsx — members Edit / modal actions (Bootstrap + exact hex; Tailwind not in this CRA app) */
+.btn.org-members-btn-primary {
+  background-color: #0d6efd;
+  border-color: #0d6efd;
+  color: #fff;
+}
+.btn.org-members-btn-primary:hover:not(:disabled),
+.btn.org-members-btn-primary:focus:not(:disabled) {
+  background-color: #0b5ed7;
+  border-color: #0b5ed7;
+  color: #fff;
+}
+.btn.org-members-btn-danger {
+  background-color: #dc2626;
+  border-color: #dc2626;
+  color: #fff;
+}
+.btn.org-members-btn-danger:hover:not(:disabled),
+.btn.org-members-btn-danger:focus:not(:disabled) {
+  background-color: #ef4444;
+  border-color: #ef4444;
+  color: #fff;
+}
+

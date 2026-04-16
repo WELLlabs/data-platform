@@ -135,11 +135,6 @@ function Profile() {
           offset: offset.toString(),
         });
 
-        // Add apikey if user is signed in
-        if (isAuthenticated && user?.apikey) {
-          params.append("apikey", user.apikey);
-        }
-
         const response = await fetch(
           `${user_datasets_endpoint}?${params.toString()}`,
           { credentials: "include" }
@@ -205,8 +200,6 @@ function Profile() {
     profileData?.privileges?.user_datasets,
     profileData?.id,
     currentPage,
-    isAuthenticated,
-    user?.apikey,
     searchParams,
   ]);
 
@@ -224,7 +217,7 @@ function Profile() {
     if (isSuperuser) return "Super User";
     if (role === 0) return "Member";
     if (role === 1) return "Admin";
-    if (role === 2) return "Editor";
+    if (role === 2) return "Reviewer";
     return "Member";
   };
 

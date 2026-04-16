@@ -1,7 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import { upload_url_endpoint, add_files_url_endpoint } from "../api/endpoints";
+import {
+  upload_url_endpoint,
+  add_files_url_endpoint,
+  create_upload_job_endpoint,
+  complete_upload_job_endpoint,
+} from "../api/endpoints";
 import HelpTooltip from "../components/HelpTooltip";
 
 function AddFile() {
@@ -143,10 +148,27 @@ function AddFile() {
       setSubmitting(true);
       setProgress(0);
 
-      // 1) Get upload URL for selected filename
+      // 1) Create an upload job
+      const createJobResp = await fetch(create_upload_job_endpoint, {
+        method: "POST",
+        credentials: "include",
+      });
+
+      if (!createJobResp.ok) {
+        const txt = await createJobResp.text();
+        throw new Error(`Failed to create upload job: ${txt}`);
+      }
+
+      const createJobData = await createJobResp.json();
+      const jobId = createJobData.job_id;
+      if (!jobId) {
+        throw new Error("Job ID missing in create upload job response.");
+      }
+
+      // 2) Get upload URL for selected filename
       const filenameOnly = file.name; // do not include path
       const uploadResp = await fetch(
-        `${upload_url_endpoint}?filename=${encodeURIComponent(filenameOnly)}`,
+        `${upload_url_endpoint}?job_id=${encodeURIComponent(jobId)}&filename=${encodeURIComponent(filenameOnly)}`,
         { credentials: "include" }
       );
 
@@ -156,17 +178,20 @@ function AddFile() {
       }
 
       const uploadData = await uploadResp.json();
-      const uploadUrl =
-        uploadData.upload_url || uploadData.url || uploadData.uploadUrl;
+      const uploadUrl = uploadData.presigned_upload_url;
+      const fileId = uploadData.file_id;
       if (!uploadUrl) {
         throw new Error("Upload URL missing in response.");
+      }
+      if (!fileId) {
+        throw new Error("File ID missing in upload URL response.");
       }
 
       // Use the content_type from the response (matches what was used to sign the presigned URL)
       // Fallback to file.type for backward compatibility
       const contentType = uploadData.content_type || file.type || "application/octet-stream";
 
-      // 2) Upload the file to S3 using the presigned URL (PUT)
+      // 3) Upload the file to S3 using the presigned URL (PUT)
       await new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.upload.onprogress = (evt) => {
@@ -185,13 +210,11 @@ function AddFile() {
         xhr.send(file);
       });
 
-      // 3) Call add_file endpoint with FormData
-      const userId = user.id;
-      const fileKey = `${userId}/${filenameOnly}`;
-
+      // 4) Call add_file endpoint with FormData
       const form = new FormData();
+      form.append("job_id", jobId);
+      form.append("file_id", fileId);
       form.append("file_title", constrained(fileTitle, 200));
-      form.append("file_key", fileKey);
       form.append("file_description", constrained(fileDescription, 1000));
       form.append("file_format", constrained(fileFormat, 20));
       form.append("dataset_id", datasetId);
@@ -219,6 +242,20 @@ function AddFile() {
 
       const result = await addFileResp.json();
       console.log("File added successfully:", result);
+
+      // 5) Complete the upload job
+      const completeJobResp = await fetch(
+        `${complete_upload_job_endpoint}?job_id=${encodeURIComponent(jobId)}`,
+        {
+          method: "POST",
+          credentials: "include",
+        }
+      );
+
+      if (!completeJobResp.ok) {
+        const txt = await completeJobResp.text();
+        throw new Error(`Failed to complete upload job: ${txt}`);
+      }
 
       // Success
       setSuccess(true);

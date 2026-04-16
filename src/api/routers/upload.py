@@ -2,9 +2,12 @@
 Upload router for handling file upload URL generation.
 """
 
+import asyncio
+import json
 import logging
+import re
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
 import httpx
@@ -24,12 +27,16 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from models.dataset import Dataset
 from models.file import File
+from models.orphaned_s3_object import OrphanedS3Object
 from models.file_download import FileDownloadCount, FileDownloadLog
 from models.user import User
 from schemas.file import FileEditRequest
-from services.auth import AuthService, RedisStrategy, get_auth_service
+from redis.asyncio import Redis
+from services.auth import AuthService, RedisStrategy, get_auth_service, get_upload_jobs_redis
 from services.dataset import DatasetService, get_dataset_service
 from services.upload import UploadService, get_upload_service
+from services.upload_completion import complete_upload_job
+from services.upload_job import get_job_status
 from services.user import UserService, get_user_service
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -39,6 +46,14 @@ from utils.security import sanitize_input
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+def _upload_job_ttl() -> int:
+    return settings.UPLOAD_JOB_CACHE_AGE_SECONDS
+
+
+async def _redis_set_json(redis: Redis, key: str, obj: Any, ttl: int) -> None:
+    await redis.setex(key, ttl, json.dumps(obj, default=str))
+
 
 ALLOWED_PERMISSIONS = [
     "CC0: Public Domain",
@@ -193,15 +208,51 @@ class UploadController:
         dataset_service: DatasetService,
         user_service: UserService,
         auth_service: AuthService,
+        redis_jobs: Redis,
     ):
         self.upload_service = upload_service
         self.session = session
         self.dataset_service = dataset_service
         self.user_service = user_service
         self.auth_service = auth_service
+        self.redis_jobs = redis_jobs
         self.logger = logging.getLogger(__name__)
 
-    async def get_upload_url(self, filename: str, user: User) -> JSONResponse:
+    async def create_upload_job(self, user: User) -> JSONResponse:
+        """Create Redis job + events; require verified user."""
+        if not await self.user_service.check_if_user_verified_by_id(user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="email address verification and/or organization approval pending.",
+            )
+        ttl = _upload_job_ttl()
+        job_id = str(uuid4())
+        now = datetime.now(timezone.utc)
+        expires_at = datetime.fromtimestamp(now.timestamp() + ttl, tz=timezone.utc)
+        job_meta: Dict[str, Any] = {
+            "job_id": job_id,
+            "creator": str(user.id),
+            "full_name": user.full_name,
+            "organization": user.organization,
+            "status": "open",
+            "created_at": now.isoformat(),
+            "expires_at": expires_at.isoformat(),
+            "closed_at": None,
+        }
+        await _redis_set_json(self.redis_jobs, f"job:{job_id}", job_meta, ttl)
+        await self.redis_jobs.setex(f"job:{job_id}:events", ttl, json.dumps([]))
+        return JSONResponse(
+            content={
+                "job_id": job_id,
+                "creator": str(user.id),
+                "expires_at": expires_at.isoformat(),
+            },
+            status_code=status.HTTP_200_OK,
+        )
+
+    async def get_upload_url(
+        self, job_id: str, filename: str, user: User
+    ) -> JSONResponse:
         """
         Get presigned upload URL for a file.
 
@@ -221,7 +272,35 @@ class UploadController:
             HTTPException: If validation fails or service error occurs
         """
         try:
-            # Sanitize and validate filename
+            # Sanitize job_id
+            jid = sanitize_input(job_id)
+            if not jid or not jid.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid job_id",
+                )
+            try:
+                UUID(jid.strip())
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid job_id",
+                )
+            jid = jid.strip()
+
+            raw_job = await self.redis_jobs.get(f"job:{jid}")
+            if not raw_job:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"job {jid} does not exist.",
+                )
+            job = json.loads(raw_job)
+            if str(job.get("creator")) != str(user.id):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Job does not belong to this user",
+                )
+
             sanitized_filename = sanitize_input(filename)
             if not sanitized_filename or not sanitized_filename.strip():
                 self.logger.warning(
@@ -232,7 +311,6 @@ class UploadController:
                     detail="Invalid filename",
                 )
 
-            # Remove any path components for security (prevent directory traversal)
             sanitized_filename = sanitized_filename.split("/")[-1].split("\\")[-1]
 
             if not sanitized_filename:
@@ -241,7 +319,7 @@ class UploadController:
                 )
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Filename cannot be empty",
+                    detail="Invalid filename",
                 )
 
             self.logger.info(
@@ -250,7 +328,6 @@ class UploadController:
                 sanitized_filename,
             )
 
-            # Check if file already exists
             file_status = await self.upload_service.check_file_exists(
                 user.id, sanitized_filename
             )
@@ -264,10 +341,37 @@ class UploadController:
                     detail="File already exists",
                 )
 
-            # Get presigned upload URL
+            file_id = uuid4()
             presigned_data = await self.upload_service.get_presigned_upload_url(
                 user.id, sanitized_filename
             )
+
+            url = (
+                presigned_data.get("presigned_upload_url")
+                or presigned_data.get("presigned_url")
+                or presigned_data.get("url")
+                or presigned_data.get("upload_url")
+            )
+            if not url:
+                self.logger.error(
+                    "S3 handler response missing URL keys: %s", presigned_data.keys()
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="S3 handler service unavailable",
+                )
+
+            file_key = f"{user.id}/{sanitized_filename}"
+            self.session.add(
+                OrphanedS3Object(
+                    file_id=file_id,
+                    job_id=UUID(jid),
+                    file_key=file_key,
+                    bucket=settings.S3_BUCKET,
+                    status="initiated",
+                )
+            )
+            await self.session.commit()
 
             self.logger.info(
                 "Presigned URL generated successfully for user %s, filename: %s",
@@ -276,13 +380,20 @@ class UploadController:
             )
 
             return JSONResponse(
-                content=jsonable_encoder(presigned_data),
+                content={
+                    "job_id": jid,
+                    "file_id": str(file_id),
+                    "presigned_upload_url": url,
+                    "content_type": presigned_data.get("content_type")
+                    or "application/octet-stream",
+                },
                 status_code=status.HTTP_200_OK,
             )
 
         except HTTPException:
             raise
         except Exception as e:
+            await self.session.rollback()
             self.logger.exception(
                 "Unexpected error generating upload URL for user %s: %s",
                 user.id if user else "unknown",
@@ -435,8 +546,9 @@ class UploadController:
 
     async def add_file(
         self,
+        job_id: str,
+        file_id: UUID,
         file_title: str,
-        file_key: str,
         file_description: Optional[str],
         file_format: Optional[str],
         dataset_id: UUID,
@@ -453,142 +565,91 @@ class UploadController:
         user: User,
     ) -> JSONResponse:
         """
-        Add a new file record to the files table.
-
-        This method:
-        1. Validates the dataset_id exists
-        2. Checks if the file exists in S3
-        3. Gets file size from S3 response
-        4. Creates a new file record in the database
-
-        Args:
-            file_title: Title of the file
-            file_key: S3 file key
-            file_description: Optional file description
-            file_format: Optional file format/extension
-            dataset_id: UUID of the dataset this file belongs to
-
-        Returns:
-            JSONResponse containing created file information
-
-        Raises:
-            HTTPException: If validation fails or creation fails
+        Register an add_file job event in Redis (no files row).
         """
         try:
-            # Sanitize and validate inputs
+            jid = sanitize_input(job_id)
+            if not jid or not jid.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid job_id",
+                )
+            jid = jid.strip()
+            try:
+                UUID(jid)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid job_id",
+                )
+
+            raw_job = await self.redis_jobs.get(f"job:{jid}")
+            if not raw_job:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"job {jid} does not exist.",
+                )
+            job = json.loads(raw_job)
+            if str(job.get("creator")) != str(user.id):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Job does not belong to this user",
+                )
+
+            events_raw = await self.redis_jobs.get(f"job:{jid}:events")
+            event_ids: List[str] = json.loads(events_raw or "[]")
+            has_dataset_in_events = "dataset" in event_ids
+            ev_ds = await self.redis_jobs.get(f"job:{jid}:event:dataset")
+
+            if has_dataset_in_events and ev_ds:
+                ds_ev = json.loads(ev_ds)
+                if str(ds_ev.get("dataset_id")) != str(dataset_id):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=(
+                            f"provided Dataset ID {dataset_id} does not match "
+                            "with the job details."
+                        ),
+                    )
+            else:
+                result_ds = await self.session.execute(
+                    select(Dataset).where(Dataset.dataset_id == dataset_id)
+                )
+                ds_row = result_ds.scalar_one_or_none()
+                if not ds_row or ds_row.creator != user.id:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="dataset does not exist or inadequate permission",
+                    )
+
             sanitized_file_title = sanitize_input(file_title)
             if not sanitized_file_title or not sanitized_file_title.strip():
-                self.logger.warning("Invalid file_title provided: %s", file_title)
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid file_title",
                 )
-
-            sanitized_file_key = sanitize_input(file_key)
-            if not sanitized_file_key or not sanitized_file_key.strip():
-                self.logger.warning("Invalid file_key provided: %s", file_key)
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid file_key",
-                )
-
-            # Sanitize optional fields
             sanitized_file_description = (
                 sanitize_input(file_description) if file_description else None
             )
             sanitized_file_format = sanitize_input(file_format) if file_format else None
-
-            # Validate file_format length if provided
-            if sanitized_file_format and len(sanitized_file_format) > 20:
-                self.logger.warning(
-                    "File format too long: %s (max 20 chars)", sanitized_file_format
-                )
+            if sanitized_file_format and len(sanitized_file_format) > 50:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="File format must be 20 characters or less",
+                    detail="File format must be 50 characters or less",
                 )
 
-            self.logger.info(
-                "Processing add_file request for dataset_id: %s, file_key: %s",
-                dataset_id,
-                sanitized_file_key,
-            )
-
-            # 1. Validate dataset_id exists in database
-            result = await self.session.execute(
-                select(Dataset).where(Dataset.dataset_id == dataset_id)
-            )
-            dataset = result.scalar_one_or_none()
-
-            if not dataset:
-                self.logger.warning("Dataset not found: %s", dataset_id)
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Dataset not found",
-                )
-
-            # 1.5. Authorization check: verify user is the dataset creator
-            if dataset.creator != user.id:
-                self.logger.warning(
-                    "Unauthorized file addition attempt: user=%s, dataset_creator=%s, dataset_id=%s",
-                    user.id,
-                    dataset.creator,
-                    dataset_id,
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Only the dataset creator can add files to this dataset",
-                )
-
-            # 2. Check if file exists in S3 and get file size
-            file_status = await self.upload_service.check_file_status_by_key(
-                sanitized_file_key
-            )
-
-            if not file_status.get("exists", False):
-                self.logger.warning("File does not exist in S3: %s", sanitized_file_key)
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="File does not exist in S3",
-                )
-
-            # Get file size from S3 response
-            file_size = file_status.get("size", 0)
-            if file_size is None:
-                file_size = 0
-
-            self.logger.info(
-                "File validated in S3: key=%s, size=%d", sanitized_file_key, file_size
-            )
-
-            # 3. Sanitize and validate additional fields
             sanitized_provenance = sanitize_input(provenance)
-            if sanitized_provenance and len(sanitized_provenance) > 125:
-                self.logger.warning(
-                    "Provenance truncated for file_key=%s (length %d, max 125)",
-                    sanitized_file_key,
-                    len(sanitized_provenance),
-                )
-                sanitized_provenance = sanitized_provenance[:125]
+            if sanitized_provenance and len(sanitized_provenance) > 5000:
+                self.logger.warning("Provenance truncated (max 5000)")
+                sanitized_provenance = sanitized_provenance[:5000]
             sanitized_source = sanitize_input(source)
-            if sanitized_source and len(sanitized_source) > 1000:
-                self.logger.warning(
-                    "Source truncated for file_key=%s (length %d, max 1000)",
-                    sanitized_file_key,
-                    len(sanitized_source),
-                )
-                sanitized_source = sanitized_source[:1000]
+            if sanitized_source and len(sanitized_source) > 5000:
+                self.logger.warning("Source truncated (max 5000)")
+                sanitized_source = sanitized_source[:5000]
             sanitized_cite_as = sanitize_input(cite_as)
             sanitized_geography = sanitize_input(geography)
-
-            sanitized_permissions = _validate_permissions(
-                permissions, self.logger
-            )
-
-            # Validate duration (default to 0 if None)
+            sanitized_permissions = _validate_permissions(permissions, self.logger)
             duration_value = duration if duration is not None else 0
-
-            # Validate value (must be "high", "medium", or "low"; invalid defaults to "low")
             val = sanitize_input(value)
             stripped_value = val.strip() if val else None
             if stripped_value not in ["high", "medium", "low"]:
@@ -597,8 +658,6 @@ class UploadController:
                         "Invalid value '%s', defaulting to 'low'", stripped_value
                     )
                 stripped_value = "low"
-
-            # Validate temporal range
             if temporal_to is not None and temporal_from is not None:
                 if temporal_to < temporal_from:
                     raise HTTPException(
@@ -606,110 +665,101 @@ class UploadController:
                         detail="temporal_to must be after temporal_from",
                     )
 
-            # 4. Generate UUID for file_id
-            file_id = uuid4()
-
-            # 5. Create File record with all fields
-            # Note: created_at uses server_default=func.now() in the model,
-            # but we'll set it explicitly to avoid any deprecation warnings
-            new_file = File(
-                file_id=file_id,
-                file_title=sanitized_file_title,
-                file_key=sanitized_file_key,
-                file_description=sanitized_file_description,
-                file_format=sanitized_file_format,
-                dataset_id=dataset_id,
-                file_size=file_size,
-                bucket=settings.S3_BUCKET,
-                created_at=datetime.now(timezone.utc),
-                provenance=sanitized_provenance,
-                source=sanitized_source,
-                cite_as=sanitized_cite_as,
-                groundtruthed=groundtruthed,
-                permissions=sanitized_permissions,
-                duration=duration_value,
-                value=stripped_value,
-                temporal_from=temporal_from,
-                temporal_to=temporal_to,
-                geography=sanitized_geography,
-            )
-
-            # Add to session and commit
-            self.session.add(new_file)
-            self.session.add(
-                FileDownloadCount(
-                    file_id=file_id,
-                    dataset_id=dataset_id,
-                    downloads=0,
-                )
-            )
-            await self.session.commit()
-            await self.session.refresh(new_file)
-
-            self.logger.info(
-                "File record created successfully: file_id=%s, dataset_id=%s",
-                file_id,
-                dataset_id,
-            )
-
-            # Prepare response data
-            response_data = {
-                "file_id": str(new_file.file_id),
-                "file_title": new_file.file_title,
-                "file_key": new_file.file_key,
-                "file_description": new_file.file_description,
-                "file_format": new_file.file_format,
-                "dataset_id": str(new_file.dataset_id),
-                "file_size": new_file.file_size,
-                "downloads": 0,
-                "bucket": new_file.bucket,
-                "provenance": new_file.provenance,
-                "source": new_file.source,
-                "cite_as": new_file.cite_as,
-                "groundtruthed": new_file.groundtruthed,
-                "permissions": new_file.permissions,
-                "duration": new_file.duration,
-                "value": new_file.value,
-                "temporal_from": new_file.temporal_from.isoformat()
-                if new_file.temporal_from
-                else None,
-                "temporal_to": new_file.temporal_to.isoformat()
-                if new_file.temporal_to
-                else None,
-                "geography": new_file.geography,
-                "created_at": new_file.created_at.isoformat()
-                if new_file.created_at
-                else None,
-            }
-
-            await _invalidate_dataset_cache(dataset_id, self.auth_service, self.logger)
-            return JSONResponse(
-                content=jsonable_encoder(response_data),
-                status_code=status.HTTP_201_CREATED,
-            )
-
-        except HTTPException:
-            await self.session.rollback()
-            raise
-        except IntegrityError as e:
-            await self.session.rollback()
-            self.logger.exception("Integrity error creating file: %s", e)
-            # Check if it's a duplicate file_key error
-            if "file_key" in str(e).lower() or "unique" in str(e).lower():
+            ttl = _upload_job_ttl()
+            lock_key = f"job:{jid}:lock"
+            event_id: Optional[str] = None
+            for attempt in range(5):
+                got = await self.redis_jobs.set(lock_key, "1", nx=True, ex=3)
+                if got:
+                    try:
+                        if not await self.redis_jobs.get(f"job:{jid}"):
+                            self.logger.warning(
+                                "job:%s missing after lock (expired or deleted)", jid
+                            )
+                            raise HTTPException(
+                                status_code=status.HTTP_404_NOT_FOUND,
+                                detail=f"job {jid} does not exist.",
+                            )
+                        raw_ev = await self.redis_jobs.get(f"job:{jid}:events")
+                        reg: List[str] = json.loads(raw_ev or "[]")
+                        max_n = 0
+                        for e in reg:
+                            m = re.match(r"^file_(\d+)$", e)
+                            if m:
+                                max_n = max(max_n, int(m.group(1)))
+                        event_id = f"file_{max_n + 1}"
+                        if event_id in reg:
+                            raise HTTPException(
+                                status_code=status.HTTP_409_CONFLICT,
+                                detail=f"event {event_id} already registered",
+                            )
+                        reg.append(event_id)
+                        await self.redis_jobs.setex(
+                            f"job:{jid}:events", ttl, json.dumps(reg)
+                        )
+                        job_ttl_ok = await self.redis_jobs.expire(f"job:{jid}", ttl)
+                        if not job_ttl_ok:
+                            self.logger.warning(
+                                "job:%s missing after lock (expired or deleted)", jid
+                            )
+                            raise HTTPException(
+                                status_code=status.HTTP_404_NOT_FOUND,
+                                detail=f"job {jid} does not exist.",
+                            )
+                    finally:
+                        await self.redis_jobs.delete(lock_key)
+                    break
+                await asyncio.sleep(0.1 * (attempt + 1))
+            else:
                 raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="File with this key already exists",
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Could not acquire job lock",
                 )
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="File record already exists or constraint violation",
+
+            assert event_id is not None
+            now = datetime.now(timezone.utc)
+            tf_iso = temporal_from.isoformat() if temporal_from else None
+            tt_iso = temporal_to.isoformat() if temporal_to else None
+            payload = {
+                "event_id": event_id,
+                "job_id": jid,
+                "type": "add_file",
+                "status": "pending",
+                "error": None,
+                "started_at": now.isoformat(),
+                "finished_at": None,
+                "file_id": str(file_id),
+                "file_title": sanitized_file_title,
+                "file_description": sanitized_file_description,
+                "file_format": sanitized_file_format,
+                "dataset_id": str(dataset_id),
+                "groundtruthed": groundtruthed,
+                "provenance": sanitized_provenance,
+                "source": sanitized_source,
+                "cite_as": sanitized_cite_as,
+                "permissions": sanitized_permissions,
+                "duration": duration_value,
+                "value": stripped_value,
+                "temporal_from": tf_iso,
+                "temporal_to": tt_iso,
+                "geography": sanitized_geography,
+                "created_at": now.isoformat(),
+            }
+            await _redis_set_json(
+                self.redis_jobs, f"job:{jid}:event:{event_id}", payload, ttl
             )
+
+            return JSONResponse(
+                content={"job_id": jid, "file_id": str(file_id)},
+                status_code=status.HTTP_200_OK,
+            )
+        except HTTPException:
+            raise
         except Exception as e:
-            await self.session.rollback()
-            self.logger.exception("Unexpected error creating file record: %s", e)
+            self.logger.exception("add_file error: %s", e)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error creating file record",
+                detail="Error processing add_files request",
             )
 
     async def delete_file(self, file_id: UUID, apikey: str) -> JSONResponse:
@@ -1034,6 +1084,7 @@ async def get_upload_controller(
     dataset_service: DatasetService = Depends(get_dataset_service),
     user_service: UserService = Depends(get_user_service),
     auth_service: AuthService = Depends(get_auth_service),
+    redis_jobs: Redis = Depends(get_upload_jobs_redis),
 ) -> UploadController:
     """
     Dependency function to get UploadController instance.
@@ -1048,13 +1099,68 @@ async def get_upload_controller(
         UploadController instance
     """
     return UploadController(
-        upload_service, session, dataset_service, user_service, auth_service
+        upload_service,
+        session,
+        dataset_service,
+        user_service,
+        auth_service,
+        redis_jobs,
     )
 
 
 # Route handlers
+@router.post("/create_upload_job")
+async def http_create_upload_job(
+    user: User = Depends(get_current_active_user),
+    controller: UploadController = Depends(get_upload_controller),
+):
+    """Create a new upload job in Redis (UPLOAD_JOBS_BACKEND). Requires verified user."""
+    return await controller.create_upload_job(user)
+
+
+@router.post("/complete_upload_job")
+async def http_complete_upload_job(
+    job_id: str = Query(..., description="Upload job UUID"),
+    user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_session),
+    redis_jobs: Redis = Depends(get_upload_jobs_redis),
+    upload_service: UploadService = Depends(get_upload_service),
+    dataset_service: DatasetService = Depends(get_dataset_service),
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    """Persist datasets/files from Redis job events; requires job status open and matching creator."""
+    return await complete_upload_job(
+        job_id=job_id,
+        user=user,
+        session=session,
+        redis_jobs=redis_jobs,
+        upload_service=upload_service,
+        dataset_service=dataset_service,
+        auth_service=auth_service,
+    )
+
+
+@router.get("/job_status/{job_id}")
+async def http_job_status(
+    job_id: str,
+    user: User = Depends(get_current_active_user),
+    redis_jobs: Redis = Depends(get_upload_jobs_redis),
+):
+    """Return aggregated job metadata and per-event statuses (creator only)."""
+    st = await get_job_status(job_id.strip(), redis_jobs)
+    if "error" in st:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=st["error"])
+    if str(st.get("creator")) != str(user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Job does not belong to this user",
+        )
+    return st
+
+
 @router.get("/upload_url")
 async def get_upload_url(
+    job_id: str = Query(..., description="Upload job UUID"),
     filename: str = Query(..., description="Name of the file to upload"),
     user: User = Depends(get_current_active_user),
     controller: UploadController = Depends(get_upload_controller),
@@ -1086,7 +1192,7 @@ async def get_upload_url(
             - 502: S3 handler service unavailable
             - 504: S3 handler service timeout
     """
-    return await controller.get_upload_url(filename, user)
+    return await controller.get_upload_url(job_id, filename, user)
 
 
 @router.get("/download_url")
@@ -1120,11 +1226,12 @@ async def get_download_url(
 
 @router.post("/add_file")
 async def add_files(
+    job_id: str = Form(..., description="Upload job UUID"),
+    file_id: str = Form(..., description="File UUID from presign (/upload_url)"),
     file_title: str = Form(..., description="File title"),
-    file_key: str = Form(..., description="S3 file key"),
     file_description: Optional[str] = Form(None, description="File description"),
     file_format: Optional[str] = Form(
-        None, description="File format/extension (max 20 chars)"
+        None, description="File format/extension (max 50 chars)"
     ),
     dataset_id: str = Form(..., description="Dataset ID (UUID)"),
     groundtruthed: Optional[bool] = Form(
@@ -1146,41 +1253,16 @@ async def add_files(
     user: User = Depends(get_current_active_user),
     controller: UploadController = Depends(get_upload_controller),
 ):
-    """
-    Add a new file record to the files table.
-
-    This endpoint:
-    - Requires authentication (valid session cookie)
-    - Checks if the user is active and valid
-    - Validates that the dataset exists in the database
-    - Validates that the file exists in S3
-    - Creates a new file record in the files table
-
-    Args:
-        file_title: Title of the file
-        file_key: S3 file key (e.g., "user_id/filename")
-        file_description: Optional file description
-        file_format: Optional file format/extension (max 20 characters)
-        dataset_id: Dataset ID (UUID) that this file belongs to
-        user: Authenticated user (from dependency)
-        controller: Upload controller (from dependency)
-
-    Returns:
-        JSON response containing created file information
-
-    Raises:
-        HTTPException:
-            - 401: Not authenticated
-            - 403: User account not active
-            - 400: Invalid input data
-            - 404: Dataset not found or file does not exist in S3
-            - 409: File with this key already exists
-            - 500: Internal server error
-            - 502: S3 handler service unavailable
-            - 504: S3 handler service timeout
-    """
+    """Stage an add_file event for an upload job (Redis; DB rows are written at /complete_upload_job)."""
     try:
-        # Parse dataset_id UUID
+        try:
+            file_uuid = UUID(file_id.strip())
+        except ValueError:
+            logger.warning("Invalid file_id UUID: %s", file_id)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid file_id UUID format",
+            )
         try:
             dataset_uuid = UUID(dataset_id)
         except ValueError:
@@ -1217,8 +1299,9 @@ async def add_files(
                 )
 
         return await controller.add_file(
+            job_id=job_id,
+            file_id=file_uuid,
             file_title=file_title,
-            file_key=file_key,
             file_description=file_description,
             file_format=file_format,
             dataset_id=dataset_uuid,

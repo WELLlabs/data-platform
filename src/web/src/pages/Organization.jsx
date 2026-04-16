@@ -1,97 +1,238 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
-import { 
-  Container, 
-  Row, 
-  Col, 
-  Card, 
-  CardBody, 
-  CardHeader, 
-  Spinner, 
+import {
+  Container,
+  Row,
+  Col,
+  Card,
+  CardBody,
+  CardHeader,
+  Spinner,
   Alert,
   Button,
-  Table
+  Table,
+  Modal,
+  ModalHeader,
+  ModalBody,
+  ModalFooter,
 } from 'reactstrap';
 import { useAuth } from '../contexts/AuthContext';
-import { organization_by_id_endpoint } from '../api/endpoints';
+import {
+  organization_by_id_endpoint,
+  approve_user_endpoint,
+  reject_user_endpoint,
+  change_user_role_endpoint,
+  delete_user_endpoint,
+} from '../api/endpoints';
+
+const ROLE_OPTIONS = [
+  { value: 0, label: 'Member' },
+  { value: 1, label: 'Admin' },
+  { value: 2, label: 'Reviewer' },
+];
 
 const Organization = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { isAuthenticated, user, loading: authLoading } = useAuth();
-  
+
   const [organization, setOrganization] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Get organization ID from query parameter
+  const [membersEditOpen, setMembersEditOpen] = useState(false);
+  const [selectedMemberId, setSelectedMemberId] = useState(null);
+  const [roleDraft, setRoleDraft] = useState(0);
+  const [membersActionLoading, setMembersActionLoading] = useState(false);
+  const [membersModalError, setMembersModalError] = useState(null);
+
   const orgIdFromQuery = searchParams.get('id');
 
-  useEffect(() => {
-    const fetchOrganization = async () => {
-      try {
-        setLoading(true);
-        setError(null);
+  const fetchOrganization = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
 
-        let organizationId = orgIdFromQuery;
+      let organizationId = orgIdFromQuery;
 
-        // If no ID in query params and user is not authenticated, redirect to signin
-        if (!organizationId && !isAuthenticated && !authLoading) {
-          navigate('/signin');
-          return;
-        }
-
-        // If no ID in query params but user is authenticated, use user's organization
-        if (!organizationId && isAuthenticated && user) {
-          organizationId = user.organization;
-        }
-
-        // If still no organization ID, show error
-        if (!organizationId) {
-          setError('No organization ID provided');
-          setLoading(false);
-          return;
-        }
-
-        // Build URL with optional apikey query parameter
-        let url = organization_by_id_endpoint(organizationId);
-        if (isAuthenticated && user?.apikey) {
-          url += `?apikey=${encodeURIComponent(user.apikey)}`;
-        }
-
-        // Fetch organization details
-        const response = await fetch(url, {
-          method: 'GET',
-          credentials: 'include'
-        });
-
-        if (!response.ok) {
-          if (response.status === 404) {
-            setError('Organization not found');
-          } else {
-            setError('Failed to fetch organization details');
-          }
-          return;
-        }
-
-        const orgData = await response.json();
-        setOrganization(orgData);
-
-      } catch (err) {
-        console.error('Error fetching organization:', err);
-        setError('An error occurred while fetching organization details');
-      } finally {
+      if (!organizationId && !isAuthenticated && !authLoading) {
+        navigate('/signin');
         setLoading(false);
+        return;
       }
-    };
 
-    // Only fetch if auth loading is complete
-    if (!authLoading) {
-      fetchOrganization();
+      if (!organizationId && isAuthenticated && user) {
+        organizationId = user.organization;
+      }
+
+      if (!organizationId) {
+        setError('No organization ID provided');
+        setLoading(false);
+        return;
+      }
+
+      let url = organization_by_id_endpoint(organizationId);
+      if (isAuthenticated && user?.apikey) {
+        url += `?apikey=${encodeURIComponent(user.apikey)}`;
+      }
+
+      const response = await fetch(url, {
+        method: 'GET',
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          setError('Organization not found');
+        } else {
+          setError('Failed to fetch organization details');
+        }
+        return;
+      }
+
+      const orgData = await response.json();
+      setOrganization(orgData);
+    } catch (err) {
+      console.error('Error fetching organization:', err);
+      setError('An error occurred while fetching organization details');
+    } finally {
+      setLoading(false);
     }
   }, [orgIdFromQuery, isAuthenticated, user, authLoading, navigate]);
 
-  // Show loading spinner while auth is loading
+  useEffect(() => {
+    if (!authLoading) {
+      fetchOrganization();
+    }
+  }, [fetchOrganization, authLoading]);
+
+  const parseApiError = async (response, fallback) => {
+    try {
+      const errorData = await response.json();
+      const detail = errorData?.detail;
+      if (typeof detail === 'string') return detail;
+      if (Array.isArray(detail)) return detail.map((d) => d.msg || String(d)).join(', ');
+      return fallback;
+    } catch {
+      return response.statusText || fallback;
+    }
+  };
+
+  const handleOpenMembersEdit = () => {
+    const members = organization?.members || [];
+    const first = members[0];
+    setSelectedMemberId(first ? first.id : null);
+    setRoleDraft(first != null ? Number(first.role) : 0);
+    setMembersModalError(null);
+    setMembersEditOpen(true);
+  };
+
+  const handleCloseMembersEdit = () => {
+    if (membersActionLoading) return;
+    setMembersEditOpen(false);
+    setMembersModalError(null);
+  };
+
+  const handleSelectMemberChange = (e) => {
+    const id = e.target.value;
+    setSelectedMemberId(id);
+    const m = organization?.members?.find((x) => x.id === id);
+    if (m) setRoleDraft(Number(m.role));
+  };
+
+  const selectedMember =
+    organization?.members?.find((m) => m.id === selectedMemberId) ?? null;
+
+  const isOrgAdmin =
+    isAuthenticated &&
+    user &&
+    Number(user.role) === 1 &&
+    String(user.organization) === String(organization?.id);
+
+  const handleApproveMember = async () => {
+    if (!selectedMember) return;
+    try {
+      setMembersActionLoading(true);
+      setMembersModalError(null);
+      const response = await fetch(
+        approve_user_endpoint(selectedMember.id, roleDraft),
+        { method: 'PUT', credentials: 'include' }
+      );
+      if (!response.ok) {
+        throw new Error(await parseApiError(response, 'Failed to approve user.'));
+      }
+      await fetchOrganization();
+    } catch (err) {
+      setMembersModalError(err.message || 'Failed to approve user.');
+    } finally {
+      setMembersActionLoading(false);
+    }
+  };
+
+  const handleRejectMember = async () => {
+    if (!selectedMember) return;
+    try {
+      setMembersActionLoading(true);
+      setMembersModalError(null);
+      const response = await fetch(reject_user_endpoint(selectedMember.id), {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        throw new Error(await parseApiError(response, 'Failed to reject user.'));
+      }
+      setMembersEditOpen(false);
+      await fetchOrganization();
+    } catch (err) {
+      setMembersModalError(err.message || 'Failed to reject user.');
+    } finally {
+      setMembersActionLoading(false);
+    }
+  };
+
+  const handleChangeMemberRole = async () => {
+    if (!selectedMember) return;
+    try {
+      setMembersActionLoading(true);
+      setMembersModalError(null);
+      const response = await fetch(
+        change_user_role_endpoint(selectedMember.id, roleDraft),
+        { method: 'PUT', credentials: 'include' }
+      );
+      if (!response.ok) {
+        throw new Error(
+          await parseApiError(response, 'Failed to update user role.')
+        );
+      }
+      await fetchOrganization();
+    } catch (err) {
+      setMembersModalError(err.message || 'Failed to update user role.');
+    } finally {
+      setMembersActionLoading(false);
+    }
+  };
+
+  const handleDeleteMember = async () => {
+    if (!selectedMember) return;
+    try {
+      setMembersActionLoading(true);
+      setMembersModalError(null);
+      const response = await fetch(delete_user_endpoint(selectedMember.id), {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        throw new Error(await parseApiError(response, 'Failed to delete user.'));
+      }
+      setMembersEditOpen(false);
+      await fetchOrganization();
+    } catch (err) {
+      setMembersModalError(err.message || 'Failed to delete user.');
+    } finally {
+      setMembersActionLoading(false);
+    }
+  };
+
   if (authLoading) {
     return (
       <Container className="py-5">
@@ -107,7 +248,6 @@ const Organization = () => {
     );
   }
 
-  // Show loading spinner while fetching organization
   if (loading) {
     return (
       <Container className="py-5">
@@ -123,7 +263,6 @@ const Organization = () => {
     );
   }
 
-  // Show error message
   if (error) {
     return (
       <Container className="py-5">
@@ -148,7 +287,6 @@ const Organization = () => {
     );
   }
 
-  // Show organization details
   if (!organization) {
     return (
       <Container className="py-5">
@@ -164,31 +302,28 @@ const Organization = () => {
     );
   }
 
-  // Helper function to format date
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
     try {
       return new Date(dateString).toLocaleDateString('en-US', {
         year: 'numeric',
         month: 'long',
-        day: 'numeric'
+        day: 'numeric',
       });
     } catch {
       return dateString;
     }
   };
 
-  // Helper function to format array as comma-separated string
   const formatArray = (arr) => {
     if (!arr || !Array.isArray(arr) || arr.length === 0) return 'N/A';
     return arr.join(', ');
   };
 
-  // Helper function to get role display
   const getRoleDisplay = (role) => {
     if (role === 0) return 'Member';
     if (role === 1) return 'Admin';
-    if (role === 2) return 'Editor';
+    if (role === 2) return 'Reviewer';
     return 'Member';
   };
 
@@ -196,39 +331,30 @@ const Organization = () => {
     <Container className="py-5">
       <Row>
         <Col lg="10" className="mx-auto">
-          {/* Header with title and action buttons */}
           <div className="d-flex justify-content-between align-items-center mb-4">
             <h2 className="mb-0">{organization.name}</h2>
             <div className="d-flex gap-2">
               {organization.privileges?.create && (
-                <Button 
-                  color="success" 
-                  onClick={() => navigate('/createorg')}
-                >
+                <Button color="success" onClick={() => navigate('/createorg')}>
                   Create
                 </Button>
               )}
               {organization.privileges?.edit && (
-                <Button 
+                <Button
                   color="primary"
                   onClick={() => {
-                    // TODO: Navigate to edit page
                     console.log('Edit organization clicked');
                   }}
                 >
                   Edit
                 </Button>
               )}
-              <Button 
-                color="primary"
-                onClick={() => navigate('/orgsearch')}
-              >
+              <Button color="primary" onClick={() => navigate('/orgsearch')}>
                 Search
               </Button>
             </div>
           </div>
 
-          {/* Organization Details Card */}
           <Card className="mb-4 shadow-sm">
             <CardHeader className="bg-primary text-white">
               <div className="d-flex justify-content-between align-items-start">
@@ -240,13 +366,19 @@ const Organization = () => {
                 </div>
                 <div className="text-end">
                   <span
-                    title={organization.private
-                      ? 'Organization can have both public and private datasets'
-                      : 'Organization can have only public datasets'}
+                    title={
+                      organization.private
+                        ? 'Organization can have both public and private datasets'
+                        : 'Organization can have only public datasets'
+                    }
                     className="opacity-90"
                     style={{ cursor: 'default' }}
                     role="img"
-                    aria-label={organization.private ? 'Private organization' : 'Public organization'}
+                    aria-label={
+                      organization.private
+                        ? 'Private organization'
+                        : 'Public organization'
+                    }
                   >
                     {organization.private ? (
                       <i className="bi bi-lock-fill fs-4" aria-hidden="true" />
@@ -265,7 +397,7 @@ const Organization = () => {
                 <Col md="6" className="mb-3">
                   <strong>Creator:</strong>{' '}
                   {organization.creator_name ? (
-                    <Link 
+                    <Link
                       to={`/profile?id=${organization.creator}`}
                       style={{ color: '#1b75e0' }}
                     >
@@ -287,9 +419,9 @@ const Organization = () => {
                 <Col md="6" className="mb-3">
                   <strong>Website:</strong>{' '}
                   {organization.website ? (
-                    <a 
-                      href={organization.website} 
-                      target="_blank" 
+                    <a
+                      href={organization.website}
+                      target="_blank"
                       rel="noopener noreferrer"
                       className="text-decoration-none"
                     >
@@ -319,10 +451,21 @@ const Organization = () => {
             </CardBody>
           </Card>
 
-          {/* Members Section */}
           {organization.members && organization.members.length > 0 && (
             <div className="mb-4">
-              <h4 className="mb-3">Members</h4>
+              <div className="mb-3 d-flex flex-row flex-wrap align-items-center justify-content-between gap-2">
+                <h4 className="mb-0">Members</h4>
+                {isOrgAdmin && (
+                  <button
+                    type="button"
+                    className="btn btn-sm org-members-btn-primary px-3 py-2"
+                    onClick={handleOpenMembersEdit}
+                    aria-label="Edit organization members"
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
               <Table borderless responsive>
                 <thead>
                   <tr>
@@ -349,7 +492,7 @@ const Organization = () => {
                         </span>
                       </td>
                       <td>
-                        <Link 
+                        <Link
                           to={`/profile?id=${member.id}`}
                           style={{ color: '#1b75e0' }}
                         >
@@ -366,6 +509,137 @@ const Organization = () => {
               </Table>
             </div>
           )}
+
+          <Modal
+            isOpen={membersEditOpen}
+            toggle={handleCloseMembersEdit}
+            centered
+          >
+            <ModalHeader toggle={handleCloseMembersEdit}>
+              Edit members
+            </ModalHeader>
+            <ModalBody>
+              {membersModalError && (
+                <Alert color="danger" className="mb-3">
+                  {membersModalError}
+                </Alert>
+              )}
+              {organization.members && organization.members.length > 0 ? (
+                <>
+                  <div className="mb-3 d-flex flex-column flex-sm-row align-items-sm-center justify-content-sm-between gap-2">
+                    <span className="fw-bold">Select:</span>
+                    <select
+                      id="org-member-select"
+                      className="form-select w-100"
+                      style={{ maxWidth: '20rem' }}
+                      value={selectedMemberId || ''}
+                      onChange={handleSelectMemberChange}
+                      aria-label="Select organization member"
+                      disabled={membersActionLoading}
+                    >
+                      {organization.members.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.full_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {selectedMember && (
+                    <>
+                      <div className="mb-2 d-flex flex-column flex-sm-row justify-content-sm-between gap-1">
+                        <span className="fw-bold">Name:</span>
+                        <span className="text-sm-end">{selectedMember.full_name}</span>
+                      </div>
+                      <div className="mb-2 d-flex flex-column flex-sm-row justify-content-sm-between gap-1">
+                        <span className="fw-bold">Email:</span>
+                        <span className="text-sm-end text-break">
+                          {selectedMember.email || 'N/A'}
+                        </span>
+                      </div>
+                      <div className="mb-4 d-flex flex-column flex-sm-row justify-content-sm-between gap-1">
+                        <span className="fw-bold">Designation:</span>
+                        <span className="text-sm-end">
+                          {selectedMember.designation || 'N/A'}
+                        </span>
+                      </div>
+                      <div className="mb-4 d-flex flex-column flex-sm-row align-items-sm-center justify-content-sm-between gap-2">
+                        <span className="fw-bold">Role:</span>
+                        <select
+                          id="org-member-role"
+                          className="form-select w-100"
+                          style={{ maxWidth: '20rem' }}
+                          value={roleDraft}
+                          onChange={(e) =>
+                            setRoleDraft(Number(e.target.value))
+                          }
+                          aria-label="Member role"
+                          disabled={membersActionLoading}
+                        >
+                          {ROLE_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="mt-2 d-flex flex-wrap gap-2">
+                        {selectedMember.verified === false ? (
+                          <>
+                            <button
+                              type="button"
+                              className="btn btn-sm org-members-btn-primary px-3 py-2"
+                              onClick={handleApproveMember}
+                              disabled={membersActionLoading}
+                              aria-label="Approve member"
+                            >
+                              Approve
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-sm org-members-btn-danger px-3 py-2"
+                              onClick={handleRejectMember}
+                              disabled={membersActionLoading}
+                              aria-label="Reject member"
+                            >
+                              Reject
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className="btn btn-sm org-members-btn-primary px-3 py-2"
+                              onClick={handleChangeMemberRole}
+                              disabled={membersActionLoading}
+                              aria-label="Change member role"
+                            >
+                              Change
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-sm org-members-btn-danger px-3 py-2"
+                              onClick={handleDeleteMember}
+                              disabled={membersActionLoading}
+                              aria-label="Delete member"
+                            >
+                              Delete
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </>
+              ) : (
+                <p className="mb-0 text-muted">No members to edit.</p>
+              )}
+            </ModalBody>
+            <ModalFooter>
+              <Button color="secondary" onClick={handleCloseMembersEdit}>
+                Close
+              </Button>
+            </ModalFooter>
+          </Modal>
         </Col>
       </Row>
     </Container>

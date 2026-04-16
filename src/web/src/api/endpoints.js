@@ -24,6 +24,8 @@ export const organization_by_id_endpoint = (id) => `/api/organizations/${id}`;
 
 // Upload/Data endpoints
 export const upload_url_endpoint = "/api/upload_url";
+export const create_upload_job_endpoint = "/api/create_upload_job";
+export const complete_upload_job_endpoint = "/api/complete_upload_job";
 export const create_dataset_endpoint = "/api/create_dataset";
 export const dataset_info_endpoint = "/api/dataset_info";
 export const user_datasets_endpoint = "/api/user_datasets";
@@ -33,7 +35,16 @@ export const add_files_url_endpoint = "/api/add_file";
 export const delete_dataset_endpoint = "/api/delete_dataset";
 export const delete_file_endpoint = "/api/delete_file";
 export const edit_dataset_endpoint = "/api/edit_dataset";
+export const transfer_dataset_endpoint = "/api/transfer_dataset";
 export const edit_file_endpoint = "/api/edit_file";
 export const profile_endpoint = "/api/profile";
 export const edit_profile_endpoint = "/api/edit_profile";
 export const search_endpoint = "/api/search";
+export const pending_approvals_endpoint = "/api/pending_approvals";
+export const approve_user_endpoint = (userId, role) =>
+  `/api/approve_user/${userId}/${role}`;
+export const reject_user_endpoint = (userId) => `/api/reject_user/${userId}`;
+export const change_user_role_endpoint = (userId, role) =>
+  `/api/change_user_role/${userId}/${role}`;
+export const delete_user_endpoint = (userId) => `/api/delete_user/${userId}`;
+export const approve_dataset_endpoint = (datasetId) => `/api/approve_dataset/${datasetId}`;

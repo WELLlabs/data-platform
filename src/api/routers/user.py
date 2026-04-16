@@ -11,15 +11,33 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Query, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from models.user import User
+from redis.asyncio import Redis
+from routers.dataset import _invalidate_dataset_cache
 from routers.upload import get_current_active_user
 from services.auth import AuthService, get_auth_service
+from services.auth import get_redis
 from services.organization import OrganizationService, get_organization_service
 from services.user import UserService, get_user_service
+from tasks.email import send_upload_approval_response, send_user_approval_response
 from utils.security import sanitize_input
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+_ROLE_TYPE_LABELS = {0: "Member", 1: "Admin", 2: "Reviewer"}
+
+_USER_REJECTION_EMAIL_MESSAGE = (
+    "Since your request is rejected, your profile is removed from the data portal, "
+    "please contact the admin of the organization."
+)
+
+_DELETE_USER_EMAIL_MESSAGE = (
+    "Your profile is removed from the data portal, please contact the admin of the organization."
+)
+
+
+def _role_type_label_for_email(assigned_role: int) -> str:
+    return _ROLE_TYPE_LABELS.get(assigned_role, "Member")
 
 class UserController:
     """
@@ -292,6 +310,578 @@ class UserController:
                 detail="Error processing edit profile request",
             )
 
+    async def get_pending_approvals(self, user: User) -> JSONResponse:
+        """
+        Get pending organization approvals for the signed-in user.
+
+        Role behavior:
+        - role 0: forbidden
+        - role 1: pending datasets and users
+        - role 2: pending datasets only
+        """
+        self.logger.info(
+            "Fetching pending approvals for user_id=%s organization=%s role=%s",
+            user.id,
+            user.organization,
+            user.role,
+        )
+        try:
+            is_user_verified = await self.user_service.check_if_user_verified_by_id(
+                user.id
+            )
+            if not is_user_verified:
+                self.logger.warning(
+                    "Pending approvals access blocked for unverified user_id=%s",
+                    user.id,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="email address verification and/or organization approval pending.",
+                )
+
+            if user.role == 0:
+                self.logger.warning(
+                    "Pending approvals access denied for regular user_id=%s role=%s",
+                    user.id,
+                    user.role,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Unauthorized to access pending approvals",
+                )
+
+            if user.role not in (1, 2):
+                self.logger.warning(
+                    "Pending approvals access denied for invalid role user_id=%s role=%s",
+                    user.id,
+                    user.role,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Invalid role for pending approvals access",
+                )
+
+            pending_datasets = await self.user_service.get_pending_dataset_approvals(
+                user.organization
+            )
+            response_data = {"datasets": pending_datasets}
+
+            if user.role == 1:
+                response_data["users"] = (
+                    await self.user_service.get_pending_user_approvals(
+                        user.organization
+                    )
+                )
+
+            self.logger.info(
+                "Pending approvals fetched successfully for user_id=%s",
+                user.id,
+            )
+            return JSONResponse(
+                content=jsonable_encoder(response_data),
+                status_code=status.HTTP_200_OK,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.exception(
+                "Error fetching pending approvals for user_id=%s: %s", user.id, e
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error processing pending approvals request",
+            )
+
+    async def approve_user(
+        self, signed_in_user: User, user_id: str, assigned_role: int = 0
+    ) -> JSONResponse:
+        """
+        Approve a user in the signed-in admin's organization and assign role (0/1/2).
+        """
+        self.logger.info(
+            "Approve user request received: approver_id=%s target_user_id=%s approver_role=%s assigned_role=%s",
+            signed_in_user.id,
+            user_id,
+            signed_in_user.role,
+            assigned_role,
+        )
+        try:
+            try:
+                target_user_id = UUID(user_id)
+            except ValueError:
+                self.logger.warning(
+                    "Approve user validation failed: invalid UUID user_id=%s",
+                    user_id,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid user_id UUID format",
+                )
+
+            is_user_verified = await self.user_service.check_if_user_verified_by_id(
+                signed_in_user.id
+            )
+            if not is_user_verified:
+                self.logger.warning(
+                    "Approve user access blocked for unverified user_id=%s role=%s",
+                    signed_in_user.id,
+                    signed_in_user.role,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Verified account required",
+                )
+
+            if signed_in_user.role != 1:
+                self.logger.warning(
+                    "Approve user denied for non-admin approver_id=%s role=%s",
+                    signed_in_user.id,
+                    signed_in_user.role,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Unauthorized to approve users",
+                )
+
+            approved_user = await self.user_service.approve_user(
+                approver=signed_in_user,
+                target_user_id=target_user_id,
+                assigned_role=assigned_role,
+            )
+            role_type = _role_type_label_for_email(assigned_role)
+            acceptance_message = (
+                "Sign in to access the WELL Labs data portal with "
+                f"{role_type} role permissions."
+            )
+            send_user_approval_response.apply_async(
+                args=[
+                    approved_user.email,
+                    "accepted",
+                    signed_in_user.full_name,
+                    acceptance_message,
+                ]
+            )
+            self.logger.info(
+                "Approve user completed: approver_id=%s target_user_id=%s",
+                signed_in_user.id,
+                approved_user.id,
+            )
+            return JSONResponse(
+                content={
+                    "detail": "User approved successfully",
+                    "user_id": str(approved_user.id),
+                },
+                status_code=status.HTTP_200_OK,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.exception(
+                "Error processing approve user request: approver_id=%s target_user_id=%s error=%s",
+                signed_in_user.id,
+                user_id,
+                e,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error processing approve user request",
+            )
+
+    async def reject_user(self, signed_in_user: User, user_id: str) -> JSONResponse:
+        """
+        Reject a pending user: remove user and notify by email (admin, same org only).
+        """
+        self.logger.info(
+            "Reject user request received: approver_id=%s target_user_id=%s approver_role=%s",
+            signed_in_user.id,
+            user_id,
+            signed_in_user.role,
+        )
+        try:
+            try:
+                target_user_id = UUID(user_id)
+            except ValueError:
+                self.logger.warning(
+                    "Reject user validation failed: invalid UUID user_id=%s",
+                    user_id,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid user_id UUID format",
+                )
+
+            is_user_verified = await self.user_service.check_if_user_verified_by_id(
+                signed_in_user.id
+            )
+            if not is_user_verified:
+                self.logger.warning(
+                    "Reject user access blocked for unverified user_id=%s role=%s",
+                    signed_in_user.id,
+                    signed_in_user.role,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Verified account required",
+                )
+
+            if signed_in_user.role != 1:
+                self.logger.warning(
+                    "Reject user denied for non-admin approver_id=%s role=%s",
+                    signed_in_user.id,
+                    signed_in_user.role,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Unauthorized to reject users",
+                )
+
+            recipient_email = await self.user_service.reject_user(
+                approver=signed_in_user,
+                target_user_id=target_user_id,
+            )
+            send_user_approval_response.apply_async(
+                args=[
+                    recipient_email,
+                    "rejected",
+                    signed_in_user.full_name,
+                    _USER_REJECTION_EMAIL_MESSAGE,
+                ]
+            )
+            self.logger.info(
+                "Reject user completed: approver_id=%s target_user_id=%s",
+                signed_in_user.id,
+                target_user_id,
+            )
+            return JSONResponse(
+                content={"detail": "User rejected successfully"},
+                status_code=status.HTTP_200_OK,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.exception(
+                "Error processing reject user request: approver_id=%s target_user_id=%s error=%s",
+                signed_in_user.id,
+                user_id,
+                e,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error processing reject user request",
+            )
+
+    async def change_user_role(
+        self, signed_in_user: User, user_id: str, new_role: int
+    ) -> JSONResponse:
+        """
+        Change role for a user in the signed-in admin's organization (verified members).
+        """
+        self.logger.info(
+            "Change user role request: actor_id=%s target_user_id=%s new_role=%s",
+            signed_in_user.id,
+            user_id,
+            new_role,
+        )
+        try:
+            try:
+                target_user_id = UUID(user_id)
+            except ValueError:
+                self.logger.warning(
+                    "Change user role validation failed: invalid UUID user_id=%s",
+                    user_id,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid user_id UUID format",
+                )
+
+            is_user_verified = await self.user_service.check_if_user_verified_by_id(
+                signed_in_user.id
+            )
+            if not is_user_verified:
+                self.logger.warning(
+                    "Change user role access blocked for unverified user_id=%s role=%s",
+                    signed_in_user.id,
+                    signed_in_user.role,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Verified account required",
+                )
+
+            if signed_in_user.role != 1:
+                self.logger.warning(
+                    "Change user role denied for non-admin actor_id=%s role=%s",
+                    signed_in_user.id,
+                    signed_in_user.role,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Unauthorized to change user role",
+                )
+
+            if type(new_role) is not int or new_role not in (0, 1, 2):
+                self.logger.warning(
+                    "Change user role validation failed: invalid new_role=%s actor_id=%s",
+                    new_role,
+                    signed_in_user.id,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Role must be 0 (Member), 1 (Admin), or 2 (Reviewer)",
+                )
+
+            updated_user = await self.user_service.change_user_role(
+                actor=signed_in_user,
+                target_user_id=target_user_id,
+                new_role=new_role,
+            )
+            role_type = _role_type_label_for_email(new_role)
+            update_message = f"Your role has been updated to {role_type}."
+            send_user_approval_response.apply_async(
+                args=[
+                    updated_user.email,
+                    "updated",
+                    signed_in_user.full_name,
+                    update_message,
+                ]
+            )
+            self.logger.info(
+                "Change user role completed: actor_id=%s target_user_id=%s",
+                signed_in_user.id,
+                updated_user.id,
+            )
+            return JSONResponse(
+                content={
+                    "detail": "User role updated successfully",
+                    "user_id": str(updated_user.id),
+                },
+                status_code=status.HTTP_200_OK,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.exception(
+                "Error processing change user role: actor_id=%s target_user_id=%s error=%s",
+                signed_in_user.id,
+                user_id,
+                e,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error processing change user role request",
+            )
+
+    async def delete_user(self, signed_in_user: User, user_id: str) -> JSONResponse:
+        """
+        Delete a user in the signed-in admin's organization (contributions + user row).
+        """
+        self.logger.info(
+            "Delete user request: actor_id=%s target_user_id=%s",
+            signed_in_user.id,
+            user_id,
+        )
+        try:
+            try:
+                target_user_id = UUID(user_id)
+            except ValueError:
+                self.logger.warning(
+                    "Delete user validation failed: invalid UUID user_id=%s",
+                    user_id,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid user_id UUID format",
+                )
+
+            is_user_verified = await self.user_service.check_if_user_verified_by_id(
+                signed_in_user.id
+            )
+            if not is_user_verified:
+                self.logger.warning(
+                    "Delete user access blocked for unverified user_id=%s role=%s",
+                    signed_in_user.id,
+                    signed_in_user.role,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Verified account required",
+                )
+
+            if signed_in_user.role != 1:
+                self.logger.warning(
+                    "Delete user denied for non-admin actor_id=%s role=%s",
+                    signed_in_user.id,
+                    signed_in_user.role,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Unauthorized to delete users",
+                )
+
+            if not signed_in_user.is_active:
+                self.logger.warning(
+                    "Delete user denied: inactive account actor_id=%s",
+                    signed_in_user.id,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Unauthorized to perform action: account disabled",
+                )
+
+            recipient_email = await self.user_service.delete_user_by_admin(
+                actor=signed_in_user,
+                target_user_id=target_user_id,
+            )
+            send_user_approval_response.apply_async(
+                args=[
+                    recipient_email,
+                    "deleted",
+                    signed_in_user.full_name,
+                    _DELETE_USER_EMAIL_MESSAGE,
+                ]
+            )
+            self.logger.info(
+                "Delete user completed: actor_id=%s target_user_id=%s",
+                signed_in_user.id,
+                target_user_id,
+            )
+            return JSONResponse(
+                content={
+                    "detail": "User deleted successfully",
+                    "user_id": str(target_user_id),
+                },
+                status_code=status.HTTP_200_OK,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.exception(
+                "Error processing delete user: actor_id=%s target_user_id=%s error=%s",
+                signed_in_user.id,
+                user_id,
+                e,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error processing delete user request",
+            )
+
+    async def approve_dataset(
+        self,
+        signed_in_user: User,
+        dataset_id: str,
+        redis: Redis,
+    ) -> JSONResponse:
+        """
+        Approve a pending dataset in the signed-in user's organization.
+        """
+        self.logger.info(
+            "Approve dataset request received: approver_id=%s dataset_id=%s role=%s",
+            signed_in_user.id,
+            dataset_id,
+            signed_in_user.role,
+        )
+        try:
+            try:
+                target_dataset_id = UUID(dataset_id)
+            except ValueError:
+                self.logger.warning(
+                    "Approve dataset validation failed: invalid UUID dataset_id=%s",
+                    dataset_id,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid dataset_id UUID format",
+                )
+
+            is_user_verified = await self.user_service.check_if_user_verified_by_id(
+                signed_in_user.id
+            )
+            if not is_user_verified:
+                self.logger.warning(
+                    "Approve dataset access blocked for unverified user_id=%s role=%s",
+                    signed_in_user.id,
+                    signed_in_user.role,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Verified account required",
+                )
+
+            if signed_in_user.role not in (1, 2):
+                self.logger.warning(
+                    "Approve dataset denied for unauthorized approver_id=%s role=%s",
+                    signed_in_user.id,
+                    signed_in_user.role,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Unauthorized to approve datasets",
+                )
+
+            approved_dataset = await self.user_service.approve_dataset(
+                approver=signed_in_user,
+                dataset_id=target_dataset_id,
+            )
+            await _invalidate_dataset_cache(
+                approved_dataset.dataset_id, redis, self.logger
+            )
+            creator_user = await self.auth_service.user_db.get(approved_dataset.creator)
+            if creator_user is None:
+                self.logger.warning(
+                    "Approve dataset notification skipped: creator not found dataset_id=%s creator_id=%s",
+                    approved_dataset.dataset_id,
+                    approved_dataset.creator,
+                )
+            elif not creator_user.email:
+                self.logger.warning(
+                    "Approve dataset notification skipped: creator email missing dataset_id=%s creator_id=%s",
+                    approved_dataset.dataset_id,
+                    creator_user.id,
+                )
+            else:
+                try:
+                    send_upload_approval_response.apply_async(
+                        args=[
+                            creator_user.email,
+                            approved_dataset.dataset_title,
+                            signed_in_user.full_name,
+                        ]
+                    )
+                except Exception as email_error:
+                    self.logger.exception(
+                        "Approve dataset notification enqueue failed dataset_id=%s creator_id=%s error=%s",
+                        approved_dataset.dataset_id,
+                        creator_user.id,
+                        email_error,
+                    )
+            self.logger.info(
+                "Approve dataset completed: approver_id=%s dataset_id=%s",
+                signed_in_user.id,
+                approved_dataset.dataset_id,
+            )
+            return JSONResponse(
+                content={
+                    "detail": "Dataset approved successfully",
+                    "dataset_id": str(approved_dataset.dataset_id),
+                },
+                status_code=status.HTTP_200_OK,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.exception(
+                "Error processing approve dataset request: approver_id=%s dataset_id=%s error=%s",
+                signed_in_user.id,
+                dataset_id,
+                e,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error processing approve dataset request",
+            )
+
 
 async def get_user_controller(
     auth_service: AuthService = Depends(get_auth_service),
@@ -381,5 +971,165 @@ async def edit_profile(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error processing edit profile request",
+        )
+
+
+@router.get("/pending_approvals")
+async def pending_approvals(
+    user: User = Depends(get_current_active_user),
+    controller: UserController = Depends(get_user_controller),
+):
+    """
+    Get pending approvals for the signed-in user's organization.
+    Requires a valid session cookie.
+    """
+    try:
+        return await controller.get_pending_approvals(user)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unexpected error in /pending_approvals: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error processing pending approvals request",
+        )
+
+
+@router.put("/approve_user/{user_id}/{role}")
+async def approve_user_with_role(
+    user_id: str,
+    role: int,
+    user: User = Depends(get_current_active_user),
+    controller: UserController = Depends(get_user_controller),
+):
+    """
+    Approve a pending user with explicit role (0=Member, 1=Admin, 2=Reviewer).
+    Requires a valid session cookie; signed-in user must be org admin (role 1).
+    """
+    try:
+        return await controller.approve_user(user, user_id, role)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "Unexpected error in /approve_user/%s/%s: %s", user_id, role, e
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error processing approve user request",
+        )
+
+
+@router.put("/approve_user/{user_id}")
+async def approve_user(
+    user_id: str,
+    user: User = Depends(get_current_active_user),
+    controller: UserController = Depends(get_user_controller),
+):
+    """
+    Approve a pending user with default role Member (0).
+    Requires a valid session cookie.
+    """
+    try:
+        return await controller.approve_user(user, user_id, 0)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unexpected error in /approve_user/%s: %s", user_id, e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error processing approve user request",
+        )
+
+
+@router.delete("/reject_user/{user_id}")
+async def reject_user(
+    user_id: str,
+    user: User = Depends(get_current_active_user),
+    controller: UserController = Depends(get_user_controller),
+):
+    """
+    Reject and remove a pending user in the signed-in admin's organization.
+    Requires a valid session cookie.
+    """
+    try:
+        return await controller.reject_user(user, user_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unexpected error in /reject_user/%s: %s", user_id, e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error processing reject user request",
+        )
+
+
+@router.put("/change_user_role/{user_id}/{role}")
+async def change_user_role(
+    user_id: str,
+    role: int,
+    user: User = Depends(get_current_active_user),
+    controller: UserController = Depends(get_user_controller),
+):
+    """
+    Change a member's role in the signed-in admin's organization (0/1/2).
+    Requires a valid session cookie; signed-in user must be org admin (role 1).
+    """
+    try:
+        return await controller.change_user_role(user, user_id, role)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "Unexpected error in /change_user_role/%s/%s: %s", user_id, role, e
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error processing change user role request",
+        )
+
+
+@router.delete("/delete_user/{user_id}")
+async def delete_user(
+    user_id: str,
+    user: User = Depends(get_current_active_user),
+    controller: UserController = Depends(get_user_controller),
+):
+    """
+    Delete a user in the signed-in admin's organization (user_contributions + users).
+    Requires a valid session cookie; signed-in user must be org admin (role 1).
+    """
+    try:
+        return await controller.delete_user(user, user_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unexpected error in /delete_user/%s: %s", user_id, e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error processing delete user request",
+        )
+
+
+@router.put("/approve_dataset/{dataset_id}")
+async def approve_dataset(
+    dataset_id: str,
+    user: User = Depends(get_current_active_user),
+    controller: UserController = Depends(get_user_controller),
+    redis: Redis = Depends(get_redis),
+):
+    """
+    Approve a pending dataset in the signed-in user's organization.
+    Requires a valid session cookie.
+    """
+    try:
+        return await controller.approve_dataset(user, dataset_id, redis)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unexpected error in /approve_dataset/%s: %s", dataset_id, e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error processing approve dataset request",
         )
 

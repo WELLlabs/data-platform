@@ -6,6 +6,8 @@ All **job-scoped Redis keys** use the URL from **`UPLOAD_JOBS_BACKEND`** in sett
 
 TTL for job keys is **`UPLOAD_JOB_CACHE_AGE_SECONDS`** (default 86400 unless overridden in `.env`).
 
+<img width="2488" height="2426" alt="IMG_5479" src="https://github.com/user-attachments/assets/66c1b52e-5405-46e3-8d17-792a53d2e48d" />
+
 ---
 
 ## Configuration

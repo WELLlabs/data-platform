@@ -40,6 +40,7 @@ export const edit_file_endpoint = "/api/edit_file";
 export const profile_endpoint = "/api/profile";
 export const edit_profile_endpoint = "/api/edit_profile";
 export const search_endpoint = "/api/search";
+export const homepage_stats_endpoint = "/api/homepage_stats";
 export const pending_approvals_endpoint = "/api/pending_approvals";
 export const approve_user_endpoint = (userId, role) =>
   `/api/approve_user/${userId}/${role}`;

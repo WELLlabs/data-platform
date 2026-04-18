@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
+import { Link } from "react-router-dom";
+import { homepage_stats_endpoint } from "../api/endpoints";
 
 function formatCount(value) {
   if (!value && value !== 0) return "000000+";
@@ -14,17 +16,31 @@ function formatCount(value) {
 
 function Home() {
   const [dataCount, setDataCount] = useState("000000+");
+  const [topOrganizations, setTopOrganizations] = useState([]);
+  const [topContributors, setTopContributors] = useState([]);
 
   useEffect(() => {
     let isMounted = true;
     (async () => {
       try {
-        const res = await axios.get("/api/stats/data_count", { timeout: 6000 });
-        // Expected response: { count: number }
-        const value = res?.data?.count;
-        if (isMounted) setDataCount(formatCount(value));
-      } catch (e) {
-        if (isMounted) setDataCount("000000+");
+        const res = await axios.get(homepage_stats_endpoint, { timeout: 6000 });
+        const totalOpen = res?.data?.total_open_datasets;
+        const orgs = Array.isArray(res?.data?.top_organizations)
+          ? res.data.top_organizations
+          : [];
+        const contributors = Array.isArray(res?.data?.top_contributors)
+          ? res.data.top_contributors
+          : [];
+        if (!isMounted) return;
+        setDataCount(formatCount(totalOpen));
+        setTopOrganizations(orgs);
+        setTopContributors(contributors);
+      } catch {
+        if (isMounted) {
+          setDataCount("000000+");
+          setTopOrganizations([]);
+          setTopContributors([]);
+        }
       }
     })();
     return () => {
@@ -61,12 +77,8 @@ function Home() {
           <div className="row align-items-center g-3">
             <div className="col-md-4">
               <h5 className="mb-1 text-uppercase text-muted">Total number of Open Data</h5>
-              {/*<div className="data-count-number">{dataCount}</div>*/}
             </div>
             <div className="col-md-8">
-              {/*<div className="text-muted">
-                Aggregated datasets spanning water, agriculture, and climate domains.
-              </div>*/}
               <div className="data-count-number">{dataCount}</div>
             </div>
           </div>
@@ -76,36 +88,57 @@ function Home() {
       {/* Stats Section */}
       <section className="container py-5">
         <div className="row g-4">
-          <div className="col-md-4">
-            <div className="card stat-card h-100">
+          <div className="col-12 col-lg-6">
+            <div className="card stat-card h-100 w-100">
               <div className="card-body">
-                <h5 className="card-title">Recently Added Data</h5>
-                {/* TODO: Replace below with data from API: /api/stats/recent */}
-                <div className="stat-placeholder d-flex align-items-center justify-content-center text-muted">
-                  Placeholder content
-                </div>
+                <h5 className="card-title">Top Organizations</h5>
+                {topOrganizations.length === 0 ? (
+                  <div className="text-muted small">No data yet</div>
+                ) : (
+                  topOrganizations.map((org) => (
+                    <div
+                      key={org.organization_id}
+                      className="row gx-2 align-items-center py-2 border-bottom border-light-subtle"
+                    >
+                      <div className="col">
+                        <Link
+                          className="text-decoration-none"
+                          to={`/organisation?id=${encodeURIComponent(org.organization_id)}`}
+                        >
+                          {org.organization_name}
+                        </Link>
+                      </div>
+                      <div className="col-auto text-muted">{org.contributions}</div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </div>
-          <div className="col-md-4">
-            <div className="card stat-card h-100">
-              <div className="card-body">
-                <h5 className="card-title">Top Organization</h5>
-                {/* TODO: Replace below with data from API: /api/stats/top_orgs */}
-                <div className="stat-placeholder d-flex align-items-center justify-content-center text-muted">
-                  Placeholder content
-                </div>
-              </div>
-            </div>
-          </div>
-          <div className="col-md-4">
-            <div className="card stat-card h-100">
+          <div className="col-12 col-lg-6">
+            <div className="card stat-card h-100 w-100">
               <div className="card-body">
                 <h5 className="card-title">Top Contributors</h5>
-                {/* TODO: Replace below with data from API: /api/stats/top_contributors */}
-                <div className="stat-placeholder d-flex align-items-center justify-content-center text-muted">
-                  Placeholder content
-                </div>
+                {topContributors.length === 0 ? (
+                  <div className="text-muted small">No data yet</div>
+                ) : (
+                  topContributors.map((row) => (
+                    <div
+                      key={String(row.user_id)}
+                      className="row gx-2 align-items-center py-2 border-bottom border-light-subtle"
+                    >
+                      <div className="col">
+                        <Link
+                          className="text-decoration-none"
+                          to={`/profile?id=${encodeURIComponent(String(row.user_id))}`}
+                        >
+                          {row.full_name}
+                        </Link>
+                      </div>
+                      <div className="col-auto text-muted">{row.contributions}</div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </div>
@@ -132,6 +165,3 @@ function Home() {
 }
 
 export default Home;
-
-
-

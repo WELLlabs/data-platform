@@ -77,6 +77,9 @@ class Settings(BaseSettings):
     ORGANIZATION_LIST_CACHE_AGE_SECONDS: int = 604800
     # Dataset info cache (Redis) TTL in seconds; default 300 (5 minutes) if not set
     DATASET_INFO_CACHE_AGE_SECONDS: int = 300
+    # Homepage stats cache (Redis) TTL and top-N list sizes
+    HOMEPAGE_STATS_CACHE_AGE_SECONDS: int = 86400
+    HOMEPAGE_STATS_RESULT_COUNT: int = 5
 
     model_config = SettingsConfigDict(
         env_file=(

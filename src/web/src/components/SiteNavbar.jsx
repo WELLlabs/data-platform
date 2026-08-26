@@ -42,12 +42,14 @@ function SiteNavbar() {
           />
         </div>
       )}
-      <Navbar expand="md" light className="navbar-custom px-3">
-      <NavbarBrand tag={Link} to="/" className="d-flex align-items-center gap-2">
+      <Navbar expand="md" light className="wd-navbar">
+      <div className="wd-navbar-inner d-flex align-items-center">
+      <NavbarBrand tag={Link} to="/" className="wd-brand d-flex align-items-center gap-2">
         <img src={process.env.PUBLIC_URL + "/assets/logo/well-labs-logo.png"} alt="WELL Labs" />
+        <span><span>WELL DATA</span><span className="wd-brand-sub">by WELL Labs</span></span>
       </NavbarBrand>
       
-      <NavbarToggler onClick={toggle} className="d-md-none" />
+      <NavbarToggler onClick={toggle} className="wd-nav-toggle d-md-none" />
       
       <Collapse isOpen={isOpen} navbar>
         <Nav className="ms-auto" navbar>
@@ -55,7 +57,7 @@ function SiteNavbar() {
             <>
               <NavItem>
                 <Link 
-                  className="nav-link" 
+                  className="nav-link wd-nav-link" 
                   to={`/dashboard?userId=${user?.id}`} 
                   onClick={() => setIsOpen(false)}
                 >
@@ -63,18 +65,18 @@ function SiteNavbar() {
                 </Link>
               </NavItem>
               <NavItem>
-                <Link className="nav-link" to="/datasets" onClick={() => setIsOpen(false)}>
-                  Datasets
+                <Link className="nav-link wd-nav-link" to="/datasets" onClick={() => setIsOpen(false)}>
+                  Explore
                 </Link>
               </NavItem>
               <NavItem>
-                <Link className="nav-link" to="/organisation" onClick={() => setIsOpen(false)}>
+                <Link className="nav-link wd-nav-link" to="/organisation" onClick={() => setIsOpen(false)}>
                   Organisation
                 </Link>
               </NavItem>
               <NavItem>
                 <Link 
-                  className="nav-link" 
+                  className="nav-link wd-nav-link" 
                   to={`/profile?userId=${user?.id}`} 
                   onClick={() => setIsOpen(false)}
                 >
@@ -83,40 +85,41 @@ function SiteNavbar() {
               </NavItem>
               {Number(user?.role) > 0 && (
                 <NavItem>
-                  <Link className="nav-link" to="/approvals" onClick={() => setIsOpen(false)}>
+                  <Link className="nav-link wd-nav-link" to="/approvals" onClick={() => setIsOpen(false)}>
                     Approvals
                   </Link>
                 </NavItem>
               )}
               <NavItem className="ms-2">
                 <button 
-                  className="btn btn-outline-light" 
+                  className="wd-nav-action" 
                   onClick={handleSignOut}
                 >
-                  <i className="bi bi-box-arrow-right me-1" /> Sign Out
+                  Sign out
                 </button>
               </NavItem>
             </>
           ) : (
             <>
               <NavItem>
-                <Link className="nav-link" to="/datasets" onClick={() => setIsOpen(false)}>
-                  Datasets
+                <Link className="nav-link wd-nav-link" to="/datasets" onClick={() => setIsOpen(false)}>
+                  Explore
                 </Link>
               </NavItem>
               <NavItem className="ms-2">
                 <Link 
-                  className="btn btn-outline-light" 
+                  className="wd-nav-action" 
                   to="/signin"
                   onClick={() => setIsOpen(false)}
                 >
-                  <i className="bi bi-person-plus me-1" /> Sign In
+                  Sign in
                 </Link>
               </NavItem>
             </>
           )}
         </Nav>
       </Collapse>
+      </div>
     </Navbar>
     </>
   );

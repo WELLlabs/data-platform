@@ -231,7 +231,8 @@ function Dashboard() {
   const isUnverified = user && user.is_verified !== true;
 
   return (
-    <div className="container py-5">
+    <main className="wd-workspace">
+    <div className="wd-content py-5">
       <div className="row align-items-center mb-4">
         <div className="col">
           <h2 className="text-start m-0">Welcome {user.full_name}</h2>
@@ -367,6 +368,7 @@ function Dashboard() {
         </>
       )}
     </div>
+    </main>
   );
 }
 

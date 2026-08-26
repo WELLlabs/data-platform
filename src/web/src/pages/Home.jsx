@@ -1,166 +1,105 @@
 import React, { useEffect, useState } from "react";
-import axios from "axios";
 import { Link } from "react-router-dom";
-import { homepage_stats_endpoint } from "../api/endpoints";
+import { datasets_endpoint, homepage_stats_endpoint } from "../api/endpoints";
 
 function formatCount(value) {
-  if (!value && value !== 0) return "000000+";
-  try {
-    const n = Number(value);
-    if (Number.isNaN(n)) return "000000+";
-    return `${n.toLocaleString()}+`;
-  } catch {
-    return "000000+";
-  }
+  return typeof value === "number" ? value.toLocaleString() : "—";
+}
+
+function DatasetCard({ dataset }) {
+  return (
+    <Link className="wd-dataset-card" to={`/dataset-info?dataset_id=${encodeURIComponent(dataset.dataset_id)}`}>
+      <div className="wd-card-meta">
+        <span className="wd-eyebrow">Dataset</span>
+        <span className={dataset.private ? "wd-badge wd-badge-private" : "wd-badge"}>
+          {dataset.private ? "Private" : "Public"}
+        </span>
+      </div>
+      <h3>{dataset.dataset_title || "Untitled dataset"}</h3>
+      <p>{dataset.dataset_description || "No description provided."}</p>
+      <div className="wd-card-foot">
+        <span>{dataset.organization || "WELL Labs"}</span>
+        <span>{formatCount(dataset.downloads)} downloads</span>
+      </div>
+    </Link>
+  );
 }
 
 function Home() {
-  const [dataCount, setDataCount] = useState("000000+");
-  const [topOrganizations, setTopOrganizations] = useState([]);
-  const [topContributors, setTopContributors] = useState([]);
+  const [stats, setStats] = useState(null);
+  const [datasets, setDatasets] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
-    let isMounted = true;
-    (async () => {
+    let active = true;
+
+    async function loadHome() {
       try {
-        const res = await axios.get(homepage_stats_endpoint, { timeout: 6000 });
-        const totalOpen = res?.data?.total_open_datasets;
-        const orgs = Array.isArray(res?.data?.top_organizations)
-          ? res.data.top_organizations
-          : [];
-        const contributors = Array.isArray(res?.data?.top_contributors)
-          ? res.data.top_contributors
-          : [];
-        if (!isMounted) return;
-        setDataCount(formatCount(totalOpen));
-        setTopOrganizations(orgs);
-        setTopContributors(contributors);
+        const [statsResponse, datasetsResponse] = await Promise.all([
+          fetch(homepage_stats_endpoint, { credentials: "include" }),
+          fetch(`${datasets_endpoint}?limit=4&offset=0`, { credentials: "include" }),
+        ]);
+        if (!statsResponse.ok || !datasetsResponse.ok) throw new Error("Unable to load homepage data");
+        const [statsData, datasetsData] = await Promise.all([statsResponse.json(), datasetsResponse.json()]);
+        if (!active) return;
+        setStats(statsData);
+        setDatasets(Array.isArray(datasetsData) ? datasetsData : []);
       } catch {
-        if (isMounted) {
-          setDataCount("000000+");
-          setTopOrganizations([]);
-          setTopContributors([]);
-        }
+        if (active) setError(true);
+      } finally {
+        if (active) setLoading(false);
       }
-    })();
-    return () => {
-      isMounted = false;
-    };
+    }
+
+    loadHome();
+    return () => { active = false; };
   }, []);
 
   return (
-    <div className="bg-wave">
-      {/* Intro Section with background image */}
-      <section
-        className="hero-section"
-        style={{
-          backgroundImage: `url(${process.env.PUBLIC_URL + "/assets/images/hero-water.jpg"})`,
-        }}
-      >
-        <div className="hero-overlay" />
-        <div className="container hero-content position-relative">
-          <div className="row">
-            <div className="col-lg-9">
-              <h1 className="display-4 hero-title mb-3">WELL Labs Open Data Portal</h1>
-              <p className="lead mb-0">
-                Welcome to the Open Data Portal by WELL Labs. The portal acts as a source of truth for all of the datasets within the organisation, providing easy access to all of them.
-                This helps team members discover datasets that can be useful for their work.
-              </p>
-            </div>
+    <main className="wd-home">
+      <section className="wd-hero">
+        <div className="wd-contours" aria-hidden="true" />
+        <div className="wd-content wd-hero-content">
+          <div className="wd-kicker"><span /> Open environmental data · WELL Labs</div>
+          <h1>Discover the data behind <em>water, land</em> and livelihoods.</h1>
+          <p className="wd-lede">A research library of datasets collected, created and shared by WELL Labs and its partners, with the metadata and files you need to use them.</p>
+          <div className="wd-hero-actions">
+            <Link className="wd-primary-button" to="/datasets">Explore datasets <span aria-hidden="true">→</span></Link>
+            <Link className="wd-text-link" to="/search">Search the repository <span aria-hidden="true">→</span></Link>
+          </div>
+          <div className="wd-stat-row">
+            <div><strong>{loading ? "…" : formatCount(stats?.total_open_datasets)}</strong><span>open datasets</span></div>
+            <div><strong>{loading ? "…" : formatCount(stats?.top_organizations?.length)}</strong><span>leading organizations</span></div>
+            <div><strong>{loading ? "…" : formatCount(stats?.top_contributors?.length)}</strong><span>top contributors</span></div>
           </div>
         </div>
       </section>
 
-      {/* Data Count Section */}
-      <section className="container" style={{ marginTop: "-40px" }}>
-        <div className="card data-count-card px-4 py-4 text-center">
-          <div className="row align-items-center g-3">
-            <div className="col-md-4">
-              <h5 className="mb-1 text-uppercase text-muted">Total number of Open Data</h5>
-            </div>
-            <div className="col-md-8">
-              <div className="data-count-number">{dataCount}</div>
-            </div>
-          </div>
+      <section className="wd-content wd-section">
+        <div className="wd-section-heading">
+          <div><span className="wd-eyebrow">Recently available</span><h2>A closer look</h2></div>
+          <Link className="wd-text-link" to="/datasets">All datasets <span aria-hidden="true">→</span></Link>
         </div>
+        {error ? <div className="wd-state">Homepage data is temporarily unavailable. Browse datasets to try again.</div> : loading ? (
+          <div className="wd-card-grid" aria-label="Loading datasets"><div className="wd-skeleton" /><div className="wd-skeleton" /><div className="wd-skeleton" /><div className="wd-skeleton" /></div>
+        ) : datasets.length ? (
+          <div className="wd-card-grid">{datasets.map((dataset) => <DatasetCard key={dataset.dataset_id} dataset={dataset} />)}</div>
+        ) : <div className="wd-state">No public datasets are available yet.</div>}
       </section>
 
-      {/* Stats Section */}
-      <section className="container py-5">
-        <div className="row g-4">
-          <div className="col-12 col-lg-6">
-            <div className="card stat-card h-100 w-100">
-              <div className="card-body">
-                <h5 className="card-title">Top Organizations</h5>
-                {topOrganizations.length === 0 ? (
-                  <div className="text-muted small">No data yet</div>
-                ) : (
-                  topOrganizations.map((org) => (
-                    <div
-                      key={org.organization_id}
-                      className="row gx-2 align-items-center py-2 border-bottom border-light-subtle"
-                    >
-                      <div className="col">
-                        <Link
-                          className="text-decoration-none"
-                          to={`/organisation?id=${encodeURIComponent(org.organization_id)}`}
-                        >
-                          {org.organization_name}
-                        </Link>
-                      </div>
-                      <div className="col-auto text-muted">{org.contributions}</div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
-          <div className="col-12 col-lg-6">
-            <div className="card stat-card h-100 w-100">
-              <div className="card-body">
-                <h5 className="card-title">Top Contributors</h5>
-                {topContributors.length === 0 ? (
-                  <div className="text-muted small">No data yet</div>
-                ) : (
-                  topContributors.map((row) => (
-                    <div
-                      key={String(row.user_id)}
-                      className="row gx-2 align-items-center py-2 border-bottom border-light-subtle"
-                    >
-                      <div className="col">
-                        <Link
-                          className="text-decoration-none"
-                          to={`/profile?id=${encodeURIComponent(String(row.user_id))}`}
-                        >
-                          {row.full_name}
-                        </Link>
-                      </div>
-                      <div className="col-auto text-muted">{row.contributions}</div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
+      <section className="wd-content wd-section wd-section-last">
+        <div className="wd-section-heading"><div><span className="wd-eyebrow">Repository signals</span><h2>Who is contributing</h2></div></div>
+        <div className="wd-contributor-grid">
+          {(stats?.top_organizations || []).slice(0, 3).map((org) => (
+            <Link className="wd-contributor" key={org.organization_id} to={`/organisation?id=${encodeURIComponent(org.organization_id)}`}>
+              <strong>{org.organization_name}</strong><span>{org.contributions} contributions <span aria-hidden="true">→</span></span>
+            </Link>
+          ))}
+          {!loading && !stats?.top_organizations?.length && <div className="wd-state">Contribution data is not available yet.</div>}
         </div>
       </section>
-
-      {/* More Info Section */}
-      <section className="container pb-5">
-        <h3 className="section-title mb-3">More</h3>
-        <div className="d-flex flex-wrap gap-3 more-links">
-          <a href="/faq">
-            <i className="bi bi-question-circle" /> FAQ
-          </a>
-          <a href="/terms">
-            <i className="bi bi-file-earmark-text" /> Terms of Usage
-          </a>
-          <a href="/api">
-            <i className="bi bi-braces" /> API
-          </a>
-        </div>
-      </section>
-    </div>
+    </main>
   );
 }
 

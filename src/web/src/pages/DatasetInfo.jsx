@@ -913,7 +913,8 @@ function DatasetInfo() {
   }
 
   return (
-    <div className="container py-5">
+    <main className="wd-detail">
+      <div className="wd-content py-5">
       <div className="d-flex justify-content-between align-items-center mb-4">
         <div className="d-flex align-items-center gap-2 flex-wrap">
           <h2 className="mb-0">Dataset Information</h2>
@@ -1958,7 +1959,8 @@ function DatasetInfo() {
           ))}
         </div>
       )}
-    </div>
+      </div>
+    </main>
   );
 }
 

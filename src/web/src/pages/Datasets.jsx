@@ -112,113 +112,58 @@ function Datasets() {
   };
 
   return (
-    <div className="container py-5">
-      {/* Header with title, upload and search buttons */}
-      <div className="row align-items-center mb-4">
-        <div className="col">
-          <h2 className="text-start m-0">Datasets</h2>
+    <main className="wd-discovery">
+      <section className="wd-discovery-head">
+        <div className="wd-content">
+          <span className="wd-eyebrow">Discover</span>
+          <h1>Explore datasets</h1>
+          <p>Browse the public research library and datasets available to your organization.</p>
+          <div className="wd-discovery-actions">
+            <button className="wd-search-button" onClick={() => navigate("/search")}>Search the repository <span aria-hidden="true">⌕</span></button>
+            {isAuthenticated && <button className="wd-primary-button" onClick={() => navigate("/create-dataset")}>Publish a dataset <span aria-hidden="true">+</span></button>}
+          </div>
         </div>
-        <div className="col-auto d-flex gap-2">
-          {isAuthenticated && (
-            <button
-              className="btn btn-upload"
-              onClick={() => navigate("/create-dataset")}
-            >
-              Upload
-            </button>
-          )}
-          <button
-            className="btn btn-search"
-            onClick={() => navigate("/search")}
-          >
-            Search
-          </button>
-        </div>
-      </div>
+      </section>
+      <section className="wd-content wd-discovery-results">
+        <div className="wd-results-heading"><h2>Available datasets</h2><span>{loading ? "Loading" : "Page " + currentPage}</span></div>
 
       {/* Loading state */}
       {loading ? (
-        <div className="text-center py-5">
+        <div className="wd-state wd-loading">
           <div className="spinner-border" role="status">
             <span className="visually-hidden">Loading datasets...</span>
           </div>
         </div>
       ) : datasets.length === 0 && currentPage === 1 ? (
-        <div className="alert alert-info" role="alert">
+        <div className="wd-state" role="status">
           No datasets found.
         </div>
       ) : (
         <>
           {/* Dataset cards */}
-          <div className="row">
+          <div className="wd-results-list">
             {datasets.map((dataset) => (
-              <div key={dataset.dataset_id} className="col-12 mb-4">
-                <div
-                  className="card h-100"
-                  style={{ cursor: "pointer" }}
-                  onClick={() => handleCardClick(dataset.dataset_id)}
-                >
-                  <div className="card-body">
-                    <h5 className="card-title">
-                      {dataset.dataset_title || "Untitled"}
-                    </h5>
-                    <p className="card-text">
-                      <small className="text-muted">
-                        {dataset.dataset_description || "No description"}
-                      </small>
-                    </p>
-                    <div className="mb-2">
-                      <small className="text-muted">
-                        <strong>Created:</strong> {formatDate(dataset.created_at)}
-                      </small>
-                    </div>
-                    <div className="mb-2">
-                      <small className="text-muted">
-                        <strong>Private:</strong>{" "}
-                        {dataset.private ? (
-                          <span className="badge bg-warning">Private</span>
-                        ) : (
-                          <span className="badge bg-success">Public</span>
-                        )}
-                      </small>
-                    </div>
-                    <div className="mb-2">
-                      <small className="text-muted">
-                        <strong>Downloads:</strong> {dataset.downloads ?? 0}
-                      </small>
-                    </div>
-                    {dataset.tags && Array.isArray(dataset.tags) && dataset.tags.length > 0 && (
-                      <div className="mb-2">
-                        <small className="text-muted">
-                          <strong>Tags:</strong> {dataset.tags.join(", ")}
-                        </small>
-                      </div>
-                    )}
-                    {dataset.organization && (
-                      <div className="mb-2">
-                        <small className="text-muted">
-                          <strong>Organization:</strong> {dataset.organization}
-                        </small>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
+              <button key={dataset.dataset_id} className="wd-result-row" onClick={() => handleCardClick(dataset.dataset_id)}>
+                <span className="wd-eyebrow">{dataset.private ? "Private" : "Public"}</span>
+                <span className="wd-result-main"><strong>{dataset.dataset_title || "Untitled"}</strong><span>{dataset.dataset_description || "No description provided."}</span></span>
+                <span className="wd-result-meta">{dataset.organization || "—"}<br />{formatDate(dataset.created_at)}</span>
+                <span className="wd-result-arrow" aria-hidden="true">→</span>
+              </button>
             ))}
           </div>
 
           {/* Pagination */}
-          <div className="d-flex justify-content-center align-items-center mt-4">
+          <div className="wd-pagination">
             <button
-              className="btn btn-outline-secondary me-3"
+              className="wd-page-button"
               onClick={handlePrevious}
               disabled={currentPage === 1 || loading}
             >
               Previous
             </button>
-            <span className="mx-3">{currentPage}</span>
+            <span>{currentPage}</span>
             <button
-              className="btn btn-outline-secondary ms-3"
+              className="wd-page-button"
               onClick={handleNext}
               disabled={!hasMore || loading}
             >
@@ -227,7 +172,8 @@ function Datasets() {
           </div>
         </>
       )}
-    </div>
+      </section>
+    </main>
   );
 }
 

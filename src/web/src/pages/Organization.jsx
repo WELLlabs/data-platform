@@ -328,7 +328,8 @@ const Organization = () => {
   };
 
   return (
-    <Container className="py-5">
+    <main className="wd-organization">
+    <Container className="wd-content py-5">
       <Row>
         <Col lg="10" className="mx-auto">
           <div className="d-flex justify-content-between align-items-center mb-4">
@@ -643,6 +644,7 @@ const Organization = () => {
         </Col>
       </Row>
     </Container>
+    </main>
   );
 };
 

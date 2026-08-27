@@ -55,76 +55,34 @@ function FAQ() {
   ];
 
   return (
-    <div className="container py-5">
-      <div className="row">
-        <div className="col-12">
-          <h2 className="section-title mb-4">Frequently Asked Questions</h2>
-          <p className="lead text-muted mb-5">
-            Find answers to common questions about the WELL Labs Open Data Portal.
-          </p>
-        </div>
-      </div>
+    <div className="page">
+      <div className="wrap" style={{ maxWidth: 740, padding: "48px 0 88px" }}>
+        <span className="eyebrow">Help</span>
+        <h1 className="display" style={{ margin: "12px 0 14px" }}>
+          Frequently asked questions
+        </h1>
+        <p className="lede">
+          Find answers to common questions about the WELL Labs Open Data Portal.
+        </p>
 
-      <div className="row">
-        <div className="col-lg-10 col-xl-8 mx-auto">
-          <div className="accordion" id="faqAccordion">
-            {faqItems.map((item, index) => (
-              <div key={index} className="accordion-item mb-3 border-0 shadow-sm">
-                <h3 className="accordion-header" id={`heading${index}`}>
-                  <button
-                    className="accordion-button collapsed"
-                    type="button"
-                    data-bs-toggle="collapse"
-                    data-bs-target={`#collapse${index}`}
-                    aria-expanded="false"
-                    aria-controls={`collapse${index}`}
-                    style={{
-                      backgroundColor: "#ffffff",
-                      color: "var(--deep-blue)",
-                      fontWeight: "600",
-                    }}
-                  >
-                    {item.question}
-                  </button>
-                </h3>
-                <div
-                  id={`collapse${index}`}
-                  className="accordion-collapse collapse"
-                  aria-labelledby={`heading${index}`}
-                  data-bs-parent="#faqAccordion"
-                >
-                  <div
-                    className="accordion-body"
-                    style={{
-                      backgroundColor: "var(--sea-foam)",
-                      color: "var(--deep-blue)",
-                    }}
-                  >
-                    {item.answer}
-                  </div>
-                </div>
+        <div style={{ marginTop: 32 }}>
+          {faqItems.map((item, index) => (
+            <div className="sec" key={index}>
+              <div className="sec-label">{item.question}</div>
+              <div className="prose">
+                <p>{item.answer}</p>
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="row mt-5">
-        <div className="col-12">
-          <div
-            className="card border-0 shadow-sm"
-            style={{ backgroundColor: "var(--sea-foam)" }}
-          >
-            <div className="card-body p-4">
-              <h5 className="card-title mb-3" style={{ color: "var(--deep-blue)" }}>
-                <i className="bi bi-envelope me-2"></i>
-                Still have questions?
-              </h5>
-              <p className="card-text text-muted mb-0">
-                If you couldn't find the answer you're looking for, please contact the WELL Labs
-                support team for assistance.
-              </p>
             </div>
+          ))}
+        </div>
+
+        <div className="rail-card" style={{ marginTop: 28 }}>
+          <div className="sec-label">Still have questions?</div>
+          <div className="prose">
+            <p>
+              If you couldn't find the answer you're looking for, please contact
+              the WELL Labs support team for assistance.
+            </p>
           </div>
         </div>
       </div>
@@ -133,4 +91,3 @@ function FAQ() {
 }
 
 export default FAQ;
-

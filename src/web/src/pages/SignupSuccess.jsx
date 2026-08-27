@@ -8,33 +8,47 @@ function SignupSuccess() {
   const hasData = !!(email && fullName);
 
   return (
-    <div className="bg-wave">
-      <section className="container py-5">
-        <div className="row justify-content-center">
-          <div className="col-12 col-sm-10 col-md-8 col-lg-6">
-            <div className="card auth-card p-4 p-md-5 text-center">
-              {hasData ? (
-                <>
-                  <h2 className="mb-3 auth-title">Hello {fullName},</h2>
-                  <p className="lead text-center">
-                    Successfully created an account for your email address <span className="fw-bold">{email}</span>.
-                  </p>
-                  <p className="lead text-center mt-3">
-                    <Link to="/signin">Sign In</Link>.
-                  </p>
-                </>
-              ) : (
-                <>
-                  <h2 className="mb-3 auth-title">Navigation to this page is invalid.</h2>
-                  <p className="lead text-center">
-                    Please <Link to="/signup">Sign Up</Link> or <Link to="/signin">Sign In</Link>.
-                  </p>
-                </>
-              )}
-            </div>
+    <div className="page">
+      <div className="wrap">
+        <div className="auth-wrap">
+          <div className="auth-card">
+            {hasData ? (
+              <>
+                <h1 className="display">Hello {fullName},</h1>
+                <p className="auth-sub">
+                  Successfully created an account for your email address{" "}
+                  <b>{email}</b>.
+                </p>
+                <Link
+                  to="/signin"
+                  className="btn btn-primary"
+                  style={{ width: "100%", marginTop: 22 }}
+                >
+                  Sign In
+                </Link>
+              </>
+            ) : (
+              <>
+                <h1 className="display">Navigation to this page is invalid.</h1>
+                <p className="auth-sub">
+                  Please sign up to create an account, or sign in if you already
+                  have one.
+                </p>
+                <Link
+                  to="/signup"
+                  className="btn btn-primary"
+                  style={{ width: "100%", marginTop: 22 }}
+                >
+                  Sign Up
+                </Link>
+                <div className="auth-foot">
+                  Already have an account? <Link to="/signin">Sign in</Link>
+                </div>
+              </>
+            )}
           </div>
         </div>
-      </section>
+      </div>
     </div>
   );
 }

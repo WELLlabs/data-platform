@@ -107,7 +107,7 @@ function AddFile() {
     // Characters to block: <, >, ", ', &, ;, (, )
     const invalidChars = /[<>"'&;()]/g;
     const hasInvalidChars = invalidChars.test(value);
-    
+
     if (hasInvalidChars) {
       // Filter out invalid characters
       const filtered = value.replace(invalidChars, "");
@@ -271,9 +271,9 @@ function AddFile() {
 
   if (loading) {
     return (
-      <div className="container py-5 text-center">
-        <div className="spinner-border" role="status">
-          <span className="visually-hidden">Loading...</span>
+      <div className="page">
+        <div className="wrap" style={{ maxWidth: 720, padding: "48px 0 88px" }}>
+          <div className="empty"><p>Loading…</p></div>
         </div>
       </div>
     );
@@ -284,297 +284,282 @@ function AddFile() {
   }
 
   return (
-    <div className="container py-5">
-      <div className="row justify-content-center">
-        <div className="col-md-8 col-lg-6">
-          <h2 className="mb-4">Add File to Dataset</h2>
+    <div className="page">
+      <div className="wrap" style={{ maxWidth: 720, padding: "48px 0 88px" }}>
+        <span className="eyebrow">Datasets</span>
+        <div className="section-head" style={{ marginTop: 8 }}>
+          <h2 className="section-title">Add file to dataset</h2>
+        </div>
 
-          {error && (
-            <div className="alert alert-danger" role="alert">
-              {error}
+        {error && (
+          <div className="attn-card warn" role="alert" style={{ marginBottom: 20 }}>
+            <div><b>{error}</b></div>
+          </div>
+        )}
+
+        {success ? (
+          <div className="auth-card" style={{ marginTop: 8 }}>
+            <h1 className="display" style={{ fontSize: 28 }}>File added</h1>
+            <p className="auth-sub">File successfully added to the dataset.</p>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 20 }}>
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  navigate(`/dataset-info?dataset_id=${datasetId}`);
+                }}
+              >
+                Dataset
+              </button>
+              <button
+                className="btn btn-ghost"
+                onClick={() => {
+                  navigate("/dashboard");
+                }}
+              >
+                Dashboard
+              </button>
             </div>
-          )}
+          </div>
+        ) : (
+          <form onSubmit={onSubmit}>
+            <div className="field">
+              <label htmlFor="file">
+                File <span style={{ color: "var(--red, #c62828)" }}>(required)</span>
+              </label>
+              <input
+                type="file"
+                id="file"
+                onChange={handleFileChange}
+                required
+                disabled={submitting}
+              />
+            </div>
 
-          {success ? (
-            <div>
-              <div className="alert alert-success" role="alert">
-                <strong>File successfully added to the dataset</strong>
-              </div>
-              <div className="d-flex gap-2 mt-3">
-                <button
-                  className="btn btn-primary"
-                  onClick={() => {
-                    navigate(`/dataset-info?dataset_id=${datasetId}`);
-                  }}
-                >
-                  Dataset
-                </button>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => {
-                    navigate("/dashboard");
-                  }}
-                >
-                  Dashboard
-                </button>
+            <div className="field">
+              <label htmlFor="fileTitle">
+                Title <span style={{ color: "var(--red, #c62828)" }}>(required)</span>
+              </label>
+              <input
+                type="text"
+                id="fileTitle"
+                value={fileTitle}
+                onChange={(e) =>
+                  validateAndFilterSpecialChars(e.target.value, setFileTitle, setFileTitleError, 200)
+                }
+                required
+                maxLength={200}
+                disabled={submitting}
+              />
+              {fileTitleError && (
+                <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
+                  no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
+                </span>
+              )}
+            </div>
+
+            <div className="field">
+              <label htmlFor="fileDescription">Description</label>
+              <textarea
+                id="fileDescription"
+                rows="3"
+                value={fileDescription}
+                onChange={(e) =>
+                  validateAndFilterSpecialChars(e.target.value, setFileDescription, setFileDescriptionError, 1000)
+                }
+                maxLength={1000}
+                disabled={submitting}
+              />
+              {fileDescriptionError && (
+                <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
+                  no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
+                </span>
+              )}
+            </div>
+
+            <div className="field">
+              <label>
+                Provenance
+                <HelpTooltip
+                  text="Who own the dataset?"
+                  id="tooltip-provenance-addfile"
+                />
+              </label>
+              <input
+                type="text"
+                value={provenance}
+                onChange={(e) =>
+                  validateAndFilterSpecialChars(e.target.value, setProvenance, setProvenanceError, 125)
+                }
+                disabled={submitting}
+              />
+              {provenanceError && (
+                <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
+                  no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
+                </span>
+              )}
+            </div>
+
+            <div className="field">
+              <label>
+                Source
+                <HelpTooltip
+                  text="Who gave you the dataset?"
+                  id="tooltip-source-addfile"
+                />
+              </label>
+              <input
+                type="text"
+                value={source}
+                onChange={(e) =>
+                  validateAndFilterSpecialChars(e.target.value, setSource, setSourceError, 1000)
+                }
+                disabled={submitting}
+              />
+              {sourceError && (
+                <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
+                  no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
+                </span>
+              )}
+            </div>
+
+            <div className="field">
+              <label>
+                Permissions
+                <HelpTooltip
+                  text={
+                    <>
+                      To know more about the Creative Commons Licenses please visit{" "}
+                      <a
+                        href="https://creativecommons.org/share-your-work/cclicenses/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        here
+                      </a>
+                      .
+                    </>
+                  }
+                  id="tooltip-permissions-addfile"
+                />
+              </label>
+              <select
+                value={permissions}
+                onChange={(e) => setPermissions(e.target.value)}
+                disabled={submitting}
+              >
+                <option value="CC0: Public Domain">CC0: Public Domain</option>
+                <option value="CC BY: Attribution">CC BY: Attribution</option>
+                <option value="CC BY-SA: Attribution-ShareAlike">CC BY-SA: Attribution-ShareAlike</option>
+                <option value="CC BY-NC: Attribution-NonCommercial">CC BY-NC: Attribution-NonCommercial</option>
+                <option value="CC BY-NC-SA: Attribution-NonCommercial-ShareAlike">CC BY-NC-SA: Attribution-NonCommercial-ShareAlike</option>
+                <option value="CC BY-ND: Attribution-NoDerivatives">CC BY-ND: Attribution-NoDerivatives</option>
+                <option value="CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives">CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives</option>
+              </select>
+            </div>
+
+            <div className="field">
+              <label>
+                Cite As
+                <HelpTooltip
+                  text="How should someone give credit for the data?"
+                  id="tooltip-cite-as-addfile"
+                />
+              </label>
+              <textarea
+                rows={4}
+                value={citeAs}
+                onChange={(e) =>
+                  validateAndFilterSpecialChars(e.target.value, setCiteAs, setCiteAsError, 1500)
+                }
+                disabled={submitting}
+              />
+              {citeAsError && (
+                <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
+                  no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
+                </span>
+              )}
+            </div>
+
+            <div className="field">
+              <label>
+                Groundtruthed
+                <HelpTooltip
+                  text="Has this data been validated in the field?"
+                  id="tooltip-groundtruthed-addfile"
+                />
+              </label>
+              <div style={{ display: "flex", gap: 18, alignItems: "center" }}>
+                <label className="check" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <input
+                    type="radio"
+                    name="groundtruthed-addfile"
+                    id="gt_no_addfile"
+                    checked={!groundtruthed}
+                    onChange={() => setGroundtruthed(false)}
+                    disabled={submitting}
+                  />
+                  No
+                </label>
+                <label className="check" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <input
+                    type="radio"
+                    name="groundtruthed-addfile"
+                    id="gt_yes_addfile"
+                    checked={groundtruthed}
+                    onChange={() => setGroundtruthed(true)}
+                    disabled={submitting}
+                  />
+                  Yes
+                </label>
               </div>
             </div>
-          ) : (
-            <form onSubmit={onSubmit}>
-              <div className="mb-3">
-                <label htmlFor="file" className="form-label">
-                  File <span style={{ color: "red" }}>(required)</span>
-                </label>
-                <input
-                  type="file"
-                  className="form-control"
-                  id="file"
-                  onChange={handleFileChange}
-                  required
-                  disabled={submitting}
+
+            <div className="field">
+              <label>
+                Duration
+                <HelpTooltip
+                  text="How many years can this data be used for from the date of creation? 0 if not applicable"
+                  id="tooltip-duration-addfile"
                 />
-              </div>
+              </label>
+              <input
+                type="number"
+                value={duration}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value) || 0;
+                  setDuration(Math.max(0, val));
+                }}
+                min="0"
+                disabled={submitting}
+              />
+            </div>
 
-              <div className="mb-3">
-                <label htmlFor="fileTitle" className="form-label">
-                  Title <span style={{ color: "red" }}>(required)</span>
-                </label>
-                <input
-                  type="text"
-                  className={`form-control ${fileTitleError ? "is-invalid" : ""}`}
-                  id="fileTitle"
-                  value={fileTitle}
-                  onChange={(e) =>
-                    validateAndFilterSpecialChars(e.target.value, setFileTitle, setFileTitleError, 200)
-                  }
-                  required
-                  maxLength={200}
-                  disabled={submitting}
-                />
-                {fileTitleError && (
-                  <div className="invalid-feedback" style={{ display: "block", color: "red" }}>
-                    no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
-                  </div>
-                )}
-              </div>
-
-              <div className="mb-3">
-                <label htmlFor="fileDescription" className="form-label">
-                  Description
-                </label>
-                <textarea
-                  className={`form-control ${fileDescriptionError ? "is-invalid" : ""}`}
-                  id="fileDescription"
-                  rows="3"
-                  value={fileDescription}
-                  onChange={(e) =>
-                    validateAndFilterSpecialChars(e.target.value, setFileDescription, setFileDescriptionError, 1000)
-                  }
-                  maxLength={1000}
-                  disabled={submitting}
-                />
-                {fileDescriptionError && (
-                  <div className="invalid-feedback" style={{ display: "block", color: "red" }}>
-                    no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
-                  </div>
-                )}
-              </div>
-
-              <div className="mb-3">
-                <label className="form-label">
-                  Provenance
-                  <HelpTooltip
-                    text="Who own the dataset?"
-                    id="tooltip-provenance-addfile"
-                  />
-                </label>
-                <input
-                  type="text"
-                  className={`form-control ${provenanceError ? "is-invalid" : ""}`}
-                  value={provenance}
-                  onChange={(e) =>
-                    validateAndFilterSpecialChars(e.target.value, setProvenance, setProvenanceError, 125)
-                  }
-                  disabled={submitting}
-                />
-                {provenanceError && (
-                  <div className="invalid-feedback" style={{ display: "block", color: "red" }}>
-                    no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
-                  </div>
-                )}
-              </div>
-
-              <div className="mb-3">
-                <label className="form-label">
-                  Source
-                  <HelpTooltip
-                    text="Who gave you the dataset?"
-                    id="tooltip-source-addfile"
-                  />
-                </label>
-                <input
-                  type="text"
-                  className={`form-control ${sourceError ? "is-invalid" : ""}`}
-                  value={source}
-                  onChange={(e) =>
-                    validateAndFilterSpecialChars(e.target.value, setSource, setSourceError, 1000)
-                  }
-                  disabled={submitting}
-                />
-                {sourceError && (
-                  <div className="invalid-feedback" style={{ display: "block", color: "red" }}>
-                    no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
-                  </div>
-                )}
-              </div>
-
-              <div className="mb-3">
-                <label className="form-label">
-                  Permissions
-                  <HelpTooltip
-                    text={
-                      <>
-                        To know more about the Creative Commons Licenses please visit{" "}
-                        <a
-                          href="https://creativecommons.org/share-your-work/cclicenses/"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          here
-                        </a>
-                        .
-                      </>
-                    }
-                    id="tooltip-permissions-addfile"
-                  />
-                </label>
-                <select
-                  className="form-select"
-                  value={permissions}
-                  onChange={(e) => setPermissions(e.target.value)}
-                  disabled={submitting}
-                >
-                  <option value="CC0: Public Domain">CC0: Public Domain</option>
-                  <option value="CC BY: Attribution">CC BY: Attribution</option>
-                  <option value="CC BY-SA: Attribution-ShareAlike">CC BY-SA: Attribution-ShareAlike</option>
-                  <option value="CC BY-NC: Attribution-NonCommercial">CC BY-NC: Attribution-NonCommercial</option>
-                  <option value="CC BY-NC-SA: Attribution-NonCommercial-ShareAlike">CC BY-NC-SA: Attribution-NonCommercial-ShareAlike</option>
-                  <option value="CC BY-ND: Attribution-NoDerivatives">CC BY-ND: Attribution-NoDerivatives</option>
-                  <option value="CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives">CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives</option>
-                </select>
-              </div>
-
-              <div className="mb-3">
-                <label className="form-label">
-                  Cite As
-                  <HelpTooltip
-                    text="How should someone give credit for the data?"
-                    id="tooltip-cite-as-addfile"
-                  />
-                </label>
-                <textarea
-                  className={`form-control ${citeAsError ? "is-invalid" : ""}`}
-                  rows={4}
-                  value={citeAs}
-                  onChange={(e) =>
-                    validateAndFilterSpecialChars(e.target.value, setCiteAs, setCiteAsError, 1500)
-                  }
-                  disabled={submitting}
-                />
-                {citeAsError && (
-                  <div className="invalid-feedback" style={{ display: "block", color: "red" }}>
-                    no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
-                  </div>
-                )}
-              </div>
-
-              <div className="mb-3">
-                <label className="form-label me-3">
-                  Groundtruthed
-                  <HelpTooltip
-                    text="Has this data been validated in the field?"
-                    id="tooltip-groundtruthed-addfile"
-                  />
-                </label>
-                <div>
-                  <div className="form-check form-check-inline">
-                    <input
-                      className="form-check-input"
-                      type="radio"
-                      name="groundtruthed-addfile"
-                      id="gt_no_addfile"
-                      checked={!groundtruthed}
-                      onChange={() => setGroundtruthed(false)}
-                      disabled={submitting}
-                    />
-                    <label className="form-check-label" htmlFor="gt_no_addfile">
-                      No
-                    </label>
-                  </div>
-                  <div className="form-check form-check-inline">
-                    <input
-                      className="form-check-input"
-                      type="radio"
-                      name="groundtruthed-addfile"
-                      id="gt_yes_addfile"
-                      checked={groundtruthed}
-                      onChange={() => setGroundtruthed(true)}
-                      disabled={submitting}
-                    />
-                    <label className="form-check-label" htmlFor="gt_yes_addfile">
-                      Yes
-                    </label>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mb-3">
-                <label className="form-label">
-                  Duration
-                  <HelpTooltip
-                    text="How many years can this data be used for from the date of creation? 0 if not applicable"
-                    id="tooltip-duration-addfile"
-                  />
-                </label>
-                <input
-                  type="number"
-                  className="form-control"
-                  value={duration}
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value) || 0;
-                    setDuration(Math.max(0, val));
-                  }}
-                  min="0"
-                  disabled={submitting}
-                />
-              </div>
-
-              <div className="mb-3">
-                <label className="form-label">
-                  Value
-                  <HelpTooltip
-                    text={`What is the value of the data?
+            <div className="field">
+              <label>
+                Value
+                <HelpTooltip
+                  text={`What is the value of the data?
 High: data has high acquisition cost or sensitive information
 Medium: data is specific to a particular organisation and hard to search online
 Low: Openly downloadable in public domain`}
-                    id="tooltip-value-addfile"
-                  />
-                </label>
-                <select
-                  className="form-select"
-                  value={value}
-                  onChange={(e) => setValue(e.target.value)}
-                  disabled={submitting}
-                >
-                  <option value="low">low</option>
-                  <option value="medium">medium</option>
-                  <option value="high">high</option>
-                </select>
-              </div>
+                  id="tooltip-value-addfile"
+                />
+              </label>
+              <select
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                disabled={submitting}
+              >
+                <option value="low">low</option>
+                <option value="medium">medium</option>
+                <option value="high">high</option>
+              </select>
+            </div>
 
-              <div className="mb-3">
-                <label className="form-label">
+            <div className="field-row">
+              <div className="field">
+                <label>
                   Temporal Coverage From
                   <HelpTooltip
                     text="Start date of temporal coverage (ISO format: YYYY-MM-DDTHH:mm:ssZ)"
@@ -583,7 +568,6 @@ Low: Openly downloadable in public domain`}
                 </label>
                 <input
                   type="datetime-local"
-                  className="form-control"
                   value={temporalFrom ? (() => {
                     // Convert ISO string to datetime-local format (YYYY-MM-DDTHH:mm)
                     try {
@@ -620,8 +604,8 @@ Low: Openly downloadable in public domain`}
                 />
               </div>
 
-              <div className="mb-3">
-                <label className="form-label">
+              <div className="field">
+                <label>
                   Temporal Coverage To
                   <HelpTooltip
                     text="End date of temporal coverage (ISO format: YYYY-MM-DDTHH:mm:ssZ)"
@@ -630,7 +614,6 @@ Low: Openly downloadable in public domain`}
                 </label>
                 <input
                   type="datetime-local"
-                  className="form-control"
                   value={temporalTo ? (() => {
                     // Convert ISO string to datetime-local format (YYYY-MM-DDTHH:mm)
                     try {
@@ -666,66 +649,51 @@ Low: Openly downloadable in public domain`}
                   disabled={submitting}
                 />
               </div>
+            </div>
 
-              <div className="mb-3">
-                <label className="form-label">
-                  Geographical Extent
-                  <HelpTooltip
-                    text="Geographic coverage or location information"
-                    id="tooltip-geography-addfile"
-                  />
-                </label>
-                <textarea
-                  className="form-control"
-                  rows={3}
-                  value={geography}
-                  onChange={(e) => setGeography(e.target.value)}
-                  disabled={submitting}
+            <div className="field">
+              <label>
+                Geographical Extent
+                <HelpTooltip
+                  text="Geographic coverage or location information"
+                  id="tooltip-geography-addfile"
                 />
-              </div>
-
-              {submitting && (
-                <div className="mb-3">
-                  <div className="progress">
-                    <div
-                      className="progress-bar"
-                      role="progressbar"
-                      style={{ width: `${progress}%` }}
-                      aria-valuenow={progress}
-                      aria-valuemin="0"
-                      aria-valuemax="100"
-                    >
-                      {progress}%
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <button
-                type="submit"
-                className="btn btn-primary"
+              </label>
+              <textarea
+                rows={3}
+                value={geography}
+                onChange={(e) => setGeography(e.target.value)}
                 disabled={submitting}
-              >
-                {submitting ? (
-                  <>
-                    <span
-                      className="spinner-border spinner-border-sm me-2"
-                      role="status"
-                      aria-hidden="true"
-                    ></span>
-                    Uploading...
-                  </>
-                ) : (
-                  "Upload"
-                )}
-              </button>
-            </form>
-          )}
-        </div>
+              />
+            </div>
+
+            {submitting && (
+              <div className="field">
+                <div style={{ background: "var(--wash, #eef2f6)", borderRadius: 999, height: 8, overflow: "hidden" }}>
+                  <div
+                    role="progressbar"
+                    aria-valuenow={progress}
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                    style={{ width: `${progress}%`, height: "100%", background: "var(--blue, #1b75e0)", transition: "width .2s" }}
+                  />
+                </div>
+                <span className="mono-token" style={{ marginTop: 6, display: "inline-block" }}>{progress}%</span>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={submitting}
+            >
+              {submitting ? "Uploading…" : "Upload"}
+            </button>
+          </form>
+        )}
       </div>
     </div>
   );
 }
 
 export default AddFile;
-

@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from "react";
 import axios from "axios";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
     list_organizations_endpoint,
     signup_endpoint,
@@ -163,121 +163,82 @@ function SignUp() {
     };
 
     return (
-        <div className="bg-wave">
-            <section className="container py-5">
-                <div className="row justify-content-center">
-                    <div className="col-12 col-sm-10 col-md-8 col-lg-6">
-                        <div className="card auth-card p-4 p-md-5">
-                            <h2 className="mb-3 text-center auth-title">
-                                Sign Up
-                            </h2>
-                            <p className="text-muted text-center mb-4">
-                                Create your account to access the WELL Labs Data
-                                Portal.
-                            </p>
+        <div className="page">
+            <div className="wrap">
+                <div className="auth-wrap" style={{ maxWidth: 480 }}>
+                    <div className="auth-card">
+                        <h1 className="display">Create your account</h1>
+                        <p className="auth-sub">
+                            Create your account to access the WELL Labs Data
+                            Portal.
+                        </p>
 
-                            {error && (
-                                <div
-                                    className="alert alert-danger"
-                                    role="alert"
-                                >
-                                    {error}
-                                </div>
-                            )}
-                            {success && (
-                                <div
-                                    className="alert alert-success"
-                                    role="alert"
-                                >
-                                    {success}
-                                </div>
-                            )}
+                        {error && (
+                            <div
+                                className="auth-note"
+                                role="alert"
+                                style={{ background: "#faf3e4", borderColor: "#ecdcb8", color: "#9a6b12" }}
+                            >
+                                {error}
+                            </div>
+                        )}
+                        {success && (
+                            <div className="auth-note" role="alert" style={{ marginTop: 16 }}>
+                                {success}
+                            </div>
+                        )}
 
-                            <form onSubmit={handleSubmit} noValidate>
-                                {/* <div className="alert alert-info py-2">
-                  <small>
-                    Required: full name, email, password, confirm password, are you a student?, {isStudent ? "institution" : "organization"}
-                  </small>
-                </div> */}
-                                <div className="mb-3">
-                                    <label
-                                        htmlFor="fullName"
-                                        className="form-label"
-                                    >
-                                        Full Name{" "}
-                                        <span style={{ color: "red" }}>
-                                            (required)
-                                        </span>
-                                    </label>
-                                    <input
-                                        id="fullName"
-                                        type="text"
-                                        className="form-control"
-                                        placeholder="Enter your full name"
-                                        value={fullName}
-                                        onChange={(e) =>
-                                            setFullName(
-                                                e.target.value.slice(0, 50)
-                                            )
-                                        }
-                                        required
-                                        maxLength={50}
-                                    />
-                                </div>
+                        <form onSubmit={handleSubmit} noValidate>
+                            <div className="field">
+                                <label htmlFor="fullName">
+                                    Full Name{" "}
+                                    <span style={{ color: "red" }}>(required)</span>
+                                </label>
+                                <input
+                                    id="fullName"
+                                    type="text"
+                                    placeholder="Enter your full name"
+                                    value={fullName}
+                                    onChange={(e) =>
+                                        setFullName(e.target.value.slice(0, 50))
+                                    }
+                                    required
+                                    maxLength={50}
+                                />
+                            </div>
 
-                                <div className="mb-3">
-                                    <label
-                                        htmlFor="email"
-                                        className="form-label"
-                                    >
-                                        Email{" "}
-                                        <span style={{ color: "red" }}>
-                                            (required)
-                                        </span>
-                                    </label>
-                                    <input
-                                        id="email"
-                                        name="email"
-                                        type="email"
-                                        className={`form-control ${
-                                            email && !emailValid
-                                                ? "is-invalid"
-                                                : ""
-                                        }`}
-                                        placeholder="Enter your email"
-                                        value={email}
-                                        onChange={(e) =>
-                                            setEmail(e.target.value)
-                                        }
-                                        autoComplete="email"
-                                        required
-                                    />
-                                    {email && !emailValid && (
-                                        <div className="invalid-feedback">
-                                            Please enter a valid email address
-                                        </div>
-                                    )}
-                                </div>
+                            <div className="field">
+                                <label htmlFor="email">
+                                    Email{" "}
+                                    <span style={{ color: "red" }}>(required)</span>
+                                </label>
+                                <input
+                                    id="email"
+                                    name="email"
+                                    type="email"
+                                    placeholder="you@ifmr.ac.in"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    autoComplete="email"
+                                    required
+                                />
+                                {email && !emailValid && (
+                                    <span style={{ fontSize: 12, color: "#9a6b12" }}>
+                                        Please enter a valid email address
+                                    </span>
+                                )}
+                            </div>
 
-                                <div className="mb-3">
-                                    <label
-                                        htmlFor="password"
-                                        className="form-label"
-                                    >
+                            <div className="field-row">
+                                <div className="field">
+                                    <label htmlFor="password">
                                         Password{" "}
-                                        <span style={{ color: "red" }}>
-                                            (required)
-                                        </span>
+                                        <span style={{ color: "red" }}>(required)</span>
                                     </label>
                                     <input
                                         id="password"
                                         name="password"
                                         type="password"
-                                        className={`form-control ${
-                                            password && password.length < 8
-                                                ? "is-invalid"
-                                                : ""
-                                        }`}
                                         placeholder="Minimum 8 characters"
                                         value={password}
                                         onChange={(e) =>
@@ -288,32 +249,21 @@ function SignUp() {
                                         minLength={8}
                                     />
                                     {password && password.length < 8 && (
-                                        <div className="invalid-feedback">
-                                            Password must be at least 8
-                                            characters
-                                        </div>
+                                        <span style={{ fontSize: 12, color: "#9a6b12" }}>
+                                            Password must be at least 8 characters
+                                        </span>
                                     )}
                                 </div>
 
-                                <div className="mb-3">
-                                    <label
-                                        htmlFor="confirmPassword"
-                                        className="form-label"
-                                    >
+                                <div className="field">
+                                    <label htmlFor="confirmPassword">
                                         Confirm Password{" "}
-                                        <span style={{ color: "red" }}>
-                                            (required)
-                                        </span>
+                                        <span style={{ color: "red" }}>(required)</span>
                                     </label>
                                     <input
                                         id="confirmPassword"
                                         name="confirmPassword"
                                         type="password"
-                                        className={`form-control ${
-                                            confirmPassword && !passwordsMatch
-                                                ? "is-invalid"
-                                                : ""
-                                        }`}
                                         placeholder="Re-enter your password"
                                         value={confirmPassword}
                                         onChange={(e) =>
@@ -323,184 +273,113 @@ function SignUp() {
                                         required
                                     />
                                     {!passwordsMatch && confirmPassword && (
-                                        <div className="invalid-feedback">
+                                        <span style={{ fontSize: 12, color: "#9a6b12" }}>
                                             Passwords do not match
-                                        </div>
+                                        </span>
                                     )}
                                 </div>
+                            </div>
 
-                                {/*
-                                <div className="mb-3">
-                                    <label className="form-label d-block">
-                                        Are you a student?{" "}
-                                        <span style={{ color: "red" }}>
-                                            (required)
-                                        </span>
-                                    </label>
-                                    <div className="d-flex gap-3">
-                                        <div className="form-check">
-                                            <input
-                                                className="form-check-input"
-                                                type="radio"
-                                                name="studentRadio"
-                                                id="studentNo"
-                                                checked={!isStudent}
-                                                onChange={() =>
-                                                    setIsStudent(false)
-                                                }
-                                            />
-                                            <label
-                                                className="form-check-label"
-                                                htmlFor="studentNo"
-                                            >
-                                                No
-                                            </label>
-                                        </div>
-                                        <div className="form-check">
-                                            <input
-                                                className="form-check-input"
-                                                type="radio"
-                                                name="studentRadio"
-                                                id="studentYes"
-                                                checked={isStudent}
-                                                onChange={() =>
-                                                    setIsStudent(true)
-                                                }
-                                            />
-                                            <label
-                                                className="form-check-label"
-                                                htmlFor="studentYes"
-                                            >
-                                                Yes
-                                            </label>
-                                        </div>
-                                    </div>
-                                </div>
-                                */}
+                            <div className="field">
+                                <label htmlFor="designation">Designation</label>
+                                <input
+                                    id="designation"
+                                    type="text"
+                                    placeholder={
+                                        isStudent
+                                            ? "student"
+                                            : "Enter your designation"
+                                    }
+                                    value={designation}
+                                    onChange={(e) =>
+                                        setDesignation(e.target.value.slice(0, 25))
+                                    }
+                                    disabled={isStudent}
+                                    maxLength={25}
+                                />
+                            </div>
 
-                                <div className="mb-3">
-                                    <label
-                                        htmlFor="designation"
-                                        className="form-label"
-                                    >
-                                        Designation
-                                    </label>
+                            <div className="field">
+                                <label htmlFor="organization">
+                                    {isStudent
+                                        ? "Institution"
+                                        : "Organization ID"}{" "}
+                                    <span style={{ color: "red" }}>(required)</span>
+                                </label>
+                                {isStudent ? (
                                     <input
-                                        id="designation"
+                                        id="organization"
                                         type="text"
-                                        className="form-control"
-                                        placeholder={
-                                            isStudent
-                                                ? "student"
-                                                : "Enter your designation"
-                                        }
-                                        value={designation}
+                                        placeholder="Enter your institution"
+                                        value={organization}
                                         onChange={(e) =>
-                                            setDesignation(
-                                                e.target.value.slice(0, 25)
-                                            )
+                                            setOrganization(e.target.value.slice(0, 50))
                                         }
-                                        disabled={isStudent}
-                                        maxLength={25}
+                                        required
+                                        maxLength={50}
+                                        aria-label="Institution"
                                     />
-                                    {/* {!isStudent && <small className="text-muted">Max 25 characters</small>} */}
-                                </div>
-
-                                <div className="mb-1">
-                                    <label
-                                        htmlFor="organization"
-                                        className="form-label"
+                                ) : (
+                                    <select
+                                        id="organization"
+                                        style={{ width: "100%" }}
+                                        value={organization}
+                                        onChange={(e) =>
+                                            setOrganization(e.target.value)
+                                        }
+                                        required
+                                        disabled={organizationsLoading}
+                                        aria-label="Organization"
                                     >
-                                        {isStudent
-                                            ? "Institution"
-                                            : "Organization ID"}{" "}
-                                        <span style={{ color: "red" }}>
-                                            (required)
-                                        </span>
-                                    </label>
-                                    {isStudent ? (
-                                        <input
-                                            id="organization"
-                                            type="text"
-                                            className="form-control"
-                                            placeholder="Enter your institution"
-                                            value={organization}
-                                            onChange={(e) =>
-                                                setOrganization(
-                                                    e.target.value.slice(0, 50)
-                                                )
-                                            }
-                                            required
-                                            maxLength={50}
-                                            aria-label="Institution"
-                                        />
-                                    ) : (
-                                        <select
-                                            id="organization"
-                                            className="form-select form-control"
-                                            value={organization}
-                                            onChange={(e) =>
-                                                setOrganization(
-                                                    e.target.value
-                                                )
-                                            }
-                                            required
-                                            disabled={organizationsLoading}
-                                            aria-label="Organization"
-                                        >
-                                            <option value="">
-                                                {organizationsLoading
-                                                    ? "Loading..."
-                                                    : "Select organization"}
+                                        <option value="">
+                                            {organizationsLoading
+                                                ? "Loading..."
+                                                : "Select organization"}
+                                        </option>
+                                        {organizations.map((org) => (
+                                            <option key={org.id} value={org.id}>
+                                                {org.name}
                                             </option>
-                                            {organizations.map((org) => (
-                                                <option
-                                                    key={org.id}
-                                                    value={org.id}
-                                                >
-                                                    {org.name}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    )}
-                                </div>
-                                {!isStudent && organizationsError && (
-                                    <div className="text-danger small mb-2" role="alert">
-                                        {organizationsError}
-                                    </div>
+                                        ))}
+                                    </select>
                                 )}
-                                <div className="mb-4">
-                                    <label
-                                        htmlFor="phone"
-                                        className="form-label"
-                                    >
-                                        Phone
-                                    </label>
-                                    <input
-                                        id="phone"
-                                        type="tel"
-                                        inputMode="numeric"
-                                        pattern="[0-9]{0,10}"
-                                        className="form-control"
-                                        placeholder="10 digits phone number"
-                                        value={phone}
-                                        onChange={onPhoneChange}
-                                        maxLength={10}
-                                    />
-                                </div>
+                                {!isStudent && organizationsError && (
+                                    <span style={{ fontSize: 12, color: "#9a6b12" }} role="alert">
+                                        {organizationsError}
+                                    </span>
+                                )}
+                            </div>
 
-                                <button
-                                    type="submit"
-                                    className="btn btn-primary w-100 auth-submit-btn"
-                                    disabled={!canSubmit}
-                                >
-                                    {submitting ? "Signing Up..." : "Sign Up"}
-                                </button>
-                            </form>
+                            <div className="field">
+                                <label htmlFor="phone">Phone</label>
+                                <input
+                                    id="phone"
+                                    type="tel"
+                                    inputMode="numeric"
+                                    pattern="[0-9]{0,10}"
+                                    placeholder="10 digits phone number"
+                                    value={phone}
+                                    onChange={onPhoneChange}
+                                    maxLength={10}
+                                />
+                            </div>
+
+                            <button
+                                type="submit"
+                                className="btn btn-primary"
+                                style={{ width: "100%", marginTop: 6 }}
+                                disabled={!canSubmit}
+                            >
+                                {submitting ? "Signing Up…" : "Create account"}
+                            </button>
+                        </form>
+
+                        <div className="auth-foot">
+                            Already have an account? <Link to="/signin">Sign in</Link>
                         </div>
                     </div>
                 </div>
-            </section>
+            </div>
         </div>
     );
 }

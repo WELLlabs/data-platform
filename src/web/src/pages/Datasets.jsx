@@ -1,181 +1,170 @@
-import React, { useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { datasets_endpoint } from "../api/endpoints";
+import Contour from "../components/wd/Contour";
+import Ic from "../components/wd/Icons";
+import { useCmdk } from "../components/wd/CommandPalette";
+import { DatasetRow, DatasetCard, normalize } from "../components/wd/DatasetItems";
 
-function Datasets() {
+const LIMIT = 10;
+
+export default function Datasets() {
+  const navigate = useNavigate();
+  const cmdk = useCmdk();
+  const { isAuthenticated } = useAuth();
+
   const [datasets, setDatasets] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [currentPage, setCurrentPage] = useState(1);
+  const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
-  const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const { user, isAuthenticated, verifyUser } = useAuth();
-  const limit = 10;
 
-  // Check authentication and set userid query parameter if signed in
+  const [view, setView] = useState("list");
+  const [filters, setFilters] = useState({ availability: [], org: [] });
+  const [collapsed, setCollapsed] = useState({});
+
   useEffect(() => {
-    const checkAuthAndSetParams = async () => {
+    let active = true;
+    (async () => {
+      setLoading(true);
       try {
-        const userData = await verifyUser();
-        
-        if (userData) {
-          // User is signed in, set userid query parameter
-          const currentUserId = searchParams.get("userid");
-          if (!currentUserId || currentUserId !== userData.id) {
-            setSearchParams({ userid: userData.id });
-          }
-        }
-      } catch (error) {
-        console.error("Error checking authentication:", error);
-      }
-    };
-
-    checkAuthAndSetParams();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Fetch datasets when page changes or authentication state changes
-  useEffect(() => {
-    const fetchDatasets = async () => {
-      try {
-        setLoading(true);
-        const offset = (currentPage - 1) * limit;
-        
-        // Build query parameters
-        const params = new URLSearchParams({
-          limit: limit.toString(),
-          offset: offset.toString(),
-        });
-
-        const response = await fetch(
-          `${datasets_endpoint}?${params.toString()}`,
-          { credentials: "include" }
-        );
-
-        if (!response.ok) {
-          throw new Error(`Failed to fetch datasets: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        
-        // Check if we have more data
-        if (data.length === 0) {
-          setHasMore(false);
-          // If we're on page 1, set empty datasets
-          // If we're on page > 1, keep previous datasets (don't update)
-          if (currentPage === 1) {
-            setDatasets([]);
-          }
-          // If currentPage > 1, don't update datasets to keep previous page data
-        } else {
-          setHasMore(data.length === limit);
-          setDatasets(data || []);
-        }
-      } catch (error) {
-        console.error("Error fetching datasets:", error);
-        setDatasets([]);
-        setHasMore(false);
+        const offset = (page - 1) * LIMIT;
+        const res = await fetch(`${datasets_endpoint}?limit=${LIMIT}&offset=${offset}`, { credentials: "include" });
+        if (!res.ok) throw new Error("fetch");
+        const data = await res.json();
+        if (!active) return;
+        const arr = Array.isArray(data) ? data : [];
+        setHasMore(arr.length === LIMIT);
+        if (arr.length === 0 && page > 1) return; // keep previous page
+        setDatasets(arr);
+      } catch {
+        if (active) { setDatasets([]); setHasMore(false); }
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
-    };
+    })();
+    return () => { active = false; };
+  }, [page]);
 
-    fetchDatasets();
-  }, [currentPage, isAuthenticated, user?.id]);
+  // client-side facets from the current page
+  const orgOptions = useMemo(() => {
+    const s = new Set();
+    datasets.forEach((d) => { const o = normalize(d).org; if (o) s.add(o); });
+    return [...s];
+  }, [datasets]);
 
-  const formatDate = (dateString) => {
-    if (!dateString) return "N/A";
-    try {
-      const date = new Date(dateString);
-      return date.toLocaleString();
-    } catch {
-      return dateString;
-    }
+  const shown = useMemo(() => {
+    return datasets.filter((raw) => {
+      const d = normalize(raw);
+      if (filters.availability.length) {
+        const key = d.isPrivate ? "private" : "public";
+        if (!filters.availability.includes(key)) return false;
+      }
+      if (filters.org.length && !filters.org.includes(d.org)) return false;
+      return true;
+    });
+  }, [datasets, filters]);
+
+  const toggle = (group, val) => {
+    setFilters((f) => {
+      const cur = f[group] || [];
+      const next = cur.includes(val) ? cur.filter((v) => v !== val) : [...cur, val];
+      return { ...f, [group]: next };
+    });
   };
+  const clearAll = () => setFilters({ availability: [], org: [] });
+  const chips = [
+    ...filters.availability.map((v) => ["availability", v, v === "private" ? "Private" : "Public"]),
+    ...filters.org.map((v) => ["org", v, v]),
+  ];
 
-  const handleCardClick = (datasetId) => {
-    navigate(`/dataset-info?dataset_id=${datasetId}`);
-  };
-
-  const handlePrevious = () => {
-    if (currentPage > 1) {
-      setCurrentPage(currentPage - 1);
-      setHasMore(true); // Reset hasMore when navigating
-    }
-  };
-
-  const handleNext = () => {
-    if (hasMore) {
-      setCurrentPage(currentPage + 1);
-    }
-  };
+  const FGroup = ({ id, label, options }) => (
+    <div className={"fgroup" + (collapsed[id] ? " collapsed" : "")}>
+      <h4 onClick={() => setCollapsed((c) => ({ ...c, [id]: !c[id] }))} role="button" tabIndex={0}>
+        {label}<span className="chev"><Ic name="chev" size={16} /></span>
+      </h4>
+      <div className="fbody">
+        {options.map(([val, lbl]) => (
+          <label className="check" key={val}>
+            <input type="checkbox" checked={(filters[id] || []).includes(val)} onChange={() => toggle(id, val)} />
+            {lbl}
+          </label>
+        ))}
+      </div>
+    </div>
+  );
 
   return (
-    <main className="wd-discovery">
-      <section className="wd-discovery-head">
-        <div className="wd-content">
-          <span className="wd-eyebrow">Discover</span>
-          <h1>Explore datasets</h1>
-          <p>Browse the public research library and datasets available to your organization.</p>
-          <div className="wd-discovery-actions">
-            <button className="wd-search-button" onClick={() => navigate("/search")}>Search the repository <span aria-hidden="true">⌕</span></button>
-            {isAuthenticated && <button className="wd-primary-button" onClick={() => navigate("/create-dataset")}>Publish a dataset <span aria-hidden="true">+</span></button>}
-          </div>
+    <div className="page">
+      <section className="explore-head">
+        <Contour op={0.4} />
+        <div className="wrap inner">
+          <span className="eyebrow">Discover</span>
+          <h1 className="display">Explore datasets</h1>
+          <button className="hero-search" style={{ maxWidth: 640, margin: 0 }} onClick={() => cmdk.open()} aria-label="Open search">
+            <span className="sic"><Ic name="search" size={20} sw={2} style={{ color: "#667085" }} /></span>
+            <span style={{ flex: 1, textAlign: "left", color: "var(--muted)", fontSize: 16 }}>Search datasets, places, topics and organizations…</span>
+            <kbd>⌘K</kbd>
+          </button>
         </div>
       </section>
-      <section className="wd-content wd-discovery-results">
-        <div className="wd-results-heading"><h2>Available datasets</h2><span>{loading ? "Loading" : "Page " + currentPage}</span></div>
 
-      {/* Loading state */}
-      {loading ? (
-        <div className="wd-state wd-loading">
-          <div className="spinner-border" role="status">
-            <span className="visually-hidden">Loading datasets...</span>
-          </div>
-        </div>
-      ) : datasets.length === 0 && currentPage === 1 ? (
-        <div className="wd-state" role="status">
-          No datasets found.
-        </div>
-      ) : (
-        <>
-          {/* Dataset cards */}
-          <div className="wd-results-list">
-            {datasets.map((dataset) => (
-              <button key={dataset.dataset_id} className="wd-result-row" onClick={() => handleCardClick(dataset.dataset_id)}>
-                <span className="wd-eyebrow">{dataset.private ? "Private" : "Public"}</span>
-                <span className="wd-result-main"><strong>{dataset.dataset_title || "Untitled"}</strong><span>{dataset.dataset_description || "No description provided."}</span></span>
-                <span className="wd-result-meta">{dataset.organization || "—"}<br />{formatDate(dataset.created_at)}</span>
-                <span className="wd-result-arrow" aria-hidden="true">→</span>
+      <div className="wrap"><div className="explore-layout">
+        <aside className="filters">
+          <div className="fh">Refine</div>
+          <FGroup id="availability" label="Availability" options={[["public", "Public"], ["private", "Private"]]} />
+          {orgOptions.length > 0 && <FGroup id="org" label="Organization" options={orgOptions.map((o) => [o, o])} />}
+          {isAuthenticated && (
+            <div className="fgroup">
+              <button className="btn btn-primary" style={{ width: "100%", marginTop: 8 }} onClick={() => navigate("/create-dataset")}>
+                <Ic name="plus" size={15} />Publish a dataset
               </button>
-            ))}
+            </div>
+          )}
+        </aside>
+
+        <div>
+          <div className="results-bar">
+            <span className="count"><b>{shown.length}</b> dataset{shown.length !== 1 ? "s" : ""}{" "}<span style={{ fontSize: 12 }}>· page {page}</span></span>
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <div className="view-toggle" role="group" aria-label="View">
+                <button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><Ic name="list" size={15} /></button>
+                <button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><Ic name="grid" size={15} /></button>
+              </div>
+            </div>
           </div>
 
-          {/* Pagination */}
-          <div className="wd-pagination">
-            <button
-              className="wd-page-button"
-              onClick={handlePrevious}
-              disabled={currentPage === 1 || loading}
-            >
-              Previous
-            </button>
-            <span>{currentPage}</span>
-            <button
-              className="wd-page-button"
-              onClick={handleNext}
-              disabled={!hasMore || loading}
-            >
-              Next
-            </button>
+          {chips.length > 0 && (
+            <div className="chips">
+              {chips.map(([g, v, lbl]) => (
+                <span className="chip" key={g + v}>{lbl}<button onClick={() => toggle(g, v)} aria-label="Remove filter"><Ic name="close" size={12} /></button></span>
+              ))}
+              <button className="btn-quiet" style={{ fontSize: 12.5, padding: "4px 6px" }} onClick={clearAll}>Clear all</button>
+            </div>
+          )}
+
+          {loading ? (
+            <div className="empty"><p>Loading datasets…</p></div>
+          ) : shown.length === 0 ? (
+            <div className="empty">
+              <div className="eic"><Ic name="search" size={24} sw={1.6} /></div>
+              <h3 className="display">No datasets match</h3>
+              <p>Try removing a filter or searching for a place, topic or organization.</p>
+              {chips.length > 0 && <button className="btn btn-ghost" onClick={clearAll}>Clear filters</button>}
+            </div>
+          ) : view === "list" ? (
+            <div className="rows">{shown.map((d) => <DatasetRow key={normalize(d).id} dataset={d} />)}</div>
+          ) : (
+            <div className="explore-grid">{shown.map((d) => <DatasetCard key={normalize(d).id} dataset={d} />)}</div>
+          )}
+
+          <div className="pagination">
+            <button onClick={() => { if (page > 1) { setPage(page - 1); setHasMore(true); } }} disabled={page === 1 || loading} aria-label="Previous">‹</button>
+            <button className="active">{page}</button>
+            <button onClick={() => { if (hasMore) setPage(page + 1); }} disabled={!hasMore || loading} aria-label="Next">›</button>
           </div>
-        </>
-      )}
-      </section>
-    </main>
+        </div>
+      </div></div>
+    </div>
   );
 }
-
-export default Datasets;
-

@@ -359,9 +359,9 @@ function CreateDataset() {
 
     if (loading) {
         return (
-            <div className="container py-5 text-center">
-                <div className="spinner-border" role="status">
-                    <span className="visually-hidden">Loading...</span>
+            <div className="page">
+                <div className="wrap" style={{ maxWidth: 720, padding: "48px 0 88px" }}>
+                    <div className="empty"><p>Loading…</p></div>
                 </div>
             </div>
         );
@@ -371,598 +371,540 @@ function CreateDataset() {
 
     if (success) {
         return (
-            <div className="container py-5 min-vh-100 d-flex align-items-center justify-content-center">
-                <div className="text-center">
-                    <p className="fs-4 mb-4">
-                        Dataset upload is in progress, it will soon be
-                        available in your dashboard.
-                    </p>
-                    <button
-                        type="button"
-                        className="btn text-white"
-                        style={{ backgroundColor: "#0d6efd" }}
-                        onMouseEnter={(e) => {
-                            e.currentTarget.style.backgroundColor = "#0b5ed7";
-                        }}
-                        onMouseLeave={(e) => {
-                            e.currentTarget.style.backgroundColor = "#0d6efd";
-                        }}
-                        onClick={() => navigate("/dashboard")}
-                    >
-                        Dashboard
-                    </button>
+            <div className="page">
+                <div className="wrap" style={{ maxWidth: 720, padding: "48px 0 88px" }}>
+                    <div className="auth-wrap">
+                        <div className="auth-card">
+                            <span className="eyebrow">Datasets</span>
+                            <h1 className="display">Upload in progress</h1>
+                            <p className="auth-sub">
+                                Dataset upload is in progress, it will soon be
+                                available in your dashboard.
+                            </p>
+                            <div style={{ marginTop: 22 }}>
+                                <button
+                                    type="button"
+                                    className="btn btn-primary"
+                                    onClick={() => navigate("/dashboard")}
+                                >
+                                    Dashboard
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         );
     }
 
     return (
-        <div className="container py-4">
-            <h2 className="mb-4">Create a Dataset</h2>
-
-            {error && (
-                <div className="alert alert-danger" role="alert">
-                    {error}
-                </div>
-            )}
-
-            <form onSubmit={onSubmit}>
-                <div className="mb-3">
-                    <label className="form-label">
-                        Dataset Title{" "}
-                        <span style={{ color: "red" }}>(required)</span>
-                        <HelpTooltip
-                            text="Name of the dataset. For example: Bangalore Rainfall Data would be dataset and you can add several datasets by year under that Title"
-                            id="tooltip-dataset-title"
-                        />
-                    </label>
-                    <input
-                        type="text"
-                        className={`form-control ${
-                            titleError ? "is-invalid" : ""
-                        }`}
-                        value={title}
-                        onChange={(e) =>
-                            validateAndFilterSpecialChars(
-                                e.target.value,
-                                setTitle,
-                                setTitleError,
-                                200
-                            )
-                        }
-                        required
-                    />
-                    {titleError && (
-                        <div
-                            className="invalid-feedback"
-                            style={{ display: "block", color: "red" }}
-                        >
-                            no special characters &lt; , &gt; , " , ' , &amp; ,
-                            ; , ( , )
-                        </div>
-                    )}
+        <div className="page">
+            <div className="wrap" style={{ maxWidth: 720, padding: "48px 0 88px" }}>
+                <span className="eyebrow">Datasets</span>
+                <div className="section-head" style={{ marginTop: 8 }}>
+                    <h2 className="section-title">Create a dataset</h2>
                 </div>
 
-                <div className="mb-3">
-                    <label className="form-label">
-                        Dataset Description
-                        <HelpTooltip
-                            text="What does the dataset contain."
-                            id="tooltip-dataset-description"
-                        />
-                    </label>
-                    <textarea
-                        className={`form-control ${
-                            datasetDescriptionError ? "is-invalid" : ""
-                        }`}
-                        rows={4}
-                        value={datasetDescription}
-                        onChange={(e) =>
-                            validateAndFilterSpecialChars(
-                                e.target.value,
-                                setDatasetDescription,
-                                setDatasetDescriptionError,
-                                2000
-                            )
-                        }
-                    />
-                    {datasetDescriptionError && (
-                        <div
-                            className="invalid-feedback"
-                            style={{ display: "block", color: "red" }}
-                        >
-                            no special characters &lt; , &gt; , " , ' , &amp; ,
-                            ; , ( , )
-                        </div>
-                    )}
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label">
-                        Tags (keywords separated by comma){" "}
-                        <span style={{ color: "red" }}>(required)</span>
-                        <HelpTooltip
-                            text="Think keyword. Which all search results should this dataset appear in."
-                            id="tooltip-tags"
-                        />
-                    </label>
-                    <input
-                        type="text"
-                        className={`form-control ${
-                            tagsError ? "is-invalid" : ""
-                        }`}
-                        value={tags}
-                        onChange={(e) =>
-                            validateAndFilterSpecialChars(
-                                e.target.value,
-                                setTags,
-                                setTagsError,
-                                500
-                            )
-                        }
-                    />
-                    {tagsError && (
-                        <div
-                            className="invalid-feedback"
-                            style={{ display: "block", color: "red" }}
-                        >
-                            no special characters &lt; , &gt; , " , ' , &amp; ,
-                            ; , ( , )
-                        </div>
-                    )}
-                </div>
-
-                {orgPrivate && (
-                    <div className="mb-3">
-                        <label className="form-label">
-                            Availability
-                            <HelpTooltip
-                                text="Is the dataset public or available to only your organisation?"
-                                id="tooltip-private"
-                            />
-                        </label>
-                        <select
-                            className="form-select"
-                            value={isPrivate ? "private" : "public"}
-                            onChange={(e) =>
-                                setIsPrivate(e.target.value === "private")
-                            }
-                        >
-                            <option value="public">Public</option>
-                            <option value="private">Private</option>
-                        </select>
+                {error && (
+                    <div className="attn-card warn" role="alert" style={{ marginBottom: 20 }}>
+                        <div><b>{error}</b></div>
                     </div>
                 )}
 
-                <h4 className="mt-4">File Upload</h4>
-
-                <div className="mb-3">
-                    <label className="form-label">
-                        File <span style={{ color: "red" }}>(required)</span>
-                    </label>
-                    <input
-                        type="file"
-                        className="form-control"
-                        onChange={handleFileChange}
-                        accept="*/*"
-                    />
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label">
-                        File Title{" "}
-                        <span style={{ color: "red" }}>(required)</span>
-                    </label>
-                    <input
-                        type="text"
-                        className={`form-control ${
-                            fileTitleError ? "is-invalid" : ""
-                        }`}
-                        value={fileTitle}
-                        onChange={(e) =>
-                            validateAndFilterSpecialChars(
-                                e.target.value,
-                                setFileTitle,
-                                setFileTitleError,
-                                200
-                            )
-                        }
-                        required
-                    />
-                    {fileTitleError && (
-                        <div
-                            className="invalid-feedback"
-                            style={{ display: "block", color: "red" }}
-                        >
-                            no special characters &lt; , &gt; , " , ' , &amp; ,
-                            ; , ( , )
-                        </div>
-                    )}
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label">File Description</label>
-                    <textarea
-                        className={`form-control ${
-                            fileDescriptionError ? "is-invalid" : ""
-                        }`}
-                        rows={3}
-                        value={fileDescription}
-                        onChange={(e) =>
-                            validateAndFilterSpecialChars(
-                                e.target.value,
-                                setFileDescription,
-                                setFileDescriptionError,
-                                1000
-                            )
-                        }
-                    />
-                    {fileDescriptionError && (
-                        <div
-                            className="invalid-feedback"
-                            style={{ display: "block", color: "red" }}
-                        >
-                            no special characters &lt; , &gt; , " , ' , &amp; ,
-                            ; , ( , )
-                        </div>
-                    )}
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label">
-                        Provenance
-                        <HelpTooltip
-                            text="Who own the dataset?"
-                            id="tooltip-provenance"
-                        />
-                    </label>
-                    <input
-                        type="text"
-                        className={`form-control ${
-                            provenanceError ? "is-invalid" : ""
-                        }`}
-                        value={provenance}
-                        onChange={(e) =>
-                            validateAndFilterSpecialChars(
-                                e.target.value,
-                                setProvenance,
-                                setProvenanceError,
-                                125
-                            )
-                        }
-                    />
-                    {provenanceError && (
-                        <div
-                            className="invalid-feedback"
-                            style={{ display: "block", color: "red" }}
-                        >
-                            no special characters &lt; , &gt; , " , ' , &amp; ,
-                            ; , ( , )
-                        </div>
-                    )}
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label">
-                        Source
-                        <HelpTooltip
-                            text="Who gave you the dataset?"
-                            id="tooltip-source"
-                        />
-                    </label>
-                    <input
-                        type="text"
-                        className={`form-control ${
-                            sourceError ? "is-invalid" : ""
-                        }`}
-                        value={source}
-                        onChange={(e) =>
-                            validateAndFilterSpecialChars(
-                                e.target.value,
-                                setSource,
-                                setSourceError,
-                                1000
-                            )
-                        }
-                    />
-                    {sourceError && (
-                        <div
-                            className="invalid-feedback"
-                            style={{ display: "block", color: "red" }}
-                        >
-                            no special characters &lt; , &gt; , " , ' , &amp; ,
-                            ; , ( , )
-                        </div>
-                    )}
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label">
-                        Permissions
-                        <HelpTooltip
-                            text={
-                                <>
-                                    To know more about the Creative Commons Licenses please visit{" "}
-                                    <a
-                                        href="https://creativecommons.org/share-your-work/cclicenses/"
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        onClick={(e) => e.stopPropagation()}
-                                    >
-                                        here
-                                    </a>
-                                    .
-                                </>
-                            }
-                            id="tooltip-permissions"
-                        />
-                    </label>
-                    <select
-                        className="form-select"
-                        value={permissions}
-                        onChange={(e) => setPermissions(e.target.value)}
-                    >
-                        <option value="CC0: Public Domain">CC0: Public Domain</option>
-                        <option value="CC BY: Attribution">CC BY: Attribution</option>
-                        <option value="CC BY-SA: Attribution-ShareAlike">CC BY-SA: Attribution-ShareAlike</option>
-                        <option value="CC BY-NC: Attribution-NonCommercial">CC BY-NC: Attribution-NonCommercial</option>
-                        <option value="CC BY-NC-SA: Attribution-NonCommercial-ShareAlike">CC BY-NC-SA: Attribution-NonCommercial-ShareAlike</option>
-                        <option value="CC BY-ND: Attribution-NoDerivatives">CC BY-ND: Attribution-NoDerivatives</option>
-                        <option value="CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives">CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives</option>
-                    </select>
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label">
-                        Cite As
-                        <HelpTooltip
-                            text="How should someone give credit for the data?"
-                            id="tooltip-cite-as"
-                        />
-                    </label>
-                    <textarea
-                        className={`form-control ${
-                            citeAsError ? "is-invalid" : ""
-                        }`}
-                        rows={4}
-                        value={citeAs}
-                        onChange={(e) =>
-                            validateAndFilterSpecialChars(
-                                e.target.value,
-                                setCiteAs,
-                                setCiteAsError,
-                                1500
-                            )
-                        }
-                    />
-                    {citeAsError && (
-                        <div
-                            className="invalid-feedback"
-                            style={{ display: "block", color: "red" }}
-                        >
-                            no special characters &lt; , &gt; , " , ' , &amp; ,
-                            ; , ( , )
-                        </div>
-                    )}
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label me-3">
-                        Groundtruthed
-                        <HelpTooltip
-                            text="Has this data been validated in the field?"
-                            id="tooltip-groundtruthed"
-                        />
-                    </label>
-                    <div>
-                        <div className="form-check form-check-inline">
-                            <input
-                                className="form-check-input"
-                                type="radio"
-                                name="groundtruthed"
-                                id="gt_no"
-                                checked={!groundtruthed}
-                                onChange={() => setGroundtruthed(false)}
+                <form onSubmit={onSubmit}>
+                    <div className="field">
+                        <label>
+                            Dataset Title{" "}
+                            <span style={{ color: "var(--red, #c62828)" }}>(required)</span>
+                            <HelpTooltip
+                                text="Name of the dataset. For example: Bangalore Rainfall Data would be dataset and you can add several datasets by year under that Title"
+                                id="tooltip-dataset-title"
                             />
-                            <label className="form-check-label" htmlFor="gt_no">
+                        </label>
+                        <input
+                            type="text"
+                            value={title}
+                            onChange={(e) =>
+                                validateAndFilterSpecialChars(
+                                    e.target.value,
+                                    setTitle,
+                                    setTitleError,
+                                    200
+                                )
+                            }
+                            required
+                        />
+                        {titleError && (
+                            <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
+                                no special characters &lt; , &gt; , " , ' , &amp; ,
+                                ; , ( , )
+                            </span>
+                        )}
+                    </div>
+
+                    <div className="field">
+                        <label>
+                            Dataset Description
+                            <HelpTooltip
+                                text="What does the dataset contain."
+                                id="tooltip-dataset-description"
+                            />
+                        </label>
+                        <textarea
+                            rows={4}
+                            value={datasetDescription}
+                            onChange={(e) =>
+                                validateAndFilterSpecialChars(
+                                    e.target.value,
+                                    setDatasetDescription,
+                                    setDatasetDescriptionError,
+                                    2000
+                                )
+                            }
+                        />
+                        {datasetDescriptionError && (
+                            <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
+                                no special characters &lt; , &gt; , " , ' , &amp; ,
+                                ; , ( , )
+                            </span>
+                        )}
+                    </div>
+
+                    <div className="field">
+                        <label>
+                            Tags (keywords separated by comma){" "}
+                            <span style={{ color: "var(--red, #c62828)" }}>(required)</span>
+                            <HelpTooltip
+                                text="Think keyword. Which all search results should this dataset appear in."
+                                id="tooltip-tags"
+                            />
+                        </label>
+                        <input
+                            type="text"
+                            value={tags}
+                            onChange={(e) =>
+                                validateAndFilterSpecialChars(
+                                    e.target.value,
+                                    setTags,
+                                    setTagsError,
+                                    500
+                                )
+                            }
+                        />
+                        {tagsError && (
+                            <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
+                                no special characters &lt; , &gt; , " , ' , &amp; ,
+                                ; , ( , )
+                            </span>
+                        )}
+                    </div>
+
+                    {orgPrivate && (
+                        <div className="field">
+                            <label>
+                                Availability
+                                <HelpTooltip
+                                    text="Is the dataset public or available to only your organisation?"
+                                    id="tooltip-private"
+                                />
+                            </label>
+                            <select
+                                value={isPrivate ? "private" : "public"}
+                                onChange={(e) =>
+                                    setIsPrivate(e.target.value === "private")
+                                }
+                            >
+                                <option value="public">Public</option>
+                                <option value="private">Private</option>
+                            </select>
+                        </div>
+                    )}
+
+                    <div className="divider" style={{ margin: "28px 0 20px" }} />
+                    <div className="sec-label" style={{ marginBottom: 16 }}>File upload</div>
+
+                    <div className="field">
+                        <label>
+                            File <span style={{ color: "var(--red, #c62828)" }}>(required)</span>
+                        </label>
+                        <input
+                            type="file"
+                            onChange={handleFileChange}
+                            accept="*/*"
+                        />
+                    </div>
+
+                    <div className="field">
+                        <label>
+                            File Title{" "}
+                            <span style={{ color: "var(--red, #c62828)" }}>(required)</span>
+                        </label>
+                        <input
+                            type="text"
+                            value={fileTitle}
+                            onChange={(e) =>
+                                validateAndFilterSpecialChars(
+                                    e.target.value,
+                                    setFileTitle,
+                                    setFileTitleError,
+                                    200
+                                )
+                            }
+                            required
+                        />
+                        {fileTitleError && (
+                            <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
+                                no special characters &lt; , &gt; , " , ' , &amp; ,
+                                ; , ( , )
+                            </span>
+                        )}
+                    </div>
+
+                    <div className="field">
+                        <label>File Description</label>
+                        <textarea
+                            rows={3}
+                            value={fileDescription}
+                            onChange={(e) =>
+                                validateAndFilterSpecialChars(
+                                    e.target.value,
+                                    setFileDescription,
+                                    setFileDescriptionError,
+                                    1000
+                                )
+                            }
+                        />
+                        {fileDescriptionError && (
+                            <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
+                                no special characters &lt; , &gt; , " , ' , &amp; ,
+                                ; , ( , )
+                            </span>
+                        )}
+                    </div>
+
+                    <div className="field">
+                        <label>
+                            Provenance
+                            <HelpTooltip
+                                text="Who own the dataset?"
+                                id="tooltip-provenance"
+                            />
+                        </label>
+                        <input
+                            type="text"
+                            value={provenance}
+                            onChange={(e) =>
+                                validateAndFilterSpecialChars(
+                                    e.target.value,
+                                    setProvenance,
+                                    setProvenanceError,
+                                    125
+                                )
+                            }
+                        />
+                        {provenanceError && (
+                            <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
+                                no special characters &lt; , &gt; , " , ' , &amp; ,
+                                ; , ( , )
+                            </span>
+                        )}
+                    </div>
+
+                    <div className="field">
+                        <label>
+                            Source
+                            <HelpTooltip
+                                text="Who gave you the dataset?"
+                                id="tooltip-source"
+                            />
+                        </label>
+                        <input
+                            type="text"
+                            value={source}
+                            onChange={(e) =>
+                                validateAndFilterSpecialChars(
+                                    e.target.value,
+                                    setSource,
+                                    setSourceError,
+                                    1000
+                                )
+                            }
+                        />
+                        {sourceError && (
+                            <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
+                                no special characters &lt; , &gt; , " , ' , &amp; ,
+                                ; , ( , )
+                            </span>
+                        )}
+                    </div>
+
+                    <div className="field">
+                        <label>
+                            Permissions
+                            <HelpTooltip
+                                text={
+                                    <>
+                                        To know more about the Creative Commons Licenses please visit{" "}
+                                        <a
+                                            href="https://creativecommons.org/share-your-work/cclicenses/"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            onClick={(e) => e.stopPropagation()}
+                                        >
+                                            here
+                                        </a>
+                                        .
+                                    </>
+                                }
+                                id="tooltip-permissions"
+                            />
+                        </label>
+                        <select
+                            value={permissions}
+                            onChange={(e) => setPermissions(e.target.value)}
+                        >
+                            <option value="CC0: Public Domain">CC0: Public Domain</option>
+                            <option value="CC BY: Attribution">CC BY: Attribution</option>
+                            <option value="CC BY-SA: Attribution-ShareAlike">CC BY-SA: Attribution-ShareAlike</option>
+                            <option value="CC BY-NC: Attribution-NonCommercial">CC BY-NC: Attribution-NonCommercial</option>
+                            <option value="CC BY-NC-SA: Attribution-NonCommercial-ShareAlike">CC BY-NC-SA: Attribution-NonCommercial-ShareAlike</option>
+                            <option value="CC BY-ND: Attribution-NoDerivatives">CC BY-ND: Attribution-NoDerivatives</option>
+                            <option value="CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives">CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives</option>
+                        </select>
+                    </div>
+
+                    <div className="field">
+                        <label>
+                            Cite As
+                            <HelpTooltip
+                                text="How should someone give credit for the data?"
+                                id="tooltip-cite-as"
+                            />
+                        </label>
+                        <textarea
+                            rows={4}
+                            value={citeAs}
+                            onChange={(e) =>
+                                validateAndFilterSpecialChars(
+                                    e.target.value,
+                                    setCiteAs,
+                                    setCiteAsError,
+                                    1500
+                                )
+                            }
+                        />
+                        {citeAsError && (
+                            <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
+                                no special characters &lt; , &gt; , " , ' , &amp; ,
+                                ; , ( , )
+                            </span>
+                        )}
+                    </div>
+
+                    <div className="field">
+                        <label>
+                            Groundtruthed
+                            <HelpTooltip
+                                text="Has this data been validated in the field?"
+                                id="tooltip-groundtruthed"
+                            />
+                        </label>
+                        <div style={{ display: "flex", gap: 18, alignItems: "center" }}>
+                            <label className="check" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                                <input
+                                    type="radio"
+                                    name="groundtruthed"
+                                    id="gt_no"
+                                    checked={!groundtruthed}
+                                    onChange={() => setGroundtruthed(false)}
+                                />
                                 No
                             </label>
-                        </div>
-                        <div className="form-check form-check-inline">
-                            <input
-                                className="form-check-input"
-                                type="radio"
-                                name="groundtruthed"
-                                id="gt_yes"
-                                checked={groundtruthed}
-                                onChange={() => setGroundtruthed(true)}
-                            />
-                            <label
-                                className="form-check-label"
-                                htmlFor="gt_yes"
-                            >
+                            <label className="check" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                                <input
+                                    type="radio"
+                                    name="groundtruthed"
+                                    id="gt_yes"
+                                    checked={groundtruthed}
+                                    onChange={() => setGroundtruthed(true)}
+                                />
                                 Yes
                             </label>
                         </div>
                     </div>
-                </div>
 
-                <div className="mb-3">
-                    <label className="form-label">
-                        Duration
-                        <HelpTooltip
-                            text="How many years can this data be used for from the date of creation? 0 if not applicable"
-                            id="tooltip-duration"
+                    <div className="field">
+                        <label>
+                            Duration
+                            <HelpTooltip
+                                text="How many years can this data be used for from the date of creation? 0 if not applicable"
+                                id="tooltip-duration"
+                            />
+                        </label>
+                        <input
+                            type="number"
+                            value={duration}
+                            onChange={(e) => {
+                                const val = parseInt(e.target.value) || 0;
+                                setDuration(Math.max(0, val));
+                            }}
+                            min="0"
                         />
-                    </label>
-                    <input
-                        type="number"
-                        className="form-control"
-                        value={duration}
-                        onChange={(e) => {
-                            const val = parseInt(e.target.value) || 0;
-                            setDuration(Math.max(0, val));
-                        }}
-                        min="0"
-                    />
-                </div>
+                    </div>
 
-                <div className="mb-3">
-                    <label className="form-label">
-                        Value
-                        <HelpTooltip
-                            text={`What is the value of the data?
+                    <div className="field">
+                        <label>
+                            Value
+                            <HelpTooltip
+                                text={`What is the value of the data?
 High: data has high acquisition cost or sensitive information
 Medium: data is specific to a particular organisation and hard to search online
 Low: Openly downloadable in public domain`}
-                            id="tooltip-value"
-                        />
-                    </label>
-                    <select
-                        className="form-select"
-                        value={value}
-                        onChange={(e) => setValue(e.target.value)}
-                    >
-                        <option value="low">low</option>
-                        <option value="medium">medium</option>
-                        <option value="high">high</option>
-                    </select>
-                </div>
+                                id="tooltip-value"
+                            />
+                        </label>
+                        <select
+                            value={value}
+                            onChange={(e) => setValue(e.target.value)}
+                        >
+                            <option value="low">low</option>
+                            <option value="medium">medium</option>
+                            <option value="high">high</option>
+                        </select>
+                    </div>
 
-                <div className="mb-3">
-                    <label className="form-label">
-                        Temporal Coverage From
-                        <HelpTooltip
-                            text="Start date of temporal coverage (ISO format: YYYY-MM-DDTHH:mm:ssZ)"
-                            id="tooltip-temporal-from"
-                        />
-                    </label>
-                    <input
-                        type="datetime-local"
-                        className="form-control"
-                        value={temporalFrom ? (() => {
-                            // Convert ISO string to datetime-local format (YYYY-MM-DDTHH:mm)
-                            try {
-                                const date = new Date(temporalFrom);
-                                if (isNaN(date.getTime())) return "";
-                                // Get local datetime string in format YYYY-MM-DDTHH:mm
-                                const year = date.getFullYear();
-                                const month = String(date.getMonth() + 1).padStart(2, '0');
-                                const day = String(date.getDate()).padStart(2, '0');
-                                const hours = String(date.getHours()).padStart(2, '0');
-                                const minutes = String(date.getMinutes()).padStart(2, '0');
-                                return `${year}-${month}-${day}T${hours}:${minutes}`;
-                            } catch {
-                                return "";
-                            }
-                        })() : ""}
-                        onChange={(e) => {
-                            const val = e.target.value;
-                            // Convert to ISO format with timezone
-                            if (val) {
-                                // datetime-local gives us YYYY-MM-DDTHH:mm in local time
-                                // We need to convert it to ISO format
-                                const date = new Date(val);
-                                if (!isNaN(date.getTime())) {
-                                    setTemporalFrom(date.toISOString());
-                                } else {
-                                    setTemporalFrom("");
-                                }
-                            } else {
-                                setTemporalFrom("");
-                            }
-                        }}
-                    />
-                </div>
+                    <div className="field-row">
+                        <div className="field">
+                            <label>
+                                Temporal Coverage From
+                                <HelpTooltip
+                                    text="Start date of temporal coverage (ISO format: YYYY-MM-DDTHH:mm:ssZ)"
+                                    id="tooltip-temporal-from"
+                                />
+                            </label>
+                            <input
+                                type="datetime-local"
+                                value={temporalFrom ? (() => {
+                                    // Convert ISO string to datetime-local format (YYYY-MM-DDTHH:mm)
+                                    try {
+                                        const date = new Date(temporalFrom);
+                                        if (isNaN(date.getTime())) return "";
+                                        // Get local datetime string in format YYYY-MM-DDTHH:mm
+                                        const year = date.getFullYear();
+                                        const month = String(date.getMonth() + 1).padStart(2, '0');
+                                        const day = String(date.getDate()).padStart(2, '0');
+                                        const hours = String(date.getHours()).padStart(2, '0');
+                                        const minutes = String(date.getMinutes()).padStart(2, '0');
+                                        return `${year}-${month}-${day}T${hours}:${minutes}`;
+                                    } catch {
+                                        return "";
+                                    }
+                                })() : ""}
+                                onChange={(e) => {
+                                    const val = e.target.value;
+                                    // Convert to ISO format with timezone
+                                    if (val) {
+                                        // datetime-local gives us YYYY-MM-DDTHH:mm in local time
+                                        // We need to convert it to ISO format
+                                        const date = new Date(val);
+                                        if (!isNaN(date.getTime())) {
+                                            setTemporalFrom(date.toISOString());
+                                        } else {
+                                            setTemporalFrom("");
+                                        }
+                                    } else {
+                                        setTemporalFrom("");
+                                    }
+                                }}
+                            />
+                        </div>
 
-                <div className="mb-3">
-                    <label className="form-label">
-                        Temporal Coverage To
-                        <HelpTooltip
-                            text="End date of temporal coverage (ISO format: YYYY-MM-DDTHH:mm:ssZ)"
-                            id="tooltip-temporal-to"
-                        />
-                    </label>
-                    <input
-                        type="datetime-local"
-                        className="form-control"
-                        value={temporalTo ? (() => {
-                            // Convert ISO string to datetime-local format (YYYY-MM-DDTHH:mm)
-                            try {
-                                const date = new Date(temporalTo);
-                                if (isNaN(date.getTime())) return "";
-                                // Get local datetime string in format YYYY-MM-DDTHH:mm
-                                const year = date.getFullYear();
-                                const month = String(date.getMonth() + 1).padStart(2, '0');
-                                const day = String(date.getDate()).padStart(2, '0');
-                                const hours = String(date.getHours()).padStart(2, '0');
-                                const minutes = String(date.getMinutes()).padStart(2, '0');
-                                return `${year}-${month}-${day}T${hours}:${minutes}`;
-                            } catch {
-                                return "";
-                            }
-                        })() : ""}
-                        onChange={(e) => {
-                            const val = e.target.value;
-                            // Convert to ISO format with timezone
-                            if (val) {
-                                // datetime-local gives us YYYY-MM-DDTHH:mm in local time
-                                // We need to convert it to ISO format
-                                const date = new Date(val);
-                                if (!isNaN(date.getTime())) {
-                                    setTemporalTo(date.toISOString());
-                                } else {
-                                    setTemporalTo("");
-                                }
-                            } else {
-                                setTemporalTo("");
-                            }
-                        }}
-                    />
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label">
-                        Geographical Extent
-                        <HelpTooltip
-                            text="Geographic coverage or location information"
-                            id="tooltip-geography"
-                        />
-                    </label>
-                    <textarea
-                        className="form-control"
-                        rows={3}
-                        value={geography}
-                        onChange={(e) => setGeography(e.target.value)}
-                    />
-                </div>
-
-                {submitting && (
-                    <div className="mb-3">
-                        <label className="form-label">Upload progress</label>
-                        <div className="progress">
-                            <div
-                                className="progress-bar"
-                                role="progressbar"
-                                style={{ width: `${progress}%` }}
-                                aria-valuenow={progress}
-                                aria-valuemin="0"
-                                aria-valuemax="100"
-                            >
-                                {progress}%
-                            </div>
+                        <div className="field">
+                            <label>
+                                Temporal Coverage To
+                                <HelpTooltip
+                                    text="End date of temporal coverage (ISO format: YYYY-MM-DDTHH:mm:ssZ)"
+                                    id="tooltip-temporal-to"
+                                />
+                            </label>
+                            <input
+                                type="datetime-local"
+                                value={temporalTo ? (() => {
+                                    // Convert ISO string to datetime-local format (YYYY-MM-DDTHH:mm)
+                                    try {
+                                        const date = new Date(temporalTo);
+                                        if (isNaN(date.getTime())) return "";
+                                        // Get local datetime string in format YYYY-MM-DDTHH:mm
+                                        const year = date.getFullYear();
+                                        const month = String(date.getMonth() + 1).padStart(2, '0');
+                                        const day = String(date.getDate()).padStart(2, '0');
+                                        const hours = String(date.getHours()).padStart(2, '0');
+                                        const minutes = String(date.getMinutes()).padStart(2, '0');
+                                        return `${year}-${month}-${day}T${hours}:${minutes}`;
+                                    } catch {
+                                        return "";
+                                    }
+                                })() : ""}
+                                onChange={(e) => {
+                                    const val = e.target.value;
+                                    // Convert to ISO format with timezone
+                                    if (val) {
+                                        // datetime-local gives us YYYY-MM-DDTHH:mm in local time
+                                        // We need to convert it to ISO format
+                                        const date = new Date(val);
+                                        if (!isNaN(date.getTime())) {
+                                            setTemporalTo(date.toISOString());
+                                        } else {
+                                            setTemporalTo("");
+                                        }
+                                    } else {
+                                        setTemporalTo("");
+                                    }
+                                }}
+                            />
                         </div>
                     </div>
-                )}
 
-                <button
-                    type="submit"
-                    className="btn btn-primary"
-                    disabled={submitting}
-                >
-                    {submitting ? "Submitting..." : "Submit"}
-                </button>
-            </form>
+                    <div className="field">
+                        <label>
+                            Geographical Extent
+                            <HelpTooltip
+                                text="Geographic coverage or location information"
+                                id="tooltip-geography"
+                            />
+                        </label>
+                        <textarea
+                            rows={3}
+                            value={geography}
+                            onChange={(e) => setGeography(e.target.value)}
+                        />
+                    </div>
+
+                    {submitting && (
+                        <div className="field">
+                            <label>Upload progress</label>
+                            <div style={{ background: "var(--wash, #eef2f6)", borderRadius: 999, height: 8, overflow: "hidden" }}>
+                                <div
+                                    role="progressbar"
+                                    aria-valuenow={progress}
+                                    aria-valuemin="0"
+                                    aria-valuemax="100"
+                                    style={{ width: `${progress}%`, height: "100%", background: "var(--blue, #1b75e0)", transition: "width .2s" }}
+                                />
+                            </div>
+                            <span className="mono-token" style={{ marginTop: 6, display: "inline-block" }}>{progress}%</span>
+                        </div>
+                    )}
+
+                    <button
+                        type="submit"
+                        className="btn btn-primary"
+                        disabled={submitting}
+                    >
+                        {submitting ? "Submitting…" : "Submit"}
+                    </button>
+                </form>
+            </div>
         </div>
     );
 }

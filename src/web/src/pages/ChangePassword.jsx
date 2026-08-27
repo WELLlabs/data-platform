@@ -127,148 +127,116 @@ const ChangePassword = () => {
   };
 
   return (
-    <div className="bg-wave">
-      <section className="container py-5">
-        <div className="row justify-content-center">
-          <div className="col-12 col-sm-10 col-md-8 col-lg-5">
-            <div className="card auth-card p-4 p-md-5">
-              <h2 className="mb-3 text-center auth-title">Change Password</h2>
-              <p className="text-muted text-center mb-4">
-                Enter your current password and choose a new one.
-              </p>
+    <div className="page">
+      <div className="wrap">
+        <div className="auth-wrap">
+          <div className="auth-card">
+            <h1 className="display">Change password</h1>
+            <p className="auth-sub">
+              Enter your current password and choose a new one.
+            </p>
 
-              {error && (
-                <div className="alert alert-danger" role="alert">
-                  {error}
-                </div>
-              )}
+            {error && (
+              <div
+                className="auth-note"
+                role="alert"
+                style={{ background: "#faf3e4", borderColor: "#ecdcb8", color: "#9a6b12" }}
+              >
+                {error}
+              </div>
+            )}
 
-              {success && (
-                <div className="alert alert-success" role="alert">
-                  {success}
-                </div>
-              )}
+            {success && (
+              <div className="auth-note" role="alert" style={{ marginTop: 16 }}>
+                {success}
+              </div>
+            )}
 
-              <form onSubmit={handleSubmit} noValidate>
-                <div className="mb-3">
-                  <label htmlFor="currentPassword" className="form-label">
-                    Current Password{" "}
-                    <span style={{ color: "red" }}>(required)</span>
-                  </label>
-                  <input
-                    id="currentPassword"
-                    name="currentPassword"
-                    type="password"
-                    className="form-control"
-                    placeholder="Enter your current password"
-                    value={currentPassword}
-                    onChange={(e) => {
-                      setCurrentPassword(e.target.value);
-                      setError("");
-                    }}
-                    autoComplete="current-password"
-                    required
-                    disabled={loading}
-                  />
-                </div>
+            <form onSubmit={handleSubmit} noValidate>
+              <div className="field">
+                <label htmlFor="currentPassword">Current Password</label>
+                <input
+                  id="currentPassword"
+                  name="currentPassword"
+                  type="password"
+                  placeholder="Enter your current password"
+                  value={currentPassword}
+                  onChange={(e) => {
+                    setCurrentPassword(e.target.value);
+                    setError("");
+                  }}
+                  autoComplete="current-password"
+                  required
+                  disabled={loading}
+                />
+              </div>
 
-                <div className="mb-3">
-                  <label htmlFor="newPassword" className="form-label">
-                    New Password{" "}
-                    <span style={{ color: "red" }}>(required)</span>
-                  </label>
-                  <input
-                    id="newPassword"
-                    name="newPassword"
-                    type="password"
-                    className={`form-control ${
-                      newPassword && newPassword.length < 8
-                        ? "is-invalid"
-                        : ""
-                    } ${
-                      newPassword &&
-                      currentPassword &&
-                      newPassword === currentPassword
-                        ? "is-invalid"
-                        : ""
-                    }`}
-                    placeholder="Minimum 8 characters"
-                    value={newPassword}
-                    onChange={(e) => {
-                      setNewPassword(e.target.value);
-                      setError("");
-                    }}
-                    autoComplete="new-password"
-                    required
-                    minLength={8}
-                    disabled={loading}
-                  />
-                  {newPassword && newPassword.length < 8 && (
-                    <div className="invalid-feedback">
-                      Password must be at least 8 characters
-                    </div>
+              <div className="field">
+                <label htmlFor="newPassword">New Password</label>
+                <input
+                  id="newPassword"
+                  name="newPassword"
+                  type="password"
+                  placeholder="Minimum 8 characters"
+                  value={newPassword}
+                  onChange={(e) => {
+                    setNewPassword(e.target.value);
+                    setError("");
+                  }}
+                  autoComplete="new-password"
+                  required
+                  minLength={8}
+                  disabled={loading}
+                />
+                {newPassword && newPassword.length < 8 && (
+                  <span style={{ fontSize: 12, color: "#9a6b12" }}>
+                    Password must be at least 8 characters
+                  </span>
+                )}
+                {newPassword &&
+                  currentPassword &&
+                  newPassword === currentPassword && (
+                    <span style={{ fontSize: 12, color: "#9a6b12" }}>
+                      New password must be different from current password
+                    </span>
                   )}
-                  {newPassword &&
-                    currentPassword &&
-                    newPassword === currentPassword && (
-                      <div className="invalid-feedback">
-                        New password must be different from current password
-                      </div>
-                    )}
-                </div>
+              </div>
 
-                <div className="mb-3">
-                  <label htmlFor="confirmPassword" className="form-label">
-                    Confirm Password{" "}
-                    <span style={{ color: "red" }}>(required)</span>
-                  </label>
-                  <input
-                    id="confirmPassword"
-                    name="confirmPassword"
-                    type="password"
-                    className={`form-control ${
-                      confirmPassword && !passwordsMatch ? "is-invalid" : ""
-                    }`}
-                    placeholder="Re-enter your new password"
-                    value={confirmPassword}
-                    onChange={(e) => {
-                      setConfirmPassword(e.target.value);
-                      setError("");
-                    }}
-                    autoComplete="new-password"
-                    required
-                    disabled={loading}
-                  />
-                  {!passwordsMatch && confirmPassword && (
-                    <div className="invalid-feedback">
-                      Passwords do not match
-                    </div>
-                  )}
-                </div>
+              <div className="field">
+                <label htmlFor="confirmPassword">Confirm Password</label>
+                <input
+                  id="confirmPassword"
+                  name="confirmPassword"
+                  type="password"
+                  placeholder="Re-enter your new password"
+                  value={confirmPassword}
+                  onChange={(e) => {
+                    setConfirmPassword(e.target.value);
+                    setError("");
+                  }}
+                  autoComplete="new-password"
+                  required
+                  disabled={loading}
+                />
+                {!passwordsMatch && confirmPassword && (
+                  <span style={{ fontSize: 12, color: "#9a6b12" }}>
+                    Passwords do not match
+                  </span>
+                )}
+              </div>
 
-                <button
-                  type="submit"
-                  className="btn btn-primary w-100 auth-submit-btn"
-                  disabled={!canSubmit}
-                >
-                  {loading ? (
-                    <>
-                      <span
-                        className="spinner-border spinner-border-sm me-2"
-                        role="status"
-                        aria-hidden="true"
-                      ></span>
-                      Changing Password...
-                    </>
-                  ) : (
-                    "Change Password"
-                  )}
-                </button>
-              </form>
-            </div>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                style={{ width: "100%", marginTop: 4 }}
+                disabled={!canSubmit}
+              >
+                {loading ? "Changing Password…" : "Change Password"}
+              </button>
+            </form>
           </div>
         </div>
-      </section>
+      </div>
     </div>
   );
 };

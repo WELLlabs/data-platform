@@ -8,6 +8,9 @@ import {
   profile_endpoint,
   user_datasets_endpoint,
 } from "../api/endpoints";
+import Ic from "../components/wd/Icons";
+import Contour from "../components/wd/Contour";
+import { DatasetRow } from "../components/wd/DatasetItems";
 
 function Profile() {
   const [loading, setLoading] = useState(true);
@@ -176,12 +179,12 @@ function Profile() {
     }
 
     const idParam = searchParams.get("id");
-    
+
     // Check if user has privilege to view datasets
     // Backend determines this via privileges.user_datasets
     if (profileData.privileges?.user_datasets && idParam) {
       const currentUserId = idParam;
-      
+
       // Reset pagination when user_id changes
       if (lastFetchedUserIdRef.current !== currentUserId) {
         lastFetchedUserIdRef.current = currentUserId;
@@ -190,7 +193,7 @@ function Profile() {
         // Still fetch with page 1 - don't return early
         // The fetch will use currentPage which is now 1
       }
-      
+
       // Always fetch when conditions are met
       fetchUserDatasets(currentUserId);
     }
@@ -221,8 +224,10 @@ function Profile() {
     return "Member";
   };
 
-  const handleCardClick = (datasetId) => {
-    navigate(`/dataset-info?dataset_id=${datasetId}`);
+  const getInitials = (name) => {
+    if (!name) return "?";
+    const parts = name.trim().split(/\s+/).slice(0, 2);
+    return parts.map((p) => p[0]?.toUpperCase() || "").join("") || "?";
   };
 
   const handlePrevious = () => {
@@ -315,11 +320,9 @@ function Profile() {
 
   if (loading) {
     return (
-      <div className="container py-5">
-        <div className="text-center">
-          <div className="spinner-border" role="status">
-            <span className="visually-hidden">Loading...</span>
-          </div>
+      <div className="page">
+        <div className="wrap" style={{ padding: "48px 0 88px" }}>
+          <div className="empty"><p>Loading…</p></div>
         </div>
       </div>
     );
@@ -327,9 +330,11 @@ function Profile() {
 
   if (error) {
     return (
-      <div className="container py-5">
-        <div className="alert alert-danger" role="alert">
-          {error}
+      <div className="page">
+        <div className="wrap" style={{ padding: "48px 0 88px" }}>
+          <div className="attn-card warn" role="alert">
+            <div><b>{error}</b></div>
+          </div>
         </div>
       </div>
     );
@@ -337,121 +342,143 @@ function Profile() {
 
   if (!profileData) {
     return (
-      <div className="container py-5">
-        <div className="alert alert-warning" role="alert">
-          No profile data available.
+      <div className="page">
+        <div className="wrap" style={{ padding: "48px 0 88px" }}>
+          <div className="attn-card info" role="alert">
+            <div><b>No profile data available.</b></div>
+          </div>
         </div>
       </div>
     );
   }
 
-  return (
-    <div className="container py-5">
-      {/* Header with title and Edit button */}
-      <div className="row align-items-center mb-4">
-        <div className="col">
-          <h2 className="text-start m-0">User Profile</h2>
-        </div>
-        {profileData.privileges?.edit && (
-          <div className="col-auto">
-            <button
-              type="button"
-              className="btn btn-search"
-              onClick={() => {
-                setEditFullName(profileData.full_name ?? "");
-                setEditEmail(profileData.email ?? "");
-                setEditDesignation(profileData.designation ?? "");
-                setEditOrganization(profileData.organization ?? "");
-                setEditPhone(profileData.phone ?? "");
-                setEditError("");
-                setShowEditModal(true);
-              }}
-              aria-label="Edit profile"
-            >
-              Edit
-            </button>
-          </div>
-        )}
-      </div>
+  const roleLabel = getRoleDisplay(profileData.is_superuser, profileData.role);
 
-      {/* User Information */}
-      <div className="card mb-4">
-        <div className="card-body">
-          <div className="row">
-            <div className="col-md-6 col-12 mb-3">
-              <strong>Name:</strong> {profileData.full_name || "N/A"}
+  return (
+    <div className="page">
+      <div className="wrap" style={{ padding: "40px 0 88px" }}>
+        {/* Hero header */}
+        <section className="ws-hero" style={{ position: "relative", overflow: "hidden" }}>
+          <Contour op={0.3} />
+          <span className="eyebrow">Your profile</span>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-end",
+              flexWrap: "wrap",
+              gap: 16,
+              marginTop: 12,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+              <div className="avatar" style={{ width: 56, height: 56, fontSize: 20 }}>
+                {getInitials(profileData.full_name)}
+              </div>
+              <div>
+                <h1 className="ws-hi display">{profileData.full_name || "N/A"}</h1>
+                <p className="ws-sub">
+                  {profileData.organization_name || "No organization"} · {roleLabel}
+                </p>
+              </div>
             </div>
-            <div className="col-md-6 col-12 mb-3">
-              <strong>Email:</strong> {profileData.email || "N/A"}
+            {profileData.privileges?.edit && (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => {
+                  setEditFullName(profileData.full_name ?? "");
+                  setEditEmail(profileData.email ?? "");
+                  setEditDesignation(profileData.designation ?? "");
+                  setEditOrganization(profileData.organization ?? "");
+                  setEditPhone(profileData.phone ?? "");
+                  setEditError("");
+                  setShowEditModal(true);
+                }}
+                aria-label="Edit profile"
+              >
+                Edit profile
+              </button>
+            )}
+          </div>
+        </section>
+
+        {/* User Information */}
+        <div className="rail-card" style={{ marginTop: 22 }}>
+          <div className="rrow">
+            <span>Email</span>
+            <span>
+              {profileData.email || "N/A"}
               {profileData.is_verified !== undefined && (
                 <span
-                  className="ms-2"
+                  style={{ marginLeft: 8, verticalAlign: "middle", color: profileData.is_verified ? "var(--green, #2e7d32)" : "var(--red, #c62828)" }}
                   title={profileData.is_verified ? "Verified" : "Not Verified"}
                 >
-                  {profileData.is_verified ? (
-                    <i className="bi bi-check-circle-fill text-success"></i>
-                  ) : (
-                    <i className="bi bi-x-circle-fill text-danger"></i>
-                  )}
+                  {profileData.is_verified
+                    ? <Ic name="verified" size={15} />
+                    : <Ic name="close" size={15} />}
                 </span>
               )}
-            </div>
-            <div className="col-md-6 col-12 mb-3">
-              <strong>Designation:</strong> {profileData.designation || "N/A"}
-            </div>
-            <div className="col-md-6 col-12 mb-3">
-              <strong>Organization:</strong>{" "}
+            </span>
+          </div>
+          <div className="rrow">
+            <span>Designation</span>
+            <span>{profileData.designation || "N/A"}</span>
+          </div>
+          <div className="rrow">
+            <span>Organization</span>
+            <span>
               {profileData.organization_name ? (
                 <>
                   <Link
+                    className="link-arrow"
                     to={`/organisation?id=${profileData.organization}`}
-                    style={{ color: "#1b75e0" }}
                   >
                     {profileData.organization_name}
                   </Link>
                   {profileData.verified !== undefined && (
                     <span
-                      className="ms-2"
+                      style={{ marginLeft: 8, verticalAlign: "middle", color: profileData.verified ? "var(--green, #2e7d32)" : "var(--red, #c62828)" }}
                       title={profileData.verified ? "Approved" : "Not Approved"}
                     >
-                      {profileData.verified ? (
-                        <i className="bi bi-check-circle-fill text-success"></i>
-                      ) : (
-                        <i className="bi bi-x-circle-fill text-danger"></i>
-                      )}
+                      {profileData.verified
+                        ? <Ic name="verified" size={15} />
+                        : <Ic name="close" size={15} />}
                     </span>
                   )}
                 </>
               ) : (
                 "N/A"
               )}
-            </div>
-            <div className="col-md-6 col-12 mb-3">
-              <strong>Role:</strong>{" "}
-              {getRoleDisplay(profileData.is_superuser, profileData.role)}
-            </div>
-            <div className="col-md-6 col-12 mb-3">
-              <strong>Phone:</strong> {profileData.phone || "N/A"}
-            </div>
-            <div className="col-md-6 col-12 mb-3">
-              <strong>Contributions:</strong> {profileData.contributions ?? 0}
-            </div>
-            <div className="col-md-6 col-12 mb-3">
-              <strong>Joined On:</strong> {formatDate(profileData.created_at)}
-            </div>
-            <div className="col-md-6 col-12 mb-3">
-              <strong>Modified At:</strong> {formatDate(profileData.modified_at)}
-            </div>
+            </span>
+          </div>
+          <div className="rrow">
+            <span>Role</span>
+            <span>{roleLabel}</span>
+          </div>
+          <div className="rrow">
+            <span>Phone</span>
+            <span>{profileData.phone || "N/A"}</span>
+          </div>
+          <div className="rrow">
+            <span>Contributions</span>
+            <span>{profileData.contributions ?? 0}</span>
+          </div>
+          <div className="rrow">
+            <span>Joined on</span>
+            <span>{formatDate(profileData.created_at)}</span>
+          </div>
+          <div className="rrow">
+            <span>Modified at</span>
+            <span>{formatDate(profileData.modified_at)}</span>
           </div>
         </div>
-      </div>
 
-      {/* Conditional Buttons */}
-      {profileData.privileges?.edit && (
-        <div className="mb-4">
-          <div className="d-flex gap-2 flex-wrap">
+        {/* Conditional Buttons */}
+        {profileData.privileges?.edit && (
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 18 }}>
             <button
-              className="btn btn-search"
+              className="btn btn-ghost"
               // the intent is always to change the current user's own password
               // this button will be hidden if the user of profile page is not the current user or no user is signed in
               // this button will be visible based on the privileges.edit condition from the backend response
@@ -462,60 +489,48 @@ function Profile() {
                 }
               }}
             >
-              Change Password
+              Change password
             </button>
             <button
-              className="btn btn-search"
+              className="btn btn-ghost"
               onClick={() => setShowApiKeyOverlay(true)}
             >
-              API KEY
+              API key
             </button>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Edit Profile Modal - rendered via portal at body so it always appears on top (same pattern as DatasetInfo.jsx) */}
-      {showEditModal &&
-        createPortal(
-          <div
-            className="modal show d-block"
-            tabIndex="-1"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="editProfileModalTitle"
-            style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
-          >
-            <div className="modal-dialog modal-dialog-centered modal-dialog-scrollable">
-              <div className="modal-content">
-                <div className="modal-header">
-                  <h5 className="modal-title" id="editProfileModalTitle">
-                    Edit Profile
-                  </h5>
-                  <button
-                    type="button"
-                    className="btn-close"
-                    onClick={() => setShowEditModal(false)}
-                    aria-label="Close"
-                  />
+        {/* Edit Profile Modal - rendered via portal at body so it always appears on top (same pattern as DatasetInfo.jsx) */}
+        {showEditModal &&
+          createPortal(
+            <div
+              className="cmdk-overlay show"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="editProfileModalTitle"
+              onClick={(e) => {
+                if (e.target === e.currentTarget) setShowEditModal(false);
+              }}
+            >
+              <div className="modal-card">
+                <div className="modal-head">
+                  <h3 id="editProfileModalTitle">Edit profile</h3>
+                  <p>Update your account details.</p>
                 </div>
-                <div
-                  className="modal-body overflow-auto"
-                  style={{ maxHeight: "70vh" }}
-                >
+                <div className="modal-body">
                   {editError && (
-                    <div className="alert alert-danger" role="alert">
-                      {editError}
+                    <div className="attn-card warn" role="alert" style={{ marginBottom: 14 }}>
+                      <div><b>{editError}</b></div>
                     </div>
                   )}
                   <form onSubmit={handleEditSubmit} noValidate>
-                    <div className="mb-3">
-                      <label htmlFor="editFullName" className="form-label">
-                        Full Name <span className="text-danger">(required)</span>
+                    <div className="field">
+                      <label htmlFor="editFullName">
+                        Full name <span style={{ color: "var(--red, #c62828)" }}>(required)</span>
                       </label>
                       <input
                         id="editFullName"
                         type="text"
-                        className="form-control"
                         placeholder="Enter your full name"
                         value={editFullName}
                         onChange={(e) =>
@@ -526,16 +541,13 @@ function Profile() {
                         aria-required="true"
                       />
                     </div>
-                    <div className="mb-3">
-                      <label htmlFor="editEmail" className="form-label">
-                        Email <span className="text-danger">(required)</span>
+                    <div className="field">
+                      <label htmlFor="editEmail">
+                        Email <span style={{ color: "var(--red, #c62828)" }}>(required)</span>
                       </label>
                       <input
                         id="editEmail"
                         type="email"
-                        className={`form-control ${
-                          editEmail && !editEmailValid ? "is-invalid" : ""
-                        }`}
                         placeholder="Enter your email"
                         value={editEmail}
                         onChange={(e) => setEditEmail(e.target.value)}
@@ -543,19 +555,16 @@ function Profile() {
                         aria-required="true"
                       />
                       {editEmail && !editEmailValid && (
-                        <div className="invalid-feedback">
+                        <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
                           Please enter a valid email address
-                        </div>
+                        </span>
                       )}
                     </div>
-                    <div className="mb-3">
-                      <label htmlFor="editDesignation" className="form-label">
-                        Designation
-                      </label>
+                    <div className="field">
+                      <label htmlFor="editDesignation">Designation</label>
                       <input
                         id="editDesignation"
                         type="text"
-                        className="form-control"
                         placeholder="Enter your designation"
                         value={editDesignation}
                         onChange={(e) =>
@@ -564,14 +573,13 @@ function Profile() {
                         maxLength={25}
                       />
                     </div>
-                    <div className="mb-3">
-                      <label htmlFor="editOrganization" className="form-label">
-                        Organization{" "}
-                        <span className="text-danger">(required)</span>
+                    <div className="field">
+                      <label htmlFor="editOrganization">
+                        Organization <span style={{ color: "var(--red, #c62828)" }}>(required)</span>
                       </label>
                       <select
                         id="editOrganization"
-                        className="form-select form-control"
+                        style={{ width: "100%" }}
                         value={editOrganization}
                         onChange={(e) => setEditOrganization(e.target.value)}
                         required
@@ -605,26 +613,23 @@ function Profile() {
                         !editOrganizations.some(
                           (org) => String(org.id) === String(editOrganization)
                         ) && (
-                          <div
-                            className="form-text text-warning"
+                          <span
+                            style={{ color: "var(--amber, #b26a00)", fontSize: 13 }}
                             role="alert"
                             aria-live="polite"
                           >
                             Current organization is not in the list. You can keep
                             it or choose another.
-                          </div>
+                          </span>
                         )}
                     </div>
-                    <div className="mb-4">
-                      <label htmlFor="editPhone" className="form-label">
-                        Phone
-                      </label>
+                    <div className="field">
+                      <label htmlFor="editPhone">Phone</label>
                       <input
                         id="editPhone"
                         type="tel"
                         inputMode="numeric"
                         pattern="[0-9]{0,10}"
-                        className="form-control"
                         placeholder="10 digits phone number"
                         value={editPhone}
                         onChange={handleEditPhoneChange}
@@ -634,7 +639,8 @@ function Profile() {
                     </div>
                     <button
                       type="submit"
-                      className="btn btn-primary w-100"
+                      className="btn btn-primary"
+                      style={{ width: "100%" }}
                       disabled={
                         editSubmitting ||
                         !editFullName.trim() ||
@@ -643,155 +649,102 @@ function Profile() {
                         !editEmailValid
                       }
                     >
-                      {editSubmitting ? "Updating..." : "Submit"}
+                      {editSubmitting ? "Updating…" : "Submit"}
                     </button>
                   </form>
                 </div>
               </div>
-            </div>
-          </div>,
-          document.body
-        )}
+            </div>,
+            document.body
+          )}
 
-      {/* API Key Overlay */}
-      {showApiKeyOverlay && profileData.apikey && (
-        <div
-          className="modal show d-block"
-          tabIndex="-1"
-          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
-        >
-          <div className="modal-dialog">
-            <div className="modal-content">
-              <div className="modal-header">
-                <h5 className="modal-title">API Key</h5>
-                <button
-                  type="button"
-                  className="btn-close"
-                  onClick={() => setShowApiKeyOverlay(false)}
-                  aria-label="Close"
-                ></button>
+        {/* API Key Overlay */}
+        {showApiKeyOverlay && profileData.apikey && (
+          <div
+            className="cmdk-overlay show"
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setShowApiKeyOverlay(false);
+            }}
+          >
+            <div className="modal-card">
+              <div className="modal-head">
+                <h3>API key</h3>
+                <p>Use this key to authenticate API requests.</p>
               </div>
               <div className="modal-body">
-                <div className="d-flex align-items-center">
-                  <div className="me-2">
-                    <strong>API KEY:</strong> {profileData.apikey}
-                  </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span className="mono-token" style={{ flex: 1, wordBreak: "break-all" }}>
+                    {profileData.apikey}
+                  </span>
                   <button
-                    className="btn btn-link p-0 ms-auto"
+                    className="btn btn-quiet"
                     onClick={() => {
                       // TODO: Implement reload/regenerate API key
                       console.log("Reload API key clicked");
                     }}
                     title="Reload API Key"
+                    aria-label="Reload API Key"
                   >
-                    <i className="bi bi-arrow-clockwise"></i>
+                    <Ic name="arrow" size={16} />
                   </button>
                 </div>
               </div>
+              <div className="modal-foot">
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => setShowApiKeyOverlay(false)}
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* User Datasets Section */}
-      {profileData.privileges?.user_datasets && (
-        <div className="mt-4">
-          <h3 className="mb-4">User Datasets</h3>
-
-          {datasetsLoading ? (
-            <div className="text-center py-5">
-              <div className="spinner-border" role="status">
-                <span className="visually-hidden">Loading datasets...</span>
-              </div>
+        {/* User Datasets Section */}
+        {profileData.privileges?.user_datasets && (
+          <section style={{ marginTop: 40 }}>
+            <div className="section-head">
+              <h2 className="section-title">User datasets</h2>
             </div>
-          ) : datasets.length === 0 && currentPage === 1 ? (
-            <div className="alert alert-info" role="alert">
-              No datasets found.
-            </div>
-          ) : (
-            <>
-              {/* Dataset cards */}
-              <div className="row">
-                {datasets.map((dataset) => (
-                  <div key={dataset.dataset_id} className="col-md-6 col-lg-4 mb-4">
-                    <div
-                      className="card h-100"
-                      style={{ cursor: "pointer" }}
-                      onClick={() => handleCardClick(dataset.dataset_id)}
-                    >
-                      <div className="card-body">
-                        <h5 className="card-title">
-                          {dataset.dataset_title || "Untitled"}
-                        </h5>
-                        <p className="card-text">
-                          <small className="text-muted">
-                            {dataset.dataset_description || "No description"}
-                          </small>
-                        </p>
-                        <div className="mb-2">
-                          <small className="text-muted">
-                            <strong>Created:</strong> {formatDate(dataset.created_at)}
-                          </small>
-                        </div>
-                        <div className="mb-2">
-                          <small className="text-muted">
-                            <strong>Private:</strong>{" "}
-                            {dataset.private ? (
-                              <span className="badge bg-warning">Private</span>
-                            ) : (
-                              <span className="badge bg-success">Public</span>
-                            )}
-                          </small>
-                        </div>
-                        <div className="mb-2">
-                          <small className="text-muted">
-                            <strong>Downloads:</strong> {dataset.downloads ?? 0}
-                          </small>
-                        </div>
-                        {dataset.tags &&
-                          Array.isArray(dataset.tags) &&
-                          dataset.tags.length > 0 && (
-                            <div className="mb-2">
-                              <small className="text-muted">
-                                <strong>Tags:</strong> {dataset.tags.join(", ")}
-                              </small>
-                            </div>
-                          )}
-                        {dataset.organization && (
-                          <div className="mb-2">
-                            <small className="text-muted">
-                              <strong>Organization:</strong> {dataset.organization}
-                            </small>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
 
-              {/* Pagination */}
-              <div className="d-flex justify-content-center align-items-center mt-4">
-                <button
-                  className="btn btn-outline-secondary me-3"
-                  onClick={handlePrevious}
-                  disabled={currentPage === 1 || datasetsLoading}
-                >
-                  Previous
-                </button>
-                <span className="mx-3">{currentPage}</span>
-                <button
-                  className="btn btn-outline-secondary ms-3"
-                  onClick={handleNext}
-                  disabled={!hasMore || datasetsLoading}
-                >
-                  Next
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      )}
+            {datasetsLoading ? (
+              <div className="empty"><p>Loading datasets…</p></div>
+            ) : datasets.length === 0 && currentPage === 1 ? (
+              <div className="empty"><p>No datasets found.</p></div>
+            ) : (
+              <>
+                <div className="rows">
+                  {datasets.map((dataset) => (
+                    <DatasetRow key={dataset.dataset_id} dataset={dataset} />
+                  ))}
+                </div>
+
+                {/* Pagination */}
+                <div className="pagination" style={{ marginTop: 22 }}>
+                  <button
+                    className="btn btn-ghost"
+                    onClick={handlePrevious}
+                    disabled={currentPage === 1 || datasetsLoading}
+                  >
+                    <Ic name="chevLeft" size={16} />Previous
+                  </button>
+                  <span className="mono-token">{currentPage}</span>
+                  <button
+                    className="btn btn-ghost"
+                    onClick={handleNext}
+                    disabled={!hasMore || datasetsLoading}
+                  >
+                    Next<Ic name="arrow" size={16} />
+                  </button>
+                </div>
+              </>
+            )}
+          </section>
+        )}
+      </div>
     </div>
   );
 }

@@ -119,173 +119,149 @@ const ResetPassword = () => {
 
   if (validating) {
     return (
-      <div className="bg-wave">
-        <section className="container py-5">
-          <div className="row justify-content-center">
-            <div className="col-12 col-sm-10 col-md-8 col-lg-5">
-              <div className="card auth-card p-4 p-md-5 text-center">
-                <div className="spinner-border" role="status">
-                  <span className="visually-hidden">Validating link...</span>
-                </div>
-                <p className="mt-3 text-muted">Validating reset link...</p>
-              </div>
+      <div className="page">
+        <div className="wrap">
+          <div className="auth-wrap">
+            <div className="auth-card">
+              <h1 className="display">Reset password</h1>
+              <p className="auth-sub">Validating reset link…</p>
             </div>
           </div>
-        </section>
+        </div>
       </div>
     );
   }
 
   if (!tokenValid || error === "Invalid Link") {
     return (
-      <div className="bg-wave">
-        <section className="container py-5">
-          <div className="row justify-content-center">
-            <div className="col-12 col-sm-10 col-md-8 col-lg-5">
-              <div className="card auth-card p-4 p-md-5 text-center">
-                <h2 className="mb-3 auth-title">Invalid Link</h2>
-                <p className="text-muted mb-4">
-                  This password reset link is invalid or has expired.
-                </p>
-                <Link to="/forgot-password" className="btn btn-primary w-100">
-                  Request New Reset Link
-                </Link>
-                <div className="mt-3">
-                  <Link to="/signin" className="btn btn-outline-primary w-100">
-                    Back to Sign In
-                  </Link>
-                </div>
+      <div className="page">
+        <div className="wrap">
+          <div className="auth-wrap">
+            <div className="auth-card">
+              <h1 className="display">Invalid link</h1>
+              <p className="auth-sub">
+                This password reset link is invalid or has expired.
+              </p>
+              <Link
+                to="/forgot-password"
+                className="btn btn-primary"
+                style={{ width: "100%", marginTop: 22 }}
+              >
+                Request New Reset Link
+              </Link>
+              <div className="auth-foot">
+                <Link to="/signin">Back to Sign In</Link>
               </div>
             </div>
           </div>
-        </section>
+        </div>
       </div>
     );
   }
 
   if (success) {
     return (
-      <div className="bg-wave">
-        <section className="container py-5">
-          <div className="row justify-content-center">
-            <div className="col-12 col-sm-10 col-md-8 col-lg-5">
-              <div className="card auth-card p-4 p-md-5 text-center">
-                <h2 className="mb-3 auth-title">Password Reset Successfully</h2>
-                <p className="text-muted mb-4">
-                  Your password has been reset. You can now sign in with your new
-                  password.
-                </p>
-                <Link to="/signin" className="btn btn-primary w-100">
-                  Sign In
-                </Link>
-              </div>
+      <div className="page">
+        <div className="wrap">
+          <div className="auth-wrap">
+            <div className="auth-card">
+              <h1 className="display">Password reset successfully</h1>
+              <p className="auth-sub">
+                Your password has been reset. You can now sign in with your new
+                password.
+              </p>
+              <Link
+                to="/signin"
+                className="btn btn-primary"
+                style={{ width: "100%", marginTop: 22 }}
+              >
+                Sign In
+              </Link>
             </div>
           </div>
-        </section>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-wave">
-      <section className="container py-5">
-        <div className="row justify-content-center">
-          <div className="col-12 col-sm-10 col-md-8 col-lg-5">
-            <div className="card auth-card p-4 p-md-5">
-              <h2 className="mb-3 text-center auth-title">Reset Password</h2>
-              <p className="text-muted text-center mb-4">
-                Enter your new password below.
-              </p>
+    <div className="page">
+      <div className="wrap">
+        <div className="auth-wrap">
+          <div className="auth-card">
+            <h1 className="display">Reset password</h1>
+            <p className="auth-sub">Enter your new password below.</p>
 
-              {error && (
-                <div className="alert alert-danger" role="alert">
-                  {error}
-                </div>
-              )}
+            {error && (
+              <div
+                className="auth-note"
+                role="alert"
+                style={{ background: "#faf3e4", borderColor: "#ecdcb8", color: "#9a6b12" }}
+              >
+                {error}
+              </div>
+            )}
 
-              <form onSubmit={handleSubmit} noValidate>
-                <div className="mb-3">
-                  <label htmlFor="newPassword" className="form-label">
-                    New Password{" "}
-                    <span style={{ color: "red" }}>(required)</span>
-                  </label>
-                  <input
-                    id="newPassword"
-                    name="newPassword"
-                    type="password"
-                    className={`form-control ${
-                      newPassword && newPassword.length < 8 ? "is-invalid" : ""
-                    }`}
-                    placeholder="Minimum 8 characters"
-                    value={newPassword}
-                    onChange={(e) => {
-                      setNewPassword(e.target.value);
-                      setError("");
-                    }}
-                    autoComplete="new-password"
-                    required
-                    minLength={8}
-                    disabled={loading}
-                  />
-                  {newPassword && newPassword.length < 8 && (
-                    <div className="invalid-feedback">
-                      Password must be at least 8 characters
-                    </div>
-                  )}
-                </div>
+            <form onSubmit={handleSubmit} noValidate>
+              <div className="field">
+                <label htmlFor="newPassword">New Password</label>
+                <input
+                  id="newPassword"
+                  name="newPassword"
+                  type="password"
+                  placeholder="Minimum 8 characters"
+                  value={newPassword}
+                  onChange={(e) => {
+                    setNewPassword(e.target.value);
+                    setError("");
+                  }}
+                  autoComplete="new-password"
+                  required
+                  minLength={8}
+                  disabled={loading}
+                />
+                {newPassword && newPassword.length < 8 && (
+                  <span style={{ fontSize: 12, color: "#9a6b12" }}>
+                    Password must be at least 8 characters
+                  </span>
+                )}
+              </div>
 
-                <div className="mb-3">
-                  <label htmlFor="confirmPassword" className="form-label">
-                    Confirm New Password{" "}
-                    <span style={{ color: "red" }}>(required)</span>
-                  </label>
-                  <input
-                    id="confirmPassword"
-                    name="confirmPassword"
-                    type="password"
-                    className={`form-control ${
-                      confirmPassword && !passwordsMatch ? "is-invalid" : ""
-                    }`}
-                    placeholder="Re-enter your new password"
-                    value={confirmPassword}
-                    onChange={(e) => {
-                      setConfirmPassword(e.target.value);
-                      setError("");
-                    }}
-                    autoComplete="new-password"
-                    required
-                    disabled={loading}
-                  />
-                  {!passwordsMatch && confirmPassword && (
-                    <div className="invalid-feedback">
-                      Passwords do not match
-                    </div>
-                  )}
-                </div>
+              <div className="field">
+                <label htmlFor="confirmPassword">Confirm New Password</label>
+                <input
+                  id="confirmPassword"
+                  name="confirmPassword"
+                  type="password"
+                  placeholder="Re-enter your new password"
+                  value={confirmPassword}
+                  onChange={(e) => {
+                    setConfirmPassword(e.target.value);
+                    setError("");
+                  }}
+                  autoComplete="new-password"
+                  required
+                  disabled={loading}
+                />
+                {!passwordsMatch && confirmPassword && (
+                  <span style={{ fontSize: 12, color: "#9a6b12" }}>
+                    Passwords do not match
+                  </span>
+                )}
+              </div>
 
-                <button
-                  type="submit"
-                  className="btn btn-primary w-100 auth-submit-btn"
-                  disabled={!canSubmit}
-                >
-                  {loading ? (
-                    <>
-                      <span
-                        className="spinner-border spinner-border-sm me-2"
-                        role="status"
-                        aria-hidden="true"
-                      ></span>
-                      Resetting Password...
-                    </>
-                  ) : (
-                    "Reset Password"
-                  )}
-                </button>
-              </form>
-            </div>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                style={{ width: "100%", marginTop: 4 }}
+                disabled={!canSubmit}
+              >
+                {loading ? "Resetting Password…" : "Reset Password"}
+              </button>
+            </form>
           </div>
         </div>
-      </section>
+      </div>
     </div>
   );
 };

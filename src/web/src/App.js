@@ -1,11 +1,12 @@
 import React from "react";
 import { BrowserRouter as Router, Routes, Route, Link } from "react-router-dom";
-import "bootstrap/dist/css/bootstrap.min.css";
-import "bootstrap-icons/font/bootstrap-icons.css";
-import './App.css';
 
 import { AuthProvider } from "./contexts/AuthContext";
+import { ToastProvider } from "./components/wd/Toast";
+import { CommandPalette } from "./components/wd/CommandPalette";
 import SiteNavbar from "./components/SiteNavbar";
+import Footer from "./components/wd/Footer";
+
 import Home from "./pages/Home";
 import SignIn from "./pages/SignIn";
 import SignUp from "./pages/SignUp";
@@ -30,52 +31,63 @@ import Search from "./pages/Search";
 import Approvals from "./pages/Approvals";
 
 const ApiDocs = () => (
-  <div className="container py-5">
-    <h2>API</h2>
-    <p>API documentation coming soon...</p>
-  </div>
+  <div className="page"><section className="wrap" style={{ padding: "72px 0", maxWidth: 720 }}>
+    <span className="eyebrow">Developers</span>
+    <h1 className="display" style={{ fontSize: 40, fontWeight: 450, color: "var(--navy)", letterSpacing: "-.03em", margin: "12px 0 16px" }}>API</h1>
+    <p className="muted">API documentation coming soon.</p>
+  </section></div>
+);
+
+const NotFound = () => (
+  <div className="page"><section className="wrap" style={{ padding: "96px 0" }}>
+    <div className="empty">
+      <h3 className="display">Page not found</h3>
+      <p>The page you were looking for may have moved.</p>
+      <Link className="btn btn-ghost" to="/">Back home</Link>
+    </div>
+  </section></div>
 );
 
 function App() {
   return (
     <AuthProvider>
       <Router>
-        <div className="app-root">
-          <SiteNavbar />
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/datasets" element={<Datasets />} />
-            <Route path="/search" element={<Search />} />
-            <Route path="/signin" element={<SignIn />} />
-            <Route path="/signup" element={<SignUp />} />
-            <Route path="/signupsuccess" element={<SignupSuccess />} />
-            <Route path="/change-password" element={<ChangePassword />} />
-            <Route path="/forgot-password" element={<ForgotPassword />} />
-            <Route path="/reset-password" element={<ResetPassword />} />
-            <Route path="/verify-email" element={<VerifyEmail />} />
-            <Route path="/orgsearch" element={<OrgSearch />} />
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/approvals" element={<Approvals />} />
-            <Route path="/profile" element={<Profile />} />
-            <Route path="/createorg" element={<CreateOrg />} />
-            <Route path="/createorgsuccess" element={<CreateOrgSuccess />} />
-            <Route path="/organisation" element={<Organization />} />
-            <Route path="/create-dataset" element={<CreateDataset />} />
-            <Route path="/dataset-info" element={<DatasetInfo />} />
-            <Route path="/add-file" element={<AddFile />} />
-            <Route path="/faq" element={<FAQ />} />
-            <Route path="/terms" element={<Terms />} />
-            <Route path="/api" element={<ApiDocs />} />
-            <Route path="*" element={
-              <div className="container py-5">
-                <h2>Page Not Found</h2>
-                <p>
-                  Go back to <Link to="/">Home</Link>
-                </p>
-              </div>
-            } />
-          </Routes>
-        </div>
+        <ToastProvider>
+          <CommandPalette>
+            <div className="app-root">
+              <SiteNavbar />
+              <main id="app">
+                <Routes>
+                  <Route path="/" element={<Home />} />
+                  <Route path="/datasets" element={<Datasets />} />
+                  <Route path="/search" element={<Search />} />
+                  <Route path="/signin" element={<SignIn />} />
+                  <Route path="/signup" element={<SignUp />} />
+                  <Route path="/signupsuccess" element={<SignupSuccess />} />
+                  <Route path="/change-password" element={<ChangePassword />} />
+                  <Route path="/forgot-password" element={<ForgotPassword />} />
+                  <Route path="/reset-password" element={<ResetPassword />} />
+                  <Route path="/verify-email" element={<VerifyEmail />} />
+                  <Route path="/orgsearch" element={<OrgSearch />} />
+                  <Route path="/dashboard" element={<Dashboard />} />
+                  <Route path="/approvals" element={<Approvals />} />
+                  <Route path="/profile" element={<Profile />} />
+                  <Route path="/createorg" element={<CreateOrg />} />
+                  <Route path="/createorgsuccess" element={<CreateOrgSuccess />} />
+                  <Route path="/organisation" element={<Organization />} />
+                  <Route path="/create-dataset" element={<CreateDataset />} />
+                  <Route path="/dataset-info" element={<DatasetInfo />} />
+                  <Route path="/add-file" element={<AddFile />} />
+                  <Route path="/faq" element={<FAQ />} />
+                  <Route path="/terms" element={<Terms />} />
+                  <Route path="/api" element={<ApiDocs />} />
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </main>
+              <Footer />
+            </div>
+          </CommandPalette>
+        </ToastProvider>
       </Router>
     </AuthProvider>
   );

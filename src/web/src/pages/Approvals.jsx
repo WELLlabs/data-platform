@@ -5,6 +5,7 @@ import {
   pending_approvals_endpoint,
   reject_user_endpoint,
 } from "../api/endpoints";
+import Ic from "../components/wd/Icons";
 
 const ROLE_OPTIONS = [
   { value: 0, label: "Member" },
@@ -241,136 +242,109 @@ function Approvals() {
 
   if (loading) {
     return (
-      <div className="container py-5 text-center">
-        <div className="spinner-border" role="status">
-          <span className="visually-hidden">Loading...</span>
+      <div className="page">
+        <div className="wrap" style={{ padding: "48px 0 88px" }}>
+          <div className="empty"><p>Loading…</p></div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="container py-5">
-      {error && (
-        <div className="alert alert-danger" role="alert">
-          {error}
+    <div className="page">
+      <div className="wrap" style={{ padding: "48px 0 88px" }}>
+        <span className="eyebrow">Review queue</span>
+        <div className="section-head" style={{ marginTop: 8 }}>
+          <h2 className="section-title">Approvals</h2>
         </div>
-      )}
 
-      {hasUsersSection && (
-        <section className="mb-5">
-          <h2 className="mb-4">User Approvals</h2>
-          <div className="table-responsive">
-            <table className="table table-borderless align-middle">
-              <thead>
-                <tr>
-                  <th scope="col">User</th>
-                  <th scope="col">Email</th>
-                  <th scope="col">Designation</th>
-                  <th scope="col">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map((pendingUser) => (
-                  <tr key={pendingUser.user_id}>
-                    <td>{pendingUser.full_name || "N/A"}</td>
-                    <td>{pendingUser.email || "N/A"}</td>
-                    <td>{pendingUser.designation || "N/A"}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="btn text-white"
-                        style={{
-                          backgroundColor: "#0d6efd",
-                          borderColor: "#0d6efd",
-                        }}
-                        onMouseEnter={(event) => {
-                          event.currentTarget.style.backgroundColor = "#0b5ed7";
-                          event.currentTarget.style.borderColor = "#0b5ed7";
-                        }}
-                        onMouseLeave={(event) => {
-                          event.currentTarget.style.backgroundColor = "#0d6efd";
-                          event.currentTarget.style.borderColor = "#0d6efd";
-                        }}
-                        onClick={() => handleOpenUserModal(pendingUser)}
-                        disabled={processingUserId === pendingUser.user_id}
-                        aria-label={`View ${pendingUser.full_name || pendingUser.email || "user"}`}
-                      >
-                        {processingUserId === pendingUser.user_id
-                          ? "Working..."
-                          : "View"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {users.length === 0 && (
-                  <tr>
-                    <td colSpan="4" className="text-muted">
-                      No pending users found.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+        {error && (
+          <div className="attn-card warn" role="alert" style={{ marginBottom: 20 }}>
+            <div><b>{error}</b></div>
           </div>
-        </section>
-      )}
+        )}
 
-      {pendingModalUser && (
-        <div
-          ref={userApprovalModalContainerRef}
-          className="modal show d-block"
-          tabIndex="-1"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="userApprovalModalTitle"
-          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
-        >
-          <div className="modal-dialog modal-dialog-centered">
-            <div className="modal-content">
-              <div className="modal-header">
-                <h5 className="modal-title" id="userApprovalModalTitle">
-                  User approval
-                </h5>
-                <button
-                  type="button"
-                  className="btn-close"
-                  onClick={handleCloseUserModal}
-                  disabled={!!processingUserId}
-                  aria-label="Close dialog"
-                />
+        {hasUsersSection && (
+          <section style={{ marginBottom: 40 }}>
+            <div className="sec-label" style={{ marginBottom: 14 }}>
+              User approvals
+            </div>
+            <div className="rows">
+              {users.map((pendingUser) => (
+                <div className="drow" key={pendingUser.user_id}>
+                  <div className="rt">
+                    <span className="badge pending">Pending</span>
+                    <h3>{pendingUser.full_name || "N/A"}</h3>
+                  </div>
+                  <div className="rm">
+                    <span>{pendingUser.email || "N/A"}</span>
+                    <span className="spec">
+                      {pendingUser.designation || "N/A"}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      style={{ marginLeft: "auto" }}
+                      onClick={() => handleOpenUserModal(pendingUser)}
+                      disabled={processingUserId === pendingUser.user_id}
+                      aria-label={`Review ${pendingUser.full_name || pendingUser.email || "user"}`}
+                    >
+                      {processingUserId === pendingUser.user_id
+                        ? "Working…"
+                        : "Review"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {users.length === 0 && (
+                <div className="empty">
+                  <p>No pending users found.</p>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
+        {pendingModalUser && (
+          <div
+            ref={userApprovalModalContainerRef}
+            className="cmdk-overlay show"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="userApprovalModalTitle"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) handleCloseUserModal();
+            }}
+          >
+            <div className="modal-card">
+              <div className="modal-head">
+                <h3 id="userApprovalModalTitle">User approval</h3>
+                <p>Review this member and assign a role.</p>
               </div>
               <div className="modal-body">
-                <div className="d-flex justify-content-between align-items-baseline mb-3 gap-3">
-                  <span className="fw-semibold text-nowrap">User:</span>
-                  <span className="text-end">
-                    {pendingModalUser.full_name || "N/A"}
-                  </span>
+                <div className="rrow">
+                  <span>User</span>
+                  <span>{pendingModalUser.full_name || "N/A"}</span>
                 </div>
-                <div className="d-flex justify-content-between align-items-baseline mb-3 gap-3">
-                  <span className="fw-semibold text-nowrap">Email:</span>
-                  <span className="text-end">
-                    {pendingModalUser.email || "N/A"}
-                  </span>
+                <div className="rrow">
+                  <span>Email</span>
+                  <span>{pendingModalUser.email || "N/A"}</span>
                 </div>
-                <div className="d-flex justify-content-between align-items-baseline mb-4 gap-3">
-                  <span className="fw-semibold text-nowrap">Designation:</span>
-                  <span className="text-end">
-                    {pendingModalUser.designation || "N/A"}
-                  </span>
+                <div className="rrow">
+                  <span>Designation</span>
+                  <span>{pendingModalUser.designation || "N/A"}</span>
                 </div>
-                <div className="d-flex justify-content-between align-items-center mb-4 gap-3 flex-wrap">
-                  <span className="fw-semibold text-nowrap" id="role-select-label">
-                    Role:
-                  </span>
+                <div className="field" style={{ marginTop: 16, marginBottom: 0 }}>
+                  <label id="role-select-label" htmlFor="user-approval-role">
+                    Role
+                  </label>
                   <select
                     id="user-approval-role"
-                    className="form-select"
-                    style={{ maxWidth: "12rem" }}
                     value={modalRole}
                     onChange={(e) => setModalRole(Number(e.target.value))}
                     disabled={!!processingUserId}
                     aria-labelledby="role-select-label"
+                    style={{ width: "100%" }}
                   >
                     {ROLE_OPTIONS.map((opt) => (
                       <option key={opt.value} value={opt.value}>
@@ -379,122 +353,79 @@ function Approvals() {
                     ))}
                   </select>
                 </div>
-                <div className="d-flex flex-wrap gap-2 justify-content-center justify-content-md-start">
-                  <button
-                    ref={approveFromModalButtonRef}
-                    type="button"
-                    className="btn text-white"
-                    style={{
-                      backgroundColor: "#0d6efd",
-                      borderColor: "#0d6efd",
-                    }}
-                    onMouseEnter={(event) => {
-                      event.currentTarget.style.backgroundColor = "#0b5ed7";
-                      event.currentTarget.style.borderColor = "#0b5ed7";
-                    }}
-                    onMouseLeave={(event) => {
-                      event.currentTarget.style.backgroundColor = "#0d6efd";
-                      event.currentTarget.style.borderColor = "#0d6efd";
-                    }}
-                    onClick={handleApproveFromModal}
-                    disabled={!!processingUserId}
-                    aria-label="Approve user with selected role"
-                  >
-                    {processingUserId === pendingModalUser.user_id &&
-                    processingAction === "approve"
-                      ? "Approving..."
-                      : "Approve"}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn text-white"
-                    style={{
-                      backgroundColor: "#dc3545",
-                      borderColor: "#dc3545",
-                    }}
-                    onMouseEnter={(event) => {
-                      event.currentTarget.style.backgroundColor = "#e35d6a";
-                      event.currentTarget.style.borderColor = "#e35d6a";
-                    }}
-                    onMouseLeave={(event) => {
-                      event.currentTarget.style.backgroundColor = "#dc3545";
-                      event.currentTarget.style.borderColor = "#dc3545";
-                    }}
-                    onClick={handleRejectFromModal}
-                    disabled={!!processingUserId}
-                    aria-label="Reject and remove user"
-                  >
-                    {processingUserId === pendingModalUser.user_id &&
-                    processingAction === "reject"
-                      ? "Rejecting..."
-                      : "Reject"}
-                  </button>
-                </div>
+              </div>
+              <div className="modal-foot">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={handleRejectFromModal}
+                  disabled={!!processingUserId}
+                  aria-label="Reject and remove user"
+                >
+                  {processingUserId === pendingModalUser.user_id &&
+                  processingAction === "reject"
+                    ? "Rejecting…"
+                    : "Reject"}
+                </button>
+                <button
+                  ref={approveFromModalButtonRef}
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleApproveFromModal}
+                  disabled={!!processingUserId}
+                  aria-label="Approve user with selected role"
+                >
+                  {processingUserId === pendingModalUser.user_id &&
+                  processingAction === "approve"
+                    ? "Approving…"
+                    : "Approve"}
+                </button>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {hasDatasetsSection && (
-        <section>
-          <h2 className="mb-4">Dataset Approvals</h2>
-          <div className="table-responsive">
-            <table className="table table-borderless align-middle">
-              <thead>
-                <tr>
-                  <th scope="col">Title</th>
-                  <th scope="col">Creator</th>
-                  <th scope="col">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {datasets.map((dataset) => (
-                  <tr key={dataset.dataset_id}>
-                    <td>{dataset.dataset_title || "N/A"}</td>
-                    <td>{dataset.creator_name || "N/A"}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="btn text-white"
-                        style={{
-                          backgroundColor: "#0d6efd",
-                          borderColor: "#0d6efd",
-                        }}
-                        onMouseEnter={(event) => {
-                          event.currentTarget.style.backgroundColor = "#0b5ed7";
-                          event.currentTarget.style.borderColor = "#0b5ed7";
-                        }}
-                        onMouseLeave={(event) => {
-                          event.currentTarget.style.backgroundColor = "#0d6efd";
-                          event.currentTarget.style.borderColor = "#0d6efd";
-                        }}
-                        onClick={() => handleViewDataset(dataset.dataset_id)}
-                        aria-label={`View ${dataset.dataset_title || "dataset"}`}
-                      >
-                        View
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {datasets.length === 0 && (
-                  <tr>
-                    <td colSpan="3" className="text-muted">
-                      No pending datasets found.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+        {hasDatasetsSection && (
+          <section>
+            <div className="sec-label" style={{ marginBottom: 14 }}>
+              Dataset approvals
+            </div>
+            <div className="rows">
+              {datasets.map((dataset) => (
+                <div className="drow" key={dataset.dataset_id}>
+                  <div className="rt">
+                    <span className="badge pending">Pending</span>
+                    <h3>{dataset.dataset_title || "N/A"}</h3>
+                  </div>
+                  <div className="rm">
+                    <span>{dataset.creator_name || "N/A"}</span>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      style={{ marginLeft: "auto" }}
+                      onClick={() => handleViewDataset(dataset.dataset_id)}
+                      aria-label={`View ${dataset.dataset_title || "dataset"}`}
+                    >
+                      View<Ic name="arrow" size={16} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {datasets.length === 0 && (
+                <div className="empty">
+                  <p>No pending datasets found.</p>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
+        {!hasUsersSection && !hasDatasetsSection && !error && (
+          <div className="empty">
+            <p>No pending approvals found.</p>
           </div>
-        </section>
-      )}
-
-      {!hasUsersSection && !hasDatasetsSection && !error && (
-        <div className="alert alert-info" role="alert">
-          No pending approvals found.
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

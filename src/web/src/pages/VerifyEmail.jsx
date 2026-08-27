@@ -75,69 +75,73 @@ const VerifyEmail = () => {
 
   if (loading) {
     return (
-      <div className="bg-wave">
-        <section className="container py-5">
-          <div className="row justify-content-center">
-            <div className="col-12 col-sm-10 col-md-8 col-lg-5">
-              <div className="card auth-card p-4 p-md-5 text-center">
-                <div className="spinner-border" role="status">
-                  <span className="visually-hidden">Verifying email...</span>
-                </div>
-                <p className="mt-3 text-muted">Verifying your email address...</p>
-              </div>
+      <div className="page">
+        <div className="wrap">
+          <div className="auth-wrap">
+            <div className="auth-card">
+              <h1 className="display">Verifying email</h1>
+              <p className="auth-sub">Verifying your email address…</p>
             </div>
           </div>
-        </section>
+        </div>
       </div>
     );
   }
 
   if (success) {
     return (
-      <div className="bg-wave">
-        <section className="container py-5">
-          <div className="row justify-content-center">
-            <div className="col-12 col-sm-10 col-md-8 col-lg-5">
-              <div className="card auth-card p-4 p-md-5 text-center">
-                <h2 className="mb-3 auth-title">Email Verified Successfully</h2>
-                <p className="text-muted mb-4">
-                  Your email address has been verified. You can now sign in to
-                  your account.
-                </p>
-                <Link to="/signin" className="btn btn-primary w-100">
-                  Sign In
-                </Link>
-              </div>
+      <div className="page">
+        <div className="wrap">
+          <div className="auth-wrap">
+            <div className="auth-card">
+              <h1 className="display">Email verified successfully</h1>
+              <p className="auth-sub">
+                Your email address has been verified. You can now sign in to
+                your account.
+              </p>
+              <Link
+                to="/signin"
+                className="btn btn-primary"
+                style={{ width: "100%", marginTop: 22 }}
+              >
+                Sign In
+              </Link>
             </div>
           </div>
-        </section>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-wave">
-      <section className="container py-5">
-        <div className="row justify-content-center">
-          <div className="col-12 col-sm-10 col-md-8 col-lg-5">
-            <div className="card auth-card p-4 p-md-5 text-center">
-              <h2 className="mb-3 auth-title">Verification Failed</h2>
-              {error && (
-                <div className="alert alert-danger" role="alert">
-                  {error}
-                </div>
-              )}
-              <p className="text-muted mb-4">
-                The verification link is invalid or has expired. Please request a
-                new verification email.
-              </p>
-              <Link to="/signin" className="btn btn-primary w-100">
-                Go to Sign In
-              </Link>
-            </div>
+    <div className="page">
+      <div className="wrap">
+        <div className="auth-wrap">
+          <div className="auth-card">
+            <h1 className="display">Verification failed</h1>
+            {error && (
+              <div
+                className="auth-note"
+                role="alert"
+                style={{ background: "#faf3e4", borderColor: "#ecdcb8", color: "#9a6b12" }}
+              >
+                {error}
+              </div>
+            )}
+            <p className="auth-sub">
+              The verification link is invalid or has expired. Please request a
+              new verification email.
+            </p>
+            <Link
+              to="/signin"
+              className="btn btn-primary"
+              style={{ width: "100%", marginTop: 22 }}
+            >
+              Go to Sign In
+            </Link>
           </div>
         </div>
-      </section>
+      </div>
     </div>
   );
 };

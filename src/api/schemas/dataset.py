@@ -3,10 +3,12 @@ Dataset schemas for validation and serialization.
 """
 
 from datetime import datetime
-from typing import List, Optional, Literal
+from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, validator
+
+from core.availability import parse_availability
 
 
 class DatasetCreate(BaseModel):
@@ -26,10 +28,13 @@ class DatasetCreate(BaseModel):
     tags: Optional[List[str]] = Field(
         None, description="Tags for the dataset (list of strings)"
     )
-    organization: str = Field(
-        ..., min_length=1, max_length=100, description="Organization ID"
+    organization: UUID = Field(..., description="Organization UUID")
+    availability: int = Field(
+        default=0,
+        ge=0,
+        le=4,
+        description="0 public, 1 private, 2 organization, 3 admins, 4 owners",
     )
-    private: bool = Field(default=False, description="Whether dataset is private")
 
     # File fields
     filename: str = Field(..., min_length=1, description="File name")
@@ -57,9 +62,6 @@ class DatasetCreate(BaseModel):
         None, description="Permissions (CC license type)"
     )
     duration: int = Field(default=0, ge=0, description="Duration in years")
-    value: Optional[Literal["high", "medium", "low"]] = Field(
-        None, description="Value level"
-    )
     # New file fields
     temporal_from: Optional[datetime] = Field(
         None, description="Temporal coverage start date"
@@ -70,6 +72,10 @@ class DatasetCreate(BaseModel):
     geography: Optional[str] = Field(
         None, description="Geographic coverage"
     )
+
+    @validator("availability", pre=True)
+    def coerce_availability(cls, v):
+        return parse_availability(v)
 
     @validator("title")
     def validate_title(cls, v):
@@ -146,18 +152,8 @@ class DatasetCreate(BaseModel):
 
     @validator("organization")
     def validate_organization(cls, v):
-        """Validate organization ID."""
-        if not v or not v.strip():
+        if v is None:
             raise ValueError("Organization ID cannot be empty")
-        return v.strip()
-
-    @validator("value")
-    def validate_value(cls, v):
-        """Validate value field."""
-        if v is None or v == "":
-            return None
-        if v not in ["high", "medium", "low"]:
-            raise ValueError("Value must be one of: high, medium, low")
         return v
 
     @validator("temporal_to")
@@ -181,8 +177,17 @@ class EditDatasetRequest(BaseModel):
     dataset_description: Optional[str] = Field(
         None, description="Dataset description"
     )
-    private: bool = Field(..., description="Whether dataset is private")
+    availability: int = Field(
+        ...,
+        ge=0,
+        le=4,
+        description="0 public, 1 private, 2 organization, 3 admins, 4 owners",
+    )
     tags: List[str] = Field(..., description="Tags (list of strings, required, at least one)")
+
+    @validator("availability", pre=True)
+    def coerce_availability(cls, v):
+        return parse_availability(v)
 
     @validator("dataset_title")
     def validate_dataset_title(cls, v):

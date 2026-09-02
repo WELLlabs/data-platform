@@ -6,11 +6,14 @@ import logging
 from datetime import datetime
 from typing import Optional
 
+from core.availability import search_visibility_sql
 from core.config import settings
 from db.session import get_session
 from fastapi import Depends, HTTPException, status
+from models.user import User
 from redis.asyncio import Redis
-from schemas.search import SearchResultItem, SearchResponse
+from schemas.search import SearchResultItem, SearchResponse, TagFacet
+from services.typesense_index import typesense_search
 from services.auth import get_redis
 from services.user import UserService, get_user_service
 from sqlalchemy import text
@@ -57,6 +60,8 @@ class SearchService:
         start_date: Optional[datetime],
         end_date: Optional[datetime],
         apikey: Optional[str],
+        viewer_org: Optional[str] = None,
+        tags: Optional[str] = None,
     ) -> bool:
         """Use cache only when no filters are applied."""
         if organization_id is not None and organization_id.strip():
@@ -64,6 +69,10 @@ class SearchService:
         if start_date is not None or end_date is not None:
             return False
         if apikey is not None and apikey.strip():
+            return False
+        if viewer_org is not None and viewer_org.strip():
+            return False
+        if tags is not None and tags.strip():
             return False
         return True
 
@@ -130,31 +139,20 @@ class SearchService:
         limit: int = 10,
         offset: int = 0,
         apikey: Optional[str] = None,
+        viewer_org: Optional[str] = None,
+        current_user: Optional[User] = None,
+        tags: Optional[str] = None,
     ) -> SearchResponse:
         """
         Search global_search_index with FTS, optional filters, and visibility.
-
-        Args:
-            query: Search keywords (required).
-            organization_id: Optional filter by organization_id.
-            start_date: Optional filter: temporal range overlaps start_date.
-            end_date: Optional filter: temporal range overlaps end_date.
-            limit: Max results (default 10).
-            offset: Pagination offset (default 0).
-            apikey: Optional API key for visibility (see get_datasets logic).
-
-        Returns:
-            SearchResponse with items and total count.
-
-        Raises:
-            HTTPException: 404 if apikey provided but invalid.
         """
         if not query or not query.strip():
             return SearchResponse(result=[], total=0)
 
         cacheable = self._is_cacheable(
-            organization_id, start_date, end_date, apikey
+            organization_id, start_date, end_date, apikey, viewer_org, tags
         )
+        extra = {"current_user": current_user, "viewer_org": viewer_org, "tags": tags}
         if cacheable and offset < SEARCH_CACHE_SIZE:
             cache_key = self._cache_key(query)
             total_key = self._cache_total_key(query)
@@ -163,7 +161,6 @@ class SearchService:
             )
             if cached is not None:
                 return cached
-            # Cache miss: run search for top 100, fill cache, return slice
             response = await self._run_search(
                 query=query,
                 organization_id=organization_id,
@@ -172,6 +169,7 @@ class SearchService:
                 limit=SEARCH_CACHE_SIZE,
                 offset=0,
                 apikey=apikey,
+                **extra,
             )
             await self._set_cache(
                 cache_key, total_key, response.result, response.total
@@ -183,17 +181,6 @@ class SearchService:
                 total=response.total,
             )
 
-        if cacheable and offset >= SEARCH_CACHE_SIZE:
-            return await self._run_search(
-                query=query,
-                organization_id=organization_id,
-                start_date=start_date,
-                end_date=end_date,
-                limit=limit,
-                offset=offset,
-                apikey=apikey,
-            )
-
         return await self._run_search(
             query=query,
             organization_id=organization_id,
@@ -202,6 +189,7 @@ class SearchService:
             limit=limit,
             offset=offset,
             apikey=apikey,
+            **extra,
         )
 
     async def _run_search(
@@ -213,74 +201,72 @@ class SearchService:
         limit: int = 10,
         offset: int = 0,
         apikey: Optional[str] = None,
+        viewer_org: Optional[str] = None,
+        current_user: Optional[User] = None,
+        tags: Optional[str] = None,
     ) -> SearchResponse:
-        """Execute search against global_search_index (no cache)."""
-        has_apikey = apikey is not None and bool(apikey.strip())
-        has_org = organization_id is not None and bool(organization_id.strip())
-        has_start = start_date is not None
-        has_end = end_date is not None
-
-        visibility_sql: str
-        org_filter: str = ""
-        temporal_filter: str = ""
-        user_org: Optional[str] = None
-
-        # 1. No apikey: filter private = false; then optional org/temporal (1a.i–1a.iii)
-        if not has_apikey:
-            visibility_sql = "private = false"
-            if has_org:
-                org_filter = "AND organization_id = :organization_id"
-            if has_start:
-                temporal_filter += " AND (temporal_to IS NULL OR temporal_to >= :start_date_val)"
-            if has_end:
-                temporal_filter += " AND (temporal_from IS NULL OR temporal_from <= :end_date_val)"
-
-        # 2. Apikey provided
-        else:
-            user_result = await self.session.execute(
-                text("SELECT organization FROM users WHERE apikey = :apikey"),
-                {"apikey": apikey.strip()},
-            )
-            row = next(user_result.mappings(), None)
-            if row is None:
-                self.logger.warning("User not found for provided apikey")
+        """Execute search against Typesense, falling back to global_search_index."""
+        viewer = current_user
+        if viewer is None and apikey and apikey.strip() and self.user_service is not None:
+            viewer = await self.user_service.get_user_model_by_apikey(apikey.strip())
+            if viewer is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Invalid API key",
                 )
-            user_org = row["organization"]
 
-            # 2a. Apikey, no organization_id/start_date/end_date: user org or public
-            if not has_org and not has_start and not has_end:
-                visibility_sql = "(organization_id = :user_org OR private = false)"
-            # 2b. Apikey and at least one of org, start_date, end_date
-            else:
-                if has_org and self.user_service is not None:
-                    belongs = await self.user_service.check_user_belongs_to_organization_by_key(
-                        apikey.strip(), organization_id
+        tag_list = [
+            t.strip()
+            for t in (tags or "").split(",")
+            if t and t.strip()
+        ]
+        ts = await typesense_search(
+            query=query.strip(),
+            user=viewer,
+            organization_id=organization_id,
+            start_date=start_date,
+            end_date=end_date,
+            tags=tag_list or None,
+            limit=min(max(1, limit), 100),
+            offset=max(0, offset),
+        )
+        if ts is not None:
+            hits, total, facets = ts
+            return SearchResponse(
+                result=[
+                    SearchResultItem(
+                        dataset_id=h["dataset_id"],
+                        file_id=h.get("file_id") or "",
+                        title=h.get("title") or "",
+                        context=h.get("context") or "",
+                        score=float(h.get("score") or 0),
                     )
-                    if belongs:
-                        org_filter = "AND organization_id = :organization_id"
-                    else:
-                        org_filter = "AND organization_id = :organization_id AND private = false"
-                    visibility_sql = "true"
-                elif has_org:
-                    org_filter = "AND organization_id = :organization_id AND private = false"
-                    visibility_sql = "true"
-                else:
-                    visibility_sql = "(organization_id = :user_org OR private = false)"
+                    for h in hits
+                ],
+                total=total,
+                tag_facets=[TagFacet(**f) for f in facets if f.get("value")],
+            )
 
-                if has_start:
-                    temporal_filter += " AND (temporal_to IS NULL OR temporal_to >= :start_date_val)"
-                if has_end:
-                    temporal_filter += " AND (temporal_from IS NULL OR temporal_from <= :end_date_val)"
+        has_org = organization_id is not None and bool(organization_id.strip())
+        has_start = start_date is not None
+        has_end = end_date is not None
+
+        visibility_sql, vis_params = search_visibility_sql(viewer)
+        org_filter = ""
+        temporal_filter = ""
+        if has_org:
+            org_filter = "AND organization_id = :organization_id"
+        if has_start:
+            temporal_filter += " AND (temporal_to IS NULL OR temporal_to >= :start_date_val)"
+        if has_end:
+            temporal_filter += " AND (temporal_from IS NULL OR temporal_from <= :end_date_val)"
 
         params: dict = {
             "query": query.strip(),
             "organization_id": organization_id,
-            "user_org": user_org,
             "limit": min(max(1, limit), 100),
             "offset": max(0, offset),
+            **vis_params,
         }
         if has_start:
             params["start_date_val"] = start_date

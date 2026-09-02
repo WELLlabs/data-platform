@@ -1,7 +1,6 @@
 import logging
-import re
 from typing import List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from db.session import get_session
 from fastapi import Depends, HTTPException, status
@@ -13,7 +12,7 @@ from schemas.organization import (
     OrganizationSearch,
     OrganizationUpdate,
 )
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,33 +27,15 @@ class OrganizationService:
         self.logger = logging.getLogger(__name__)
 
     @staticmethod
-    def generate_organization_id(name: str) -> str:
-        """
-        Generate organization ID from name by making it lowercase,
-        removing special characters, and replacing spaces with hyphens.
+    def coerce_org_id(org_id: UUID | str) -> UUID:
+        if isinstance(org_id, UUID):
+            return org_id
+        return UUID(str(org_id).strip())
 
-        Args:
-            name: Organization name
-
-        Returns:
-            Generated organization ID
-        """
-        # Convert to lowercase
-        org_id = name.lower()
-
-        # Remove special characters except hyphens and alphanumeric
-        org_id = re.sub(r"[^a-z0-9\s-]", "", org_id)
-
-        # Replace spaces with hyphens
-        org_id = re.sub(r"\s+", "-", org_id)
-
-        # Remove multiple consecutive hyphens
-        org_id = re.sub(r"-+", "-", org_id)
-
-        # Remove leading/trailing hyphens
-        org_id = org_id.strip("-")
-
-        return org_id
+    @staticmethod
+    def generate_organization_id(name: str | None = None) -> UUID:
+        """Stable unique org primary key (UUID). Name is display-only."""
+        return uuid4()
 
     async def validate_organization_id(self, org_id: str) -> bool:
         """
@@ -68,8 +49,12 @@ class OrganizationService:
         """
         try:
             self.logger.info("Validating organization ID: %s", org_id)
+            try:
+                org_uuid = self.coerce_org_id(org_id)
+            except (ValueError, TypeError, AttributeError):
+                return False
 
-            query = select(Organization).where(Organization.id == org_id)
+            query = select(Organization).where(Organization.id == org_uuid)
             result = await self.session.execute(query)
             organization = result.scalar_one_or_none()
 
@@ -94,8 +79,12 @@ class OrganizationService:
         """
         try:
             self.logger.info("Fetching organization by ID: %s", org_id)
+            try:
+                org_uuid = self.coerce_org_id(org_id)
+            except (ValueError, TypeError, AttributeError):
+                return None
 
-            query = select(Organization).where(Organization.id == org_id)
+            query = select(Organization).where(Organization.id == org_uuid)
             result = await self.session.execute(query)
             organization = result.scalar_one_or_none()
 
@@ -147,7 +136,9 @@ class OrganizationService:
                     )
 
             # Get all members
-            members_query = select(User).where(User.organization == org_id)
+            members_query = select(User).where(
+                User.organization == organization.id
+            )
             members_result = await self.session.execute(members_query)
             members_users = members_result.scalars().all()
 
@@ -232,19 +223,9 @@ class OrganizationService:
         try:
             self.logger.info("Creating organization: %s", org_data.name)
 
-            # Generate organization ID
-            org_id = self.generate_organization_id(org_data.name)
-
-            # Check if organization with this ID already exists
-            if await self.validate_organization_id(org_id):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"Organization with name '{org_data.name}' already exists",
-                )
-
             # Create organization object
             organization = Organization(
-                id=org_id,
+                id=self.generate_organization_id(),
                 name=org_data.name,
                 description=org_data.description,
                 org_type=org_data.org_type,
@@ -311,31 +292,16 @@ class OrganizationService:
             # Update fields
             update_data = org_data.dict(exclude_unset=True)
 
-            # If name is being updated, generate new ID
-            if "name" in update_data:
-                new_org_id = self.generate_organization_id(update_data["name"])
-                if new_org_id != org_id:
-                    # Check if new ID already exists
-                    if await self.validate_organization_id(new_org_id):
-                        raise HTTPException(
-                            status_code=status.HTTP_409_CONFLICT,
-                            detail=f"Organization with name '{update_data['name']}' already exists",
-                        )
-                    update_data["id"] = new_org_id
-
             # Update organization
             query = (
                 update(Organization)
-                .where(Organization.id == org_id)
+                .where(Organization.id == self.coerce_org_id(org_id))
                 .values(**update_data)
             )
             await self.session.execute(query)
             await self.session.commit()
 
-            # Fetch updated organization
-            updated_org = await self.get_organization_by_id(
-                update_data.get("id", org_id)
-            )
+            updated_org = await self.get_organization_by_id(org_id)
 
             self.logger.info("Organization updated successfully: %s", org_id)
 
@@ -395,7 +361,7 @@ class OrganizationService:
             # Set creator
             query = (
                 update(Organization)
-                .where(Organization.id == org_id)
+                .where(Organization.id == self.coerce_org_id(org_id))
                 .values(creator=user_id)
             )
             await self.session.execute(query)
@@ -514,7 +480,9 @@ class OrganizationService:
                 return False
 
             # Delete organization
-            query = delete(Organization).where(Organization.id == org_id)
+            query = delete(Organization).where(
+                Organization.id == self.coerce_org_id(org_id)
+            )
             await self.session.execute(query)
             await self.session.commit()
 
@@ -529,6 +497,71 @@ class OrganizationService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Error deleting organization",
             )
+
+    async def add_member(
+        self,
+        org_id: UUID | str,
+        actor: User,
+        email: str,
+        role: int = 0,
+        approve_now: bool = False,
+    ) -> User:
+        """Add an existing user to this organization by email."""
+        org_uuid = self.coerce_org_id(org_id)
+        organization = await self.get_organization_by_id(org_uuid)
+        if not organization:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Organization not found",
+            )
+        is_admin = actor.role == 1 and actor.organization == org_uuid
+        if not (actor.is_superuser or is_admin):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only organization admins can add members",
+            )
+        if role not in (0, 1, 2):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid role",
+            )
+        email_norm = email.strip().lower()
+        result = await self.session.execute(
+            select(User).where(func.lower(User.email) == email_norm)
+        )
+        target = result.scalar_one_or_none()
+        if target is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No account exists for that email. Ask them to sign up first.",
+            )
+        if target.organization is not None and target.organization != org_uuid:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="That user already belongs to another organization",
+            )
+        if target.organization == org_uuid and target.verified:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="That user is already a member of this organization",
+            )
+        target.organization = org_uuid
+        target.role = role
+        target.verified = bool(approve_now)
+        uc_result = await self.session.execute(
+            select(UserContribution).where(UserContribution.user_id == target.id)
+        )
+        if uc_result.scalar_one_or_none() is None:
+            self.session.add(
+                UserContribution(
+                    user_id=target.id,
+                    organization_id=org_uuid,
+                    contributions=0,
+                )
+            )
+        await self.session.commit()
+        await self.session.refresh(target)
+        return target
 
 
 # Dependency to get organization service

@@ -1,12 +1,18 @@
 import json
 import logging
 from typing import List, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from models.user import User
+from routers.dataset import get_current_active_user_optional
+from routers.upload import get_current_active_user
+from utils.security import optional_api_key
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 from schemas.organization import (
+    OrganizationAddMember,
     OrganizationCreate,
     OrganizationListItem,
     OrganizationListResponse,
@@ -20,7 +26,7 @@ from services.user import UserService, get_user_service
 
 from core.config import settings
 
-ORGANIZATION_LIST_CACHE_KEY = "organization:list"
+ORGANIZATION_LIST_CACHE_KEY = "organization:list:v2"
 
 router = APIRouter()
 
@@ -71,7 +77,10 @@ class OrganizationController:
             )
 
     async def get_organization(
-        self, org_id: str, apikey: Optional[str] = None
+        self,
+        org_id: UUID,
+        apikey: Optional[str] = None,
+        current_user: Optional[User] = None,
     ) -> JSONResponse:
         """
         Get organization by ID with detailed information.
@@ -102,14 +111,19 @@ class OrganizationController:
             create_privilege = False
             edit_privilege = False
 
-            if apikey:
-                # Check if user is superuser for create privilege
+            if current_user is not None:
+                if current_user.is_superuser:
+                    create_privilege = True
+                is_admin = await self.user_service.check_if_admin_by_id(
+                    org_id, current_user.id
+                )
+                if is_admin:
+                    edit_privilege = True
+            elif apikey:
                 user_data = await self.user_service.get_user_by_apikey(apikey)
                 if user_data and user_data.get("is_superuser"):
                     create_privilege = True
                     self.logger.info("User has create privilege (superuser)")
-
-                # Check if user is admin for edit privilege
                 is_admin = await self.user_service.check_if_admin_by_key(org_id, apikey)
                 if is_admin:
                     edit_privilege = True
@@ -414,21 +428,45 @@ async def list_organizations(
 
 @router.get("/{org_id}")
 async def get_organization(
-    org_id: str,
-    apikey: Optional[str] = Query(
-        None, description="Optional API key for privilege checking"
-    ),
+    org_id: UUID,
+    apikey: Optional[str] = Depends(optional_api_key),
+    current_user: Optional[User] = Depends(get_current_active_user_optional),
     controller: OrganizationController = Depends(get_organization_controller),
 ):
     """
     Get organization by ID with detailed information.
     """
-    return await controller.get_organization(org_id, apikey)
+    return await controller.get_organization(org_id, apikey, current_user)
+
+
+@router.post("/{org_id}/members")
+async def add_organization_member(
+    org_id: UUID,
+    payload: OrganizationAddMember,
+    current_user: User = Depends(get_current_active_user),
+    org_service: OrganizationService = Depends(get_organization_service),
+):
+    member = await org_service.add_member(
+        org_id,
+        current_user,
+        payload.email,
+        role=payload.role,
+        approve_now=payload.approve_now,
+    )
+    return JSONResponse(
+        content={
+            "detail": "Member added",
+            "user_id": str(member.id),
+            "verified": member.verified,
+            "role": member.role,
+        },
+        status_code=status.HTTP_201_CREATED,
+    )
 
 
 @router.put("/{org_id}", response_model=OrganizationRead, include_in_schema=False)
 async def update_organization(
-    org_id: str,
+    org_id: UUID,
     org_data: OrganizationUpdate,
     controller: OrganizationController = Depends(get_organization_controller),
     redis: Redis = Depends(get_redis),
@@ -466,7 +504,7 @@ async def search_organizations(
 
 @router.delete("/{org_id}", include_in_schema=False)
 async def delete_organization(
-    org_id: str,
+    org_id: UUID,
     controller: OrganizationController = Depends(get_organization_controller),
     redis: Redis = Depends(get_redis),
 ):
@@ -486,7 +524,7 @@ async def delete_organization(
 
 @router.get("/validate/{org_id}", include_in_schema=False)
 async def validate_organization_id(
-    org_id: str,
+    org_id: UUID,
     controller: OrganizationController = Depends(get_organization_controller),
 ):
     """

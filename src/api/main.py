@@ -85,6 +85,12 @@ def create_app() -> FastAPI:
         expose_headers=["*"],
     )
 
+    @app.on_event("startup")
+    async def _ensure_typesense() -> None:
+        from services.typesense_index import ensure_collection
+
+        await ensure_collection()
+
     # Health route
     @app.get("/health")
     async def health() -> JSONResponse:

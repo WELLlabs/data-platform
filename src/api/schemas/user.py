@@ -3,38 +3,35 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi_users import schemas
-from pydantic import Field, validator
+from pydantic import BaseModel, Field, validator
 
 
 class UserRead(schemas.BaseUser[UUID]):
     full_name: str
-    student: bool
     designation: Optional[str] = None
-    organization: str
+    organization: Optional[UUID] = None
     role: int
     phone: Optional[str] = None
     created_at: datetime
     modified_at: Optional[datetime] = None
     verified: bool
-    apikey: str
     contributions: int
+    auth_provider: str = "password"
+    profile_complete: bool = True
 
 
 class UserCreate(schemas.BaseUserCreate):
     full_name: str = Field(
         ..., min_length=1, max_length=50, description="User's full name"
     )
-    student: bool = Field(default=False, description="Whether user is a student")
     designation: Optional[str] = Field(
         None, max_length=25, description="User's designation"
     )
-    organization: str = Field(
-        ..., min_length=1, max_length=50, description="User's organization"
-    )
+    organization: UUID = Field(..., description="Organization UUID")
     role: int = Field(default=0, ge=0, description="User's role level")
     phone: Optional[str] = Field(None, max_length=20, description="User's phone number")
 
-    @validator("full_name", "organization")
+    @validator("full_name")
     def validate_required_strings(cls, v):
         if not v or not v.strip():
             raise ValueError("Field cannot be empty or just whitespace")
@@ -68,14 +65,13 @@ class UserUpdate(schemas.BaseUserUpdate):
     """Schema for updating user data"""
 
     full_name: Optional[str] = Field(None, min_length=1, max_length=50)
-    student: Optional[bool] = None
     designation: Optional[str] = Field(None, max_length=25)
-    organization: Optional[str] = Field(None, min_length=1, max_length=50)
+    organization: Optional[UUID] = None
     role: Optional[int] = Field(None, ge=0)
     phone: Optional[str] = None
     verified: Optional[bool] = None
 
-    @validator("full_name", "organization")
+    @validator("full_name")
     def validate_required_strings(cls, v):
         if v is not None and not v.strip():
             raise ValueError("Field cannot be empty or just whitespace")
@@ -103,3 +99,40 @@ class UserUpdate(schemas.BaseUserUpdate):
                 raise ValueError("Phone number must be 20 characters or less")
             return v_str
         return None
+
+
+class CompleteProfileUpdate(BaseModel):
+    full_name: str = Field(..., min_length=1, max_length=50)
+    organization: UUID
+    designation: Optional[str] = Field(None, max_length=25)
+    phone: Optional[str] = Field(None, max_length=20)
+
+    @validator("full_name")
+    def validate_required_strings(cls, v):
+        if not v or not v.strip():
+            raise ValueError("Field cannot be empty or just whitespace")
+        return v.strip()
+
+    @validator("designation")
+    def validate_optional_strings(cls, v):
+        if v is not None and not v.strip():
+            return None
+        return v.strip() if v else None
+
+    @validator("phone")
+    def validate_phone(cls, v):
+        if v is not None:
+            v_str = str(v).strip() if not isinstance(v, str) else v.strip()
+            if not v_str:
+                return None
+            if not v_str.isdigit():
+                raise ValueError("Phone number must contain only digits")
+            if len(v_str) > 20:
+                raise ValueError("Phone number must be 20 characters or less")
+            return v_str
+        return None
+
+
+class DatasetOwnerCreate(BaseModel):
+    dataset_id: UUID
+    user_id: UUID

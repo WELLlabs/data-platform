@@ -9,9 +9,9 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
-import httpx
 from redis.asyncio import Redis
 from redis.exceptions import ResponseError
+from core.availability import clamp_availability_for_org, parse_availability
 from core.config import settings
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.encoders import jsonable_encoder
@@ -23,10 +23,14 @@ from models.user import User
 from models.user_contribution import UserContribution
 from routers.upload import get_current_active_user
 from schemas.dataset import EditDatasetRequest
+from schemas.user import DatasetOwnerCreate
+from utils.security import mask_apikey, optional_api_key
 from services.auth import AuthService, RedisStrategy, get_auth_service, get_redis, get_upload_jobs_redis
 from services.dataset import DatasetService, get_dataset_service
 from services.organization import OrganizationService, get_organization_service
+from services.upload import UploadService, get_upload_service
 from services.user import UserService, get_user_service
+from services.typesense_index import safe_delete_dataset_documents
 from sqlalchemy import delete, select, update
 from utils.security import sanitize_input
 
@@ -106,7 +110,7 @@ async def _compute_privileges(
 ) -> Dict[str, bool]:
     """
     Compute privileges for dataset_info response.
-    Returns dict with keys: edit, delete_dataset, delete_file, add_file, approval, transfer.
+    Returns dict with keys: edit, delete_dataset, delete_file, add_file, approval, manage_owners.
     """
     default_privileges = {
         "edit": False,
@@ -114,22 +118,21 @@ async def _compute_privileges(
         "delete_file": False,
         "add_file": False,
         "approval": False,
-        "transfer": False,
+        "manage_owners": False,
     }
     if current_user is None and not (apikey and apikey.strip()):
         return default_privileges
     user_id: Optional[UUID] = current_user.id if current_user else None
     apikey_val = apikey.strip() if apikey and apikey.strip() else None
-    # edit and add_file: creator only
-    is_creator = False
+    can_edit = False
     if user_id is not None:
-        is_creator = await user_service.check_if_dataset_creator_by_id(
-            user_id, dataset_id
-        )
+        can_edit = await dataset_service.can_edit_or_add_file(user_id, dataset_id)
     elif apikey_val:
-        is_creator = await user_service.check_if_dataset_creator_by_key(
-            apikey_val, dataset_id
-        )
+        user_data = await user_service.get_user_by_apikey(apikey_val)
+        if user_data:
+            can_edit = await dataset_service.can_edit_or_add_file(
+                user_data["id"], dataset_id
+            )
     has_perm = await dataset_service.check_dataset_permission(
         user_id, apikey_val, dataset_id
     )
@@ -157,15 +160,25 @@ async def _compute_privileges(
         is_org_admin = await user_service.check_if_admin_by_key(
             dataset_organization, apikey_val
         )
-    transfer = bool(is_approved and is_org_admin)
+    manage_owners = False
+    if user_id is not None:
+        manage_owners = can_edit or is_org_admin
+        if current_user and current_user.is_superuser:
+            manage_owners = True
+    elif apikey_val:
+        user_data = await user_service.get_user_by_apikey(apikey_val)
+        if user_data:
+            manage_owners = can_edit or is_org_admin or bool(
+                user_data.get("is_superuser")
+            )
 
     return {
-        "edit": is_creator,
-        "add_file": is_creator,
+        "edit": can_edit,
+        "add_file": can_edit,
         "delete_dataset": has_perm,
         "delete_file": has_perm and files_count > 1,
         "approval": has_approval,
-        "transfer": transfer,
+        "manage_owners": manage_owners,
     }
 
 
@@ -246,18 +259,20 @@ class DatasetController:
         redis: Redis,
         redis_jobs: Redis,
         user_service: UserService,
+        upload_service: UploadService,
     ):
         self.dataset_service = dataset_service
         self.redis = redis
         self.redis_jobs = redis_jobs
         self.user_service = user_service
+        self.upload_service = upload_service
         self.logger = logging.getLogger(__name__)
 
     async def create_dataset(
         self,
         title: str,
         description: Optional[str],
-        private: bool,
+        availability: int,
         tags: List[str],
         job_id: str,
         user: User,
@@ -311,9 +326,9 @@ class DatasetController:
             org = await self.dataset_service.get_organization_with_private_status(
                 user.organization
             )
-            dataset_private = private
-            if private and not org.private:
-                dataset_private = False
+            dataset_availability = clamp_availability_for_org(
+                parse_availability(availability), org.private
+            )
 
             dataset_id = uuid4()
             approved = False
@@ -337,7 +352,7 @@ class DatasetController:
                 "dataset_id": str(dataset_id),
                 "title": sanitized_title,
                 "description": sanitized_desc,
-                "private": dataset_private,
+                "availability": dataset_availability,
                 "tags": norm_tags,
                 "creator": str(user.id),
                 "organization": user.organization,
@@ -365,7 +380,7 @@ class DatasetController:
         dataset_id: UUID,
         dataset_title: str,
         dataset_description: Optional[str],
-        private: bool,
+        availability: int,
         tags: List[str],
     ) -> JSONResponse:
         """
@@ -378,7 +393,7 @@ class DatasetController:
                 dataset_id=dataset_id,
                 dataset_title=dataset_title,
                 dataset_description=dataset_description,
-                private=private,
+                availability=availability,
                 tags=tags or [],
             )
             if dataset is None:
@@ -394,7 +409,7 @@ class DatasetController:
                 "dataset_id": str(dataset.dataset_id),
                 "dataset_title": dataset.dataset_title,
                 "dataset_description": dataset.dataset_description,
-                "private": dataset.private,
+                "availability": dataset.availability,
                 "tags": [tag.tag_name for tag in dataset.tags],
                 "creator": str(dataset.creator),
                 "organization": dataset.organization,
@@ -426,18 +441,17 @@ class DatasetController:
                 detail="Error editing dataset",
             )
 
-    async def transfer_dataset(
+    async def add_dataset_owner(
         self,
         user: User,
         dataset_id: UUID,
-        new_creator_id: UUID,
+        target_user_id: UUID,
     ) -> JSONResponse:
-        """Transfer dataset ownership to another org member (admin only; service enforces rules)."""
         try:
-            payload = await self.dataset_service.transfer_dataset_creator(
-                admin_user=user,
+            payload = await self.dataset_service.add_owner(
+                actor=user,
                 dataset_id=dataset_id,
-                new_creator_id=new_creator_id,
+                target_user_id=target_user_id,
             )
             await _invalidate_dataset_cache(dataset_id, self.redis, self.logger)
             return JSONResponse(
@@ -448,13 +462,43 @@ class DatasetController:
             raise
         except Exception as e:
             self.logger.exception(
-                "Unexpected error transferring dataset dataset_id=%s: %s",
+                "Unexpected error adding owner dataset_id=%s: %s",
                 dataset_id,
                 e,
             )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error transferring dataset",
+                detail="Error adding dataset owner",
+            )
+
+    async def remove_dataset_owner(
+        self,
+        user: User,
+        dataset_id: UUID,
+        target_user_id: UUID,
+    ) -> JSONResponse:
+        try:
+            payload = await self.dataset_service.remove_owner(
+                actor=user,
+                dataset_id=dataset_id,
+                target_user_id=target_user_id,
+            )
+            await _invalidate_dataset_cache(dataset_id, self.redis, self.logger)
+            return JSONResponse(
+                content=jsonable_encoder(payload),
+                status_code=status.HTTP_200_OK,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.exception(
+                "Unexpected error removing owner dataset_id=%s: %s",
+                dataset_id,
+                e,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error removing dataset owner",
             )
 
     async def get_dataset_info(
@@ -515,7 +559,7 @@ class DatasetController:
                 else None,
                 "organization": dataset.organization,
                 "organization_name": organization_name,
-                "private": dataset.private,
+                "availability": dataset.availability,
                 "downloads": dataset_downloads,
                 "dataset_description": dataset.dataset_description,
                 "tags": [tag.tag_name for tag in dataset.tags],
@@ -524,6 +568,7 @@ class DatasetController:
                 if dataset.approved_by
                 else None,
                 "approver_name": approver_name,
+                "owners": await self.dataset_service.list_owners(dataset_id),
             }
 
             files_arr = [
@@ -541,7 +586,6 @@ class DatasetController:
                     "groundtruthed": f.groundtruthed,
                     "permissions": f.permissions,
                     "duration": f.duration,
-                    "value": f.value,
                     "temporal_from": f.temporal_from.isoformat()
                     if f.temporal_from
                     else None,
@@ -628,7 +672,7 @@ class DatasetController:
                     "creator": str(ds.creator),
                     "created_at": ds.created_at.isoformat() if ds.created_at else None,
                     "organization": ds.organization,
-                    "private": ds.private,
+                    "availability": ds.availability,
                     "downloads": download_totals.get(ds.dataset_id, 0),
                     "dataset_description": ds.dataset_description,
                     "tags": [tag.tag_name for tag in ds.tags],
@@ -699,7 +743,7 @@ class DatasetController:
                     "creator": str(ds.creator),
                     "created_at": ds.created_at.isoformat() if ds.created_at else None,
                     "organization": ds.organization,
-                    "private": ds.private,
+                    "availability": ds.availability,
                     "downloads": download_totals.get(ds.dataset_id, 0),
                     "dataset_description": ds.dataset_description,
                     "tags": [tag.tag_name for tag in ds.tags],
@@ -736,7 +780,12 @@ class DatasetController:
                 detail="Error fetching datasets",
             )
 
-    async def delete_dataset(self, dataset_id: UUID, apikey: str) -> JSONResponse:
+    async def delete_dataset(
+        self,
+        dataset_id: UUID,
+        user_id: Optional[UUID] = None,
+        apikey: Optional[str] = None,
+    ) -> JSONResponse:
         """
         Delete a dataset and all its associated files from S3 and the database.
 
@@ -763,19 +812,18 @@ class DatasetController:
             self.logger.info(
                 "Processing delete_dataset request for dataset_id: %s, apikey: %s",
                 dataset_id,
-                apikey,
+                mask_apikey(apikey),
             )
 
-            # 1. Check permission (apikey only for delete_dataset endpoint)
             has_permission = await self.dataset_service.check_dataset_permission(
-                None, apikey, dataset_id
+                user_id, apikey, dataset_id
             )
 
             if not has_permission:
                 self.logger.warning(
                     "Permission denied for dataset deletion: dataset_id=%s, apikey=%s",
                     dataset_id,
-                    apikey,
+                    mask_apikey(apikey),
                 )
                 return JSONResponse(
                     content={
@@ -799,12 +847,7 @@ class DatasetController:
 
             creator_id = dataset_record.creator
 
-            # 3. Get S3 settings
-            s3_handler_url = settings.S3_HANDLER_URL.rstrip("/")
-            s3_region = settings.S3_REGION
-            s3_bucket = settings.S3_BUCKET
-
-            # 4. Get all files for dataset
+            # 3. Get all files for dataset
             files_result = await self.dataset_service.session.execute(
                 select(File).where(File.dataset_id == dataset_id)
             )
@@ -818,50 +861,25 @@ class DatasetController:
             for file_record in files:
                 file_key = file_record.file_key
                 file_id = file_record.file_id
-                params = {
-                    "key": file_key,
-                    "s3_region": s3_region,
-                    "s3_bucket": s3_bucket,
-                }
 
                 try:
-                    # Delete file from S3
-                    async with httpx.AsyncClient(timeout=10.0) as client:
-                        response = await client.delete(
-                            f"{s3_handler_url}/delete",
-                            params=params,
-                        )
-
-                        if response.status_code != 200:
-                            self.logger.error(
-                                "S3 handler delete endpoint returned status %d: %s",
-                                response.status_code,
-                                response.text,
-                            )
-                            raise HTTPException(
-                                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                                detail=f"Failed to delete file {file_id} from S3",
-                            )
-
-                        data = response.json()
-                        deleted = data.get("deleted", False)
-
-                        if not deleted:
-                            self.logger.error(
-                                "File deletion failed in S3: file_id=%s, file_key=%s",
-                                file_id,
-                                file_key,
-                            )
-                            raise HTTPException(
-                                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                                detail=f"Failed to delete file {file_id} from S3",
-                            )
-
-                        self.logger.info(
-                            "File deleted from S3: file_id=%s, file_key=%s",
+                    deleted = await self.upload_service.delete_object(file_key)
+                    if not deleted:
+                        self.logger.error(
+                            "File deletion failed in S3: file_id=%s, file_key=%s",
                             file_id,
                             file_key,
                         )
+                        raise HTTPException(
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail=f"Failed to delete file {file_id} from S3",
+                        )
+
+                    self.logger.info(
+                        "File deleted from S3: file_id=%s, file_key=%s",
+                        file_id,
+                        file_key,
+                    )
 
                     # Delete file record from database immediately after S3 deletion
                     await self.dataset_service.session.execute(
@@ -873,28 +891,16 @@ class DatasetController:
                         "File record deleted from database: file_id=%s", file_id
                     )
 
-                except httpx.TimeoutException:
+                except HTTPException:
                     await self.dataset_service.session.rollback()
-                    self.logger.exception("Timeout while deleting file from S3")
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail=f"Timeout while deleting file {file_id} from S3",
-                    )
-                except httpx.RequestError as e:
-                    await self.dataset_service.session.rollback()
-                    self.logger.exception(
-                        "Request error while deleting file from S3: %s", e
-                    )
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail=f"Error connecting to S3 handler for file {file_id}",
-                    )
+                    raise
 
             # 6. Delete dataset record from database (after all files are deleted)
             await self.dataset_service.session.execute(
                 delete(Dataset).where(Dataset.dataset_id == dataset_id)
             )
             await self.dataset_service.session.commit()
+            await safe_delete_dataset_documents(dataset_id)
 
             # 7. Verify deletion
             dataset_result = await self.dataset_service.session.execute(
@@ -968,17 +974,14 @@ async def get_dataset_controller(
     redis: Redis = Depends(get_redis),
     redis_jobs: Redis = Depends(get_upload_jobs_redis),
     user_service: UserService = Depends(get_user_service),
+    upload_service: UploadService = Depends(get_upload_service),
 ) -> DatasetController:
     """
     Dependency function to get DatasetController instance.
-
-    Args:
-        dataset_service: Dataset service dependency
-
-    Returns:
-        DatasetController instance
     """
-    return DatasetController(dataset_service, redis, redis_jobs, user_service)
+    return DatasetController(
+        dataset_service, redis, redis_jobs, user_service, upload_service
+    )
 
 
 def process_tags(tags: str | None) -> str | None:
@@ -1021,7 +1024,9 @@ def process_tags(tags: str | None) -> str | None:
 async def create_dataset(
     title: str = Form(..., description="Dataset title"),
     description: str | None = Form(None, description="Dataset description"),
-    private: bool = Form(False, description="Whether dataset is private"),
+    availability: int = Form(
+        0, description="0 public, 1 private, 2 organization, 3 admins, 4 owners"
+    ),
     tags: List[str] = Form(..., description="Tags for the dataset"),
     job_id: str = Form(..., description="Upload job id"),
     user: User = Depends(get_current_active_user),
@@ -1033,7 +1038,7 @@ async def create_dataset(
     return await controller.create_dataset(
         title=title,
         description=description,
-        private=private,
+        availability=availability,
         tags=tags,
         job_id=job_id,
         user=user,
@@ -1050,7 +1055,7 @@ async def edit_dataset(
     """
     Update dataset metadata and tags. Only the dataset creator may edit.
 
-    Request body: dataset_id, dataset_title, dataset_description, private, tags.
+    Request body: dataset_id, dataset_title, dataset_description, availability, tags.
     Requires authentication (valid session cookie). Verifies the dataset exists
     (404 if not), then verifies the user is the dataset creator (403 if not).
     """
@@ -1062,24 +1067,24 @@ async def edit_dataset(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Dataset not found",
             )
-        is_creator = await user_service.check_if_dataset_creator_by_id(
+        can_edit = await controller.dataset_service.can_edit_or_add_file(
             user.id, dataset_id
         )
-        if not is_creator:
+        if not can_edit:
             logger.warning(
-                "Edit dataset denied: user %s is not creator of dataset %s",
+                "Edit dataset denied: user %s is not creator or owner of dataset %s",
                 user.id,
                 dataset_id,
             )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only creator of dataset can edit.",
+                detail="Only a dataset owner can edit.",
             )
         return await controller.edit_dataset(
             dataset_id=dataset_id,
             dataset_title=body.dataset_title,
             dataset_description=body.dataset_description,
-            private=body.private,
+            availability=body.availability,
             tags=body.tags,
         )
     except HTTPException:
@@ -1092,30 +1097,48 @@ async def edit_dataset(
         )
 
 
-@router.post("/transfer_dataset")
-async def transfer_dataset(
-    dataset_id: UUID = Query(..., description="Dataset ID to transfer"),
-    user_id: UUID = Query(..., description="User ID of the new creator"),
+@router.post("/dataset_owners")
+async def add_dataset_owner(
+    body: DatasetOwnerCreate,
     user: User = Depends(get_current_active_user),
     controller: DatasetController = Depends(get_dataset_controller),
 ):
-    """
-    Transfer dataset creator to another user in the same organization.
-    Requires session cookie; caller must be org admin (role 1) for the dataset's org.
-    """
     try:
-        return await controller.transfer_dataset(
+        return await controller.add_dataset_owner(
             user=user,
-            dataset_id=dataset_id,
-            new_creator_id=user_id,
+            dataset_id=body.dataset_id,
+            target_user_id=body.user_id,
         )
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Unexpected error in /transfer_dataset: %s", e)
+        logger.exception("Unexpected error in POST /dataset_owners: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error transferring dataset",
+            detail="Error adding dataset owner",
+        )
+
+
+@router.delete("/dataset_owners")
+async def remove_dataset_owner(
+    dataset_id: UUID = Query(..., description="Dataset ID"),
+    user_id: UUID = Query(..., description="Owner user ID to remove"),
+    user: User = Depends(get_current_active_user),
+    controller: DatasetController = Depends(get_dataset_controller),
+):
+    try:
+        return await controller.remove_dataset_owner(
+            user=user,
+            dataset_id=dataset_id,
+            target_user_id=user_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unexpected error in DELETE /dataset_owners: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error removing dataset owner",
         )
 
 
@@ -1123,7 +1146,7 @@ async def transfer_dataset(
 async def dataset_info(
     request: Request,
     dataset_id: str = Query(..., description="Dataset ID (UUID)"),
-    apikey: Optional[str] = Query(None, description="Optional API key for access and privileges"),
+    apikey: Optional[str] = Depends(optional_api_key),
     controller: DatasetController = Depends(get_dataset_controller),
     current_user: Optional[User] = Depends(get_current_active_user_optional),
     redis: Redis = Depends(get_redis),
@@ -1152,53 +1175,47 @@ async def dataset_info(
                 detail="Invalid dataset_id UUID format",
             )
 
-        # Early lookup: private, organization, and approval state for access checks
         result = await controller.dataset_service.session.execute(
-            select(Dataset.private, Dataset.organization, Dataset.approved).where(
-                Dataset.dataset_id == ds_uuid
-            )
+            select(Dataset).where(Dataset.dataset_id == ds_uuid)
         )
-        row = result.one_or_none()
-        if row is None:
+        dataset_row = result.scalar_one_or_none()
+        if dataset_row is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Dataset not found",
             )
-        is_private, dataset_organization, is_approved = row[0], row[1], row[2]
+        dataset_organization = dataset_row.organization
+        is_approved = dataset_row.approved
 
-        if is_private:
-            user_organization: Optional[str] = None
+        viewer: Optional[User] = current_user
+        if viewer is None and sanitized_apikey:
+            viewer = await user_service.get_user_model_by_apikey(sanitized_apikey)
+
+        if not await controller.dataset_service.viewer_can_see(dataset_row, viewer):
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={
+                    "detail": "Dataset access permission is not granted."
+                },
+            )
+
+        if dataset_row.availability != 0 and not (
+            viewer is not None and viewer.is_superuser
+        ):
             is_requesting_user_verified = False
-            if current_user is not None:
-                user_organization = current_user.organization
-                is_requesting_user_verified = (
-                    await user_service.check_if_user_verified_by_id(current_user.id)
-                )
-            elif sanitized_apikey:
-                user_data = await user_service.get_user_by_apikey(sanitized_apikey)
-                if user_data is not None:
-                    user_organization = user_data.get("organization")
-                    is_requesting_user_verified = (
-                        await user_service.check_if_user_verified_by_apikey(
-                            sanitized_apikey
-                        )
-                    )
-            if user_organization is None or user_organization != dataset_organization:
-                return JSONResponse(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    content={
-                        "detail": "Private dataset, Access permission is not granted."
-                    },
+            if viewer is not None:
+                is_requesting_user_verified = bool(
+                    viewer.verified and viewer.is_verified
                 )
             if not is_requesting_user_verified:
                 logger.info(
-                    "Private dataset access denied due to unverified requester: dataset_id=%s",
+                    "Restricted dataset access denied due to unverified requester: dataset_id=%s",
                     ds_uuid,
                 )
                 return JSONResponse(
                     status_code=status.HTTP_403_FORBIDDEN,
                     content={
-                        "detail": "private dataset. Please check if email address verified or organization approved."
+                        "detail": "Restricted dataset. Please check if email address verified or organization approved."
                     },
                 )
 
@@ -1206,6 +1223,9 @@ async def dataset_info(
             has_unapproved_dataset_access = False
             if current_user is not None:
                 is_creator = await user_service.check_if_dataset_creator_by_id(
+                    current_user.id, ds_uuid
+                )
+                is_owner = await controller.dataset_service.is_dataset_owner(
                     current_user.id, ds_uuid
                 )
                 belongs_to_dataset_org = (
@@ -1216,7 +1236,7 @@ async def dataset_info(
                 has_high_role = await user_service.check_if_high_role_by_id(
                     current_user.id
                 )
-                has_unapproved_dataset_access = is_creator or (
+                has_unapproved_dataset_access = is_creator or is_owner or (
                     belongs_to_dataset_org and has_high_role
                 )
             elif sanitized_apikey:
@@ -1309,7 +1329,7 @@ async def user_datasets(
     user_id: str = Query(..., description="User ID (UUID)"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of results"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
-    apikey: Optional[str] = Query(None, description="Optional API key for privacy filtering"),
+    apikey: Optional[str] = Depends(optional_api_key),
     current_user: Optional[User] = Depends(get_current_active_user_optional),
     controller: DatasetController = Depends(get_dataset_controller),
     user_service: UserService = Depends(get_user_service),
@@ -1380,9 +1400,7 @@ async def user_datasets(
 
 @router.get("/datasets")
 async def datasets(
-    apikey: Optional[str] = Query(
-        None, description="Optional API key for organization filtering"
-    ),
+    apikey: Optional[str] = Depends(optional_api_key),
     limit: int = Query(10, ge=1, le=50, description="Maximum number of results"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
     current_user: Optional[User] = Depends(get_current_active_user_optional),
@@ -1436,7 +1454,8 @@ async def datasets(
 @router.delete("/delete_dataset")
 async def delete_dataset(
     dataset_id: UUID = Query(..., description="Dataset ID (UUID)"),
-    apikey: str = Query(..., description="API key for authentication"),
+    apikey: Optional[str] = Depends(optional_api_key),
+    user: Optional[User] = Depends(get_current_active_user_optional),
     controller: DatasetController = Depends(get_dataset_controller),
 ):
     """
@@ -1462,4 +1481,11 @@ async def delete_dataset(
             - 403: User does not have permission
             - 500: Internal server error (for S3 deletion failures or verification failures)
     """
-    return await controller.delete_dataset(dataset_id, apikey)
+    if user is None and not apikey:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+        )
+    return await controller.delete_dataset(
+        dataset_id, user_id=user.id if user else None, apikey=apikey
+    )

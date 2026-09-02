@@ -21,6 +21,17 @@ sys.path.append(os.path.join(BASE_DIR, "src"))
 
 # Import models (Base metadata)
 from api.models.base import Base
+from api.models import dataset  # noqa: F401
+from api.models import dataset_owner  # noqa: F401
+from api.models import file  # noqa: F401
+from api.models import file_download  # noqa: F401
+from api.models import global_search_index  # noqa: F401
+from api.models import orphaned_s3_object  # noqa: F401
+from api.models import organization  # noqa: F401
+from api.models import tag  # noqa: F401
+from api.models import tag_dataset  # noqa: F401
+from api.models import user  # noqa: F401
+from api.models import user_contribution  # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

@@ -2,7 +2,7 @@
 
 from uuid import UUID, uuid4
 
-from sqlalchemy import ForeignKey, Integer, String
+from sqlalchemy import ForeignKey, Integer
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -26,8 +26,8 @@ class UserContribution(Base):
         nullable=False,
         unique=True,
     )
-    organization_id: Mapped[str] = mapped_column(
-        String(length=50),
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )

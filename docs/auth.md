@@ -37,10 +37,10 @@ The app reads values from a `.env` file (see `Settings.Config.env_file`).
 Model: `src/api/models/user.py` — class `User` extends `SQLAlchemyBaseUserTableUUID` and adds fields:
 
 - `full_name` (string, max 50, required)
-- `student` (bool, default False)
 - `designation` (optional string, max 25)
 - `team` (optional string, max 25)
-- `organization` (string, max 50, required)
+- `organization` (optional string, max 50; required after complete-profile)
+- `auth_provider` (`password` or `google`)
 - `role` (int, default 0)
 - `bio` (optional text)
 - `phone` (optional int)
@@ -52,7 +52,7 @@ Model: `src/api/models/user.py` — class `User` extends `SQLAlchemyBaseUserTabl
 Schemas: `src/api/schemas/user.py`
 
 - `UserCreate` — extends `fastapi_users.schemas.BaseUserCreate` and adds validation rules (min/max lengths, positive phone). Validators strip whitespace and reject empty required fields.
-- `UserRead` — extends `fastapi_users.schemas.BaseUser` and exposes fields including `apikey` and `created_at`.
+- `UserRead` — extends `fastapi_users.schemas.BaseUser` and exposes profile fields including `created_at`, `auth_provider`, and `profile_complete`. The per-user API key is **not** included; reveal it via session-only `GET /auth/apikey`.
 - `UserUpdate` — partial fields for updates with similar validators.
 
 Validation ensures required strings are non-empty after trimming and optional strings that are empty after trimming become `None`.
@@ -176,7 +176,6 @@ Sign up (JSON body, POST /auth/signup):
   "email": "alice@example.com",
   "password": "s3cretPassword!",
   "full_name": "Alice Example",
-  "student": false,
   "designation": "Researcher",
   "team": "Data",
   "organization": "WELL Labs",
@@ -190,7 +189,11 @@ Sign in (form data, POST /auth/signin):
 - email: alice@example.com
 - password: s3cretPassword!
 
-Successful responses return the fields in `UserRead`, for example: `id`, `email`, `full_name`, `apikey`, `created_at`, plus flags like `is_active`, `is_verified`.
+Successful responses return the fields in `UserRead`, for example: `id`, `email`, `full_name`, `created_at`, `profile_complete`, plus flags like `is_active`, `is_verified`. Browser clients authenticate with the session cookie only. Scripts may send `X-API-Key`.
+
+## Google sign-in
+
+When `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set, `GET /auth/google` starts OAuth and `GET /auth/google/callback` creates or logs in the user. The first user on the instance becomes `is_superuser`. Google users have `auth_provider=google`, `is_verified=True`, and a nullable organization until they finish `GET`/`PUT /auth/complete-profile`. `ALLOWED_EMAIL_DOMAIN` (optional) applies to password signup and Google.
 
 ## Where to look next in the code
 

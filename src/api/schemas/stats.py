@@ -12,7 +12,7 @@ class TopContributorItem(BaseModel):
 
 
 class TopOrganizationItem(BaseModel):
-    organization_id: str
+    organization_id: UUID
     organization_name: str
     contributions: int = Field(ge=0)
 

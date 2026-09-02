@@ -15,9 +15,9 @@ from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 from models.user import User
 from models.user_contribution import UserContribution
 from redis.asyncio import Redis
-from schemas.user import UserCreate, UserRead
+from schemas.user import CompleteProfileUpdate, UserCreate, UserRead
 from services.organization import OrganizationService, get_organization_service
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from tasks.email import (
@@ -25,7 +25,13 @@ from tasks.email import (
     send_user_approval_request,
     send_verify_email,
 )
-from utils.security import generate_session_token, generate_unique_api_key, sanitize_input
+from utils.security import (
+    email_matches_allowed_domain,
+    generate_session_token,
+    generate_unique_api_key,
+    is_profile_complete,
+    sanitize_input,
+)
 
 
 class RedisStrategy:
@@ -85,17 +91,7 @@ class AuthService:
         valid = self.password_helper.verify_and_update(password, user.hashed_password)
         if not valid[0]:
             return None, None
-        # Issue a random session token and store in Redis (key=token, value=user_id)
-        token = f"session:{generate_session_token()}"
-        strategy = RedisStrategy(self.redis, settings.COOKIE_MAX_AGE_SECONDS)
-        await strategy.write_token(token, str(user.id))
-        cookie = {
-            "key": settings.COOKIE_NAME,
-            "value": token,
-            "max_age": settings.COOKIE_MAX_AGE_SECONDS,
-            "httponly": True,
-            "samesite": "lax",
-        }
+        cookie = await self.issue_session_cookie(user)
         return user, cookie
 
     async def user_to_user_read(self, user: User) -> UserRead:
@@ -121,16 +117,32 @@ class AuthService:
             is_superuser=user.is_superuser,
             is_verified=user.is_verified,
             full_name=user.full_name,
-            student=user.student,
             designation=user.designation,
             organization=user.organization,
             role=user.role,
             phone=user.phone,
             created_at=user.created_at,
             verified=user.verified,
-            apikey=user.apikey,
             contributions=contributions,
+            auth_provider=getattr(user, "auth_provider", None) or "password",
+            profile_complete=is_profile_complete(user),
         )
+
+    async def issue_session_cookie(self, user: User) -> dict[str, Any]:
+        token = f"session:{generate_session_token()}"
+        strategy = RedisStrategy(self.redis, settings.COOKIE_MAX_AGE_SECONDS)
+        await strategy.write_token(token, str(user.id))
+        return {
+            "key": settings.COOKIE_NAME,
+            "value": token,
+            "max_age": settings.COOKIE_MAX_AGE_SECONDS,
+            "httponly": True,
+            "samesite": "lax",
+        }
+
+    async def count_users(self) -> int:
+        result = await self.user_db.session.execute(select(func.count()).select_from(User))
+        return int(result.scalar_one() or 0)
 
     async def sign_up(self, user_data: UserCreate) -> User:
         """
@@ -148,13 +160,19 @@ class AuthService:
         try:
             # Log incoming request (exclude sensitive fields)
             self.logger.info(
-                "Sign up attempt: email=%s, full_name=%s, student=%s, org=%s, role=%s",
+                "Sign up attempt: email=%s, full_name=%s, org=%s, role=%s",
                 user_data.email,
                 user_data.full_name,
-                user_data.student,
                 user_data.organization,
                 user_data.role,
             )
+            if not email_matches_allowed_domain(
+                user_data.email, settings.ALLOWED_EMAIL_DOMAIN
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email domain is not allowed",
+                )
             # Sanitize input data
             sanitized_data = {
                 "full_name": sanitize_input(user_data.full_name),
@@ -189,18 +207,19 @@ class AuthService:
             api_key = await generate_unique_api_key(self.user_db.session)
 
             # Build create dict for adapter (expects a mapping)
+            is_first_user = await self.count_users() == 0
             create_dict = {
                 "email": user_data.email,
                 "hashed_password": hashed_password,
                 "full_name": sanitized_data["full_name"],
-                "student": user_data.student,
                 "designation": sanitized_data["designation"],
                 "organization": sanitized_data["organization"],
                 "role": user_data.role,
                 "phone": str(user_data.phone) if user_data.phone is not None else None,
                 "apikey": api_key,
+                "auth_provider": "password",
                 "is_active": True,
-                "is_superuser": False,
+                "is_superuser": is_first_user,
                 "is_verified": False,
                 "verified": False,
             }
@@ -364,6 +383,119 @@ class AuthService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Internal server error during user creation",
             )
+
+    async def get_or_create_google_user(
+        self, email: str, full_name: Optional[str]
+    ) -> User:
+        if not email_matches_allowed_domain(email, settings.ALLOWED_EMAIL_DOMAIN):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email domain is not allowed",
+            )
+        existing = await self.user_db.get_by_email(email)
+        if existing:
+            return existing
+        import secrets as _secrets
+
+        is_first_user = await self.count_users() == 0
+        api_key = await generate_unique_api_key(self.user_db.session)
+        name = sanitize_input(full_name) if full_name else None
+        if not name:
+            name = email.split("@")[0][:50]
+        hashed_password = self.password_helper.hash(_secrets.token_urlsafe(32))
+        create_dict = {
+            "email": email,
+            "hashed_password": hashed_password,
+            "full_name": name[:50],
+            "designation": None,
+            "organization": None,
+            "role": 0,
+            "phone": None,
+            "apikey": api_key,
+            "auth_provider": "google",
+            "is_active": True,
+            "is_superuser": is_first_user,
+            "is_verified": True,
+            "verified": False,
+        }
+        user = await self.user_db.create(create_dict)
+        self.logger.info("Google user created: user_id=%s email=%s", user.id, user.email)
+        return user
+
+    async def complete_profile(
+        self, user: User, payload: CompleteProfileUpdate
+    ) -> User:
+        sanitized_name = sanitize_input(payload.full_name)
+        sanitized_org = payload.organization
+        if not sanitized_name:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Full name is required and cannot be empty",
+            )
+        if not await self.org_service.validate_organization_id(sanitized_org):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Organisation ID is invalid",
+            )
+        designation = sanitize_input(payload.designation)
+        phone = str(payload.phone) if payload.phone is not None else None
+        user = await self.user_db.update(
+            user,
+            {
+                "full_name": sanitized_name,
+                "organization": sanitized_org,
+                "designation": designation,
+                "phone": phone,
+            },
+        )
+        try:
+            uc_result = await self.user_db.session.execute(
+                select(UserContribution).where(UserContribution.user_id == user.id)
+            )
+            if uc_result.scalar_one_or_none() is None:
+                self.user_db.session.add(
+                    UserContribution(
+                        user_id=user.id,
+                        organization_id=sanitized_org,
+                        contributions=0,
+                    )
+                )
+                await self.user_db.session.flush()
+                await self.user_db.session.commit()
+        except IntegrityError:
+            await self.user_db.session.rollback()
+        try:
+            creator_set = await self.org_service.set_organization_creator(
+                sanitized_org, user.id
+            )
+            if creator_set:
+                user = await self.user_db.update(
+                    user, {"role": 1, "verified": True}
+                )
+            elif not user.verified:
+                try:
+                    admin_email_result = await self.user_db.session.execute(
+                        select(User.email).where(
+                            User.organization == sanitized_org,
+                            User.role == 1,
+                            User.id != user.id,
+                        )
+                    )
+                    for admin_email in admin_email_result.scalars().all():
+                        send_user_approval_request.apply_async(
+                            args=[admin_email, user.full_name],
+                            queue="email",
+                        )
+                except Exception as notify_error:
+                    self.logger.warning(
+                        "Failed to notify org admins after profile complete: %s",
+                        notify_error,
+                    )
+        except Exception as e:
+            self.logger.warning(
+                "Failed to set creator for organization %s: %s", sanitized_org, e
+            )
+        return user
 
     async def forgot_password(self, email: str) -> None:
         # Placeholder: in real app, send email with token

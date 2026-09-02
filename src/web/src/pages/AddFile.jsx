@@ -2,11 +2,11 @@ import React, { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import {
-  upload_url_endpoint,
   add_files_url_endpoint,
   create_upload_job_endpoint,
   complete_upload_job_endpoint,
 } from "../api/endpoints";
+import { requestAndUploadFile } from "../api/s3Upload";
 import HelpTooltip from "../components/HelpTooltip";
 
 function AddFile() {
@@ -31,7 +31,6 @@ function AddFile() {
   const [groundtruthed, setGroundtruthed] = useState(false);
   const [permissions, setPermissions] = useState("CC0: Public Domain");
   const [duration, setDuration] = useState(0);
-  const [value, setValue] = useState("low");
   const [temporalFrom, setTemporalFrom] = useState("");
   const [temporalTo, setTemporalTo] = useState("");
   const [geography, setGeography] = useState("");
@@ -165,49 +164,11 @@ function AddFile() {
         throw new Error("Job ID missing in create upload job response.");
       }
 
-      // 2) Get upload URL for selected filename
-      const filenameOnly = file.name; // do not include path
-      const uploadResp = await fetch(
-        `${upload_url_endpoint}?job_id=${encodeURIComponent(jobId)}&filename=${encodeURIComponent(filenameOnly)}`,
-        { credentials: "include" }
-      );
-
-      if (!uploadResp.ok) {
-        const txt = await uploadResp.text();
-        throw new Error(`Failed to get upload URL: ${txt}`);
-      }
-
-      const uploadData = await uploadResp.json();
-      const uploadUrl = uploadData.presigned_upload_url;
-      const fileId = uploadData.file_id;
-      if (!uploadUrl) {
-        throw new Error("Upload URL missing in response.");
-      }
-      if (!fileId) {
-        throw new Error("File ID missing in upload URL response.");
-      }
-
-      // Use the content_type from the response (matches what was used to sign the presigned URL)
-      // Fallback to file.type for backward compatibility
-      const contentType = uploadData.content_type || file.type || "application/octet-stream";
-
-      // 3) Upload the file to S3 using the presigned URL (PUT)
-      await new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.upload.onprogress = (evt) => {
-          if (evt.lengthComputable) {
-            const pct = Math.round((evt.loaded / evt.total) * 100);
-            setProgress(pct);
-          }
-        };
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) resolve();
-          else reject(new Error(`Upload failed with status ${xhr.status}`));
-        };
-        xhr.onerror = () => reject(new Error("Upload network error"));
-        xhr.open("PUT", uploadUrl);
-        xhr.setRequestHeader("Content-Type", contentType);
-        xhr.send(file);
+      // 2) Presign and upload the selected file to S3
+      const { fileId } = await requestAndUploadFile({
+        jobId,
+        file,
+        onProgress: setProgress,
       });
 
       // 4) Call add_file endpoint with FormData
@@ -224,7 +185,6 @@ function AddFile() {
       if (groundtruthed) form.append("groundtruthed", "true");
       form.append("permissions", constrained(permissions, 1000));
       form.append("duration", duration.toString());
-      if (value) form.append("value", value);
       if (temporalFrom) form.append("temporal_from", temporalFrom);
       if (temporalTo) form.append("temporal_to", temporalTo);
       if (geography) form.append("geography", constrained(geography, 2000));
@@ -533,28 +493,6 @@ function AddFile() {
                 min="0"
                 disabled={submitting}
               />
-            </div>
-
-            <div className="field">
-              <label>
-                Value
-                <HelpTooltip
-                  text={`What is the value of the data?
-High: data has high acquisition cost or sensitive information
-Medium: data is specific to a particular organisation and hard to search online
-Low: Openly downloadable in public domain`}
-                  id="tooltip-value-addfile"
-                />
-              </label>
-              <select
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                disabled={submitting}
-              >
-                <option value="low">low</option>
-                <option value="medium">medium</option>
-                <option value="high">high</option>
-              </select>
             </div>
 
             <div className="field-row">

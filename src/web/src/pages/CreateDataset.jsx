@@ -2,14 +2,18 @@ import React, { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import {
-    upload_url_endpoint,
     create_upload_job_endpoint,
     complete_upload_job_endpoint,
     create_dataset_endpoint,
     add_files_url_endpoint,
     organization_by_id_endpoint,
 } from "../api/endpoints";
+import { requestAndUploadFile } from "../api/s3Upload";
 import HelpTooltip from "../components/HelpTooltip";
+import {
+    AVAILABILITY_OPTIONS,
+    AVAILABILITY_PUBLIC,
+} from "../constants/availability";
 
 function CreateDataset() {
     const navigate = useNavigate();
@@ -31,10 +35,9 @@ function CreateDataset() {
     const [source, setSource] = useState("");
     const [citeAs, setCiteAs] = useState("");
     const [groundtruthed, setGroundtruthed] = useState(false);
-    const [isPrivate, setIsPrivate] = useState(false);
+    const [availability, setAvailability] = useState(AVAILABILITY_PUBLIC);
     const [permissions, setPermissions] = useState("CC0: Public Domain");
     const [duration, setDuration] = useState(0);
-    const [value, setValue] = useState("low");
 
     const [file, setFile] = useState(null);
     const [fileTitle, setFileTitle] = useState("");
@@ -208,8 +211,8 @@ function CreateDataset() {
                 constrained(datasetDescription, 2000)
             );
             datasetForm.append(
-                "private",
-                orgPrivate && isPrivate ? "true" : "false"
+                "availability",
+                String(orgPrivate ? availability : AVAILABILITY_PUBLIC)
             );
             datasetForm.append("job_id", jobId);
 
@@ -241,59 +244,11 @@ function CreateDataset() {
                 throw new Error("Dataset ID not found in response.");
             }
 
-            // 3) Get upload URL for selected filename
-            const filenameOnly = file.name; // do not include path
-            const uploadResp = await fetch(
-                `${upload_url_endpoint}?job_id=${encodeURIComponent(
-                    datasetJobId
-                )}&filename=${encodeURIComponent(filenameOnly)}`,
-                { credentials: "include" }
-            );
-            if (!uploadResp.ok) {
-                const txt = await uploadResp.text();
-                throw new Error(`Failed to get upload URL: ${txt}`);
-            }
-            const uploadData = await uploadResp.json();
-            const uploadUrl =
-                uploadData.presigned_upload_url ||
-                uploadData.upload_url ||
-                uploadData.url ||
-                uploadData.uploadUrl;
-            const fileId = uploadData.file_id;
-            if (!uploadUrl) {
-                throw new Error("Upload URL missing in response.");
-            }
-            if (!fileId) {
-                throw new Error("File ID missing in response.");
-            }
-
-            // Use the content_type from the response (matches what was used to sign the presigned URL)
-            // Fallback to file.type for backward compatibility
-            const contentType =
-                uploadData.content_type ||
-                file.type ||
-                "application/octet-stream";
-
-            // 2) Upload the file to S3 using the presigned URL (PUT)
-            await new Promise((resolve, reject) => {
-                const xhr = new XMLHttpRequest();
-                xhr.upload.onprogress = (evt) => {
-                    if (evt.lengthComputable) {
-                        const pct = Math.round((evt.loaded / evt.total) * 100);
-                        setProgress(pct);
-                    }
-                };
-                xhr.onload = () => {
-                    if (xhr.status >= 200 && xhr.status < 300) resolve();
-                    else
-                        reject(
-                            new Error(`Upload failed with status ${xhr.status}`)
-                        );
-                };
-                xhr.onerror = () => reject(new Error("Upload network error"));
-                xhr.open("PUT", uploadUrl);
-                xhr.setRequestHeader("Content-Type", contentType);
-                xhr.send(file);
+            // 3) Presign and upload the selected file to S3
+            const { fileId } = await requestAndUploadFile({
+                jobId: datasetJobId,
+                file,
+                onProgress: setProgress,
             });
 
             // 4) Stage file metadata using job_id + file_id
@@ -313,7 +268,6 @@ function CreateDataset() {
             addFileForm.append("cite_as", constrained(citeAs, 1500));
             addFileForm.append("permissions", constrained(permissions, 1000));
             addFileForm.append("duration", duration.toString());
-            if (value) addFileForm.append("value", value);
             if (temporalFrom) addFileForm.append("temporal_from", temporalFrom);
             if (temporalTo) addFileForm.append("temporal_to", temporalTo);
             if (geography) {
@@ -411,7 +365,9 @@ function CreateDataset() {
                     </div>
                 )}
 
-                <form onSubmit={onSubmit}>
+                <form onSubmit={onSubmit} className="form-layout">
+                    <div className="form-panel">
+                    <h3 className="display">Dataset</h3>
                     <div className="field">
                         <label>
                             Dataset Title{" "}
@@ -499,29 +455,40 @@ function CreateDataset() {
                         )}
                     </div>
 
-                    {orgPrivate && (
-                        <div className="field">
-                            <label>
-                                Availability
-                                <HelpTooltip
-                                    text="Is the dataset public or available to only your organisation?"
-                                    id="tooltip-private"
-                                />
-                            </label>
-                            <select
-                                value={isPrivate ? "private" : "public"}
-                                onChange={(e) =>
-                                    setIsPrivate(e.target.value === "private")
-                                }
-                            >
-                                <option value="public">Public</option>
-                                <option value="private">Private</option>
-                            </select>
-                        </div>
-                    )}
-
-                    <div className="divider" style={{ margin: "28px 0 20px" }} />
-                    <div className="sec-label" style={{ marginBottom: 16 }}>File upload</div>
+                    <div className="field">
+                        <label>
+                            Availability
+                            <HelpTooltip
+                                text="Who can view this dataset: Public, Private (creator only), Organization, Admins, or Owners. Restricted levels apply only when your organization is private."
+                                id="tooltip-private"
+                            />
+                        </label>
+                        <select
+                            value={availability}
+                            onChange={(e) =>
+                                setAvailability(Number(e.target.value))
+                            }
+                            disabled={!orgPrivate}
+                        >
+                            {AVAILABILITY_OPTIONS.map((opt) => (
+                                <option
+                                    key={opt.value}
+                                    value={opt.value}
+                                    disabled={!orgPrivate && opt.value !== AVAILABILITY_PUBLIC}
+                                >
+                                    {opt.label}
+                                </option>
+                            ))}
+                        </select>
+                        {!orgPrivate && (
+                            <span className="muted" style={{ fontSize: 13 }}>
+                                Your organization is public, so datasets stay public.
+                            </span>
+                        )}
+                    </div>
+                    </div>
+                    <div className="form-panel">
+                    <h3 className="display">File</h3>
 
                     <div className="field">
                         <label>
@@ -752,27 +719,6 @@ function CreateDataset() {
                         />
                     </div>
 
-                    <div className="field">
-                        <label>
-                            Value
-                            <HelpTooltip
-                                text={`What is the value of the data?
-High: data has high acquisition cost or sensitive information
-Medium: data is specific to a particular organisation and hard to search online
-Low: Openly downloadable in public domain`}
-                                id="tooltip-value"
-                            />
-                        </label>
-                        <select
-                            value={value}
-                            onChange={(e) => setValue(e.target.value)}
-                        >
-                            <option value="low">low</option>
-                            <option value="medium">medium</option>
-                            <option value="high">high</option>
-                        </select>
-                    </div>
-
                     <div className="field-row">
                         <div className="field">
                             <label>
@@ -895,11 +841,13 @@ Low: Openly downloadable in public domain`}
                             <span className="mono-token" style={{ marginTop: 6, display: "inline-block" }}>{progress}%</span>
                         </div>
                     )}
+                    </div>
 
                     <button
                         type="submit"
                         className="btn btn-primary"
                         disabled={submitting}
+                        style={{ gridColumn: "1 / -1", justifySelf: "start" }}
                     >
                         {submitting ? "Submitting…" : "Submit"}
                     </button>

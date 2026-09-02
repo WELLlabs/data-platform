@@ -4,6 +4,8 @@ import {
   approve_user_endpoint,
   pending_approvals_endpoint,
   reject_user_endpoint,
+  approve_dataset_endpoint,
+  reject_dataset_endpoint,
 } from "../api/endpoints";
 import Ic from "../components/wd/Icons";
 
@@ -22,6 +24,7 @@ function Approvals() {
   const [hasUsersSection, setHasUsersSection] = useState(false);
   const [hasDatasetsSection, setHasDatasetsSection] = useState(false);
   const [processingUserId, setProcessingUserId] = useState(null);
+  const [processingDatasetId, setProcessingDatasetId] = useState(null);
   const [processingAction, setProcessingAction] = useState(null);
   const [pendingModalUser, setPendingModalUser] = useState(null);
   const [modalRole, setModalRole] = useState(0);
@@ -171,6 +174,61 @@ function Approvals() {
     navigate(`/dataset-info?dataset_id=${encodeURIComponent(datasetId)}`);
   };
 
+  const handleApproveDataset = async (datasetId) => {
+    if (!datasetId) return;
+    try {
+      setProcessingDatasetId(datasetId);
+      setError("");
+      const response = await fetch(approve_dataset_endpoint(datasetId), {
+        method: "PUT",
+        credentials: "include",
+      });
+      if (!response.ok) {
+        let errorMessage = "Failed to approve dataset.";
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData?.detail || errorMessage;
+        } catch {
+          errorMessage = response.statusText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+      await fetchPendingApprovals();
+    } catch (err) {
+      setError(err.message || "Unable to approve dataset.");
+    } finally {
+      setProcessingDatasetId(null);
+    }
+  };
+
+  const handleRejectDataset = async (datasetId) => {
+    if (!datasetId) return;
+    if (!window.confirm("Reject and remove this unpublished dataset?")) return;
+    try {
+      setProcessingDatasetId(datasetId);
+      setError("");
+      const response = await fetch(reject_dataset_endpoint(datasetId), {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!response.ok) {
+        let errorMessage = "Failed to reject dataset.";
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData?.detail || errorMessage;
+        } catch {
+          errorMessage = response.statusText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+      await fetchPendingApprovals();
+    } catch (err) {
+      setError(err.message || "Unable to reject dataset.");
+    } finally {
+      setProcessingDatasetId(null);
+    }
+  };
+
   useEffect(() => {
     if (!pendingModalUser) return undefined;
 
@@ -257,6 +315,9 @@ function Approvals() {
         <div className="section-head" style={{ marginTop: 8 }}>
           <h2 className="section-title">Approvals</h2>
         </div>
+        <p className="muted" style={{ marginBottom: 24 }}>
+          Review membership requests and unpublished datasets for your organization.
+        </p>
 
         {error && (
           <div className="attn-card warn" role="alert" style={{ marginBottom: 20 }}>
@@ -264,10 +325,12 @@ function Approvals() {
           </div>
         )}
 
+        <div className="appr-grid">
         {hasUsersSection && (
-          <section style={{ marginBottom: 40 }}>
+          <section className="dash-panel" style={{ marginBottom: 0 }}>
             <div className="sec-label" style={{ marginBottom: 14 }}>
               User approvals
+              <span className="appr-count">{users.length}</span>
             </div>
             <div className="rows">
               {users.map((pendingUser) => (
@@ -386,9 +449,10 @@ function Approvals() {
         )}
 
         {hasDatasetsSection && (
-          <section>
+          <section className="dash-panel">
             <div className="sec-label" style={{ marginBottom: 14 }}>
               Dataset approvals
+              <span className="appr-count">{datasets.length}</span>
             </div>
             <div className="rows">
               {datasets.map((dataset) => (
@@ -402,11 +466,27 @@ function Approvals() {
                     <button
                       type="button"
                       className="btn btn-ghost"
-                      style={{ marginLeft: "auto" }}
                       onClick={() => handleViewDataset(dataset.dataset_id)}
-                      aria-label={`View ${dataset.dataset_title || "dataset"}`}
                     >
-                      View<Ic name="arrow" size={16} />
+                      View
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() => handleRejectDataset(dataset.dataset_id)}
+                      disabled={processingDatasetId === dataset.dataset_id}
+                    >
+                      Reject
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => handleApproveDataset(dataset.dataset_id)}
+                      disabled={processingDatasetId === dataset.dataset_id}
+                    >
+                      {processingDatasetId === dataset.dataset_id
+                        ? "Working…"
+                        : "Approve"}
                     </button>
                   </div>
                 </div>
@@ -419,6 +499,7 @@ function Approvals() {
             </div>
           </section>
         )}
+        </div>
 
         {!hasUsersSection && !hasDatasetsSection && !error && (
           <div className="empty">

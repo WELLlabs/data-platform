@@ -85,7 +85,7 @@ class StatsService:
                 select(func.count())
                 .select_from(Dataset)
                 .where(
-                    Dataset.private.is_(False),
+                    Dataset.availability == 0,
                     Dataset.approved.is_(True),
                 )
             )

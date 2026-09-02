@@ -19,6 +19,7 @@ from models.user import User
 from models.user_contribution import UserContribution
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from utils.security import mask_apikey
 
 logger = logging.getLogger(__name__)
 
@@ -48,20 +49,20 @@ class UserService:
 
         Returns:
             Dictionary containing user data with fields:
-            id, full_name, email, apikey, designation, student, organization,
+            id, full_name, email, designation, organization,
             role, phone, contributions, created_at, modified_at, verified,
             is_superuser, is_verified
             Returns None if user not found
         """
         try:
-            self.logger.info("Fetching user by apikey: %s", apikey)
+            self.logger.info("Fetching user by apikey: %s", mask_apikey(apikey))
 
             query = select(User).where(User.apikey == apikey)
             result = await self.session.execute(query)
             user: Optional[User] = result.scalar_one_or_none()
 
             if user is None:
-                self.logger.info("User not found for apikey: %s", apikey)
+                self.logger.info("User not found for apikey: %s", mask_apikey(apikey))
                 return None
 
             try:
@@ -78,9 +79,7 @@ class UserService:
                 "id": user.id,
                 "full_name": user.full_name,
                 "email": user.email,
-                "apikey": user.apikey,
                 "designation": user.designation,
-                "student": user.student,
                 "organization": user.organization,
                 "role": user.role,
                 "phone": user.phone,
@@ -96,7 +95,9 @@ class UserService:
             return user_data
 
         except Exception as e:
-            self.logger.exception("Error fetching user by apikey %s: %s", apikey, e)
+            self.logger.exception(
+                "Error fetching user by apikey %s: %s", mask_apikey(apikey), e
+            )
             return None
 
     async def get_user_model_by_apikey(self, apikey: str) -> Optional[User]:
@@ -187,25 +188,25 @@ class UserService:
             True if user is superuser, False otherwise or if user not found
         """
         try:
-            self.logger.info("Checking superuser status by apikey: %s", apikey)
+            self.logger.info("Checking superuser status by apikey: %s", mask_apikey(apikey))
 
             query = select(User).where(User.apikey == apikey)
             result = await self.session.execute(query)
             user: Optional[User] = result.scalar_one_or_none()
 
             if user is None:
-                self.logger.info("User not found for apikey: %s", apikey)
+                self.logger.info("User not found for apikey: %s", mask_apikey(apikey))
                 return False
 
             is_superuser = user.is_superuser
             self.logger.info(
-                "Superuser check result for apikey=%s: %s", apikey, is_superuser
+                "Superuser check result for apikey=%s: %s", mask_apikey(apikey), is_superuser
             )
             return is_superuser
 
         except Exception as e:
             self.logger.exception(
-                "Error checking superuser by apikey %s: %s", apikey, e
+                "Error checking superuser by apikey %s: %s", mask_apikey(apikey), e
             )
             return False
 
@@ -260,7 +261,7 @@ class UserService:
             return bool(user.verified and user.is_verified)
         except Exception as e:
             self.logger.exception(
-                "Error checking verified by apikey %s: %s", apikey, e
+                "Error checking verified by apikey %s: %s", mask_apikey(apikey), e
             )
             return False
 
@@ -339,7 +340,7 @@ class UserService:
         try:
             self.logger.info(
                 "Checking admin status by apikey=%s for organization=%s",
-                apikey,
+                mask_apikey(apikey),
                 organization_id,
             )
 
@@ -348,13 +349,13 @@ class UserService:
             user: Optional[User] = result.scalar_one_or_none()
 
             if user is None:
-                self.logger.info("User not found for apikey: %s", apikey)
+                self.logger.info("User not found for apikey: %s", mask_apikey(apikey))
                 return False
 
             # Check if role is 1
             if user.role != 1:
                 self.logger.info(
-                    "User role is not 1: apikey=%s, role=%s", apikey, user.role
+                    "User role is not 1: apikey=%s, role=%s", mask_apikey(apikey), user.role
                 )
                 return False
 
@@ -362,21 +363,21 @@ class UserService:
             if user.organization != organization_id:
                 self.logger.info(
                     "Organization mismatch: apikey=%s, user_org=%s, expected_org=%s",
-                    apikey,
+                    mask_apikey(apikey),
                     user.organization,
                     organization_id,
                 )
                 return False
 
             self.logger.info(
-                "Admin check passed: apikey=%s, organization=%s", apikey, organization_id
+                "Admin check passed: apikey=%s, organization=%s", mask_apikey(apikey), organization_id
             )
             return True
 
         except Exception as e:
             self.logger.exception(
                 "Error checking admin by apikey %s for organization %s: %s",
-                apikey,
+                mask_apikey(apikey),
                 organization_id,
                 e,
             )
@@ -458,20 +459,20 @@ class UserService:
             True if user has role > 0, False otherwise or if user not found
         """
         try:
-            self.logger.info("Checking high role status by apikey: %s", apikey)
+            self.logger.info("Checking high role status by apikey: %s", mask_apikey(apikey))
 
             query = select(User).where(User.apikey == apikey)
             result = await self.session.execute(query)
             user: Optional[User] = result.scalar_one_or_none()
 
             if user is None:
-                self.logger.info("User not found for apikey: %s", apikey)
+                self.logger.info("User not found for apikey: %s", mask_apikey(apikey))
                 return False
 
             has_high_role = user.role > 0
             self.logger.info(
                 "High role check result for apikey=%s: role=%s, result=%s",
-                apikey,
+                mask_apikey(apikey),
                 user.role,
                 has_high_role,
             )
@@ -479,7 +480,7 @@ class UserService:
 
         except Exception as e:
             self.logger.exception(
-                "Error checking high role by apikey %s: %s", apikey, e
+                "Error checking high role by apikey %s: %s", mask_apikey(apikey), e
             )
             return False
 
@@ -546,14 +547,14 @@ class UserService:
         try:
             self.logger.info(
                 "Checking if user with apikey %s belongs to dataset %s organization",
-                apikey,
+                mask_apikey(apikey),
                 dataset_id,
             )
 
             # Get user by apikey
             user_data = await self.get_user_by_apikey(apikey)
             if user_data is None:
-                self.logger.info("User not found for apikey: %s", apikey)
+                self.logger.info("User not found for apikey: %s", mask_apikey(apikey))
                 return False
 
             organization_id = user_data["organization"]
@@ -564,7 +565,7 @@ class UserService:
             )
             self.logger.info(
                 "User belongs to dataset organization check result: apikey=%s, dataset_id=%s, user_org=%s, result=%s",
-                apikey,
+                mask_apikey(apikey),
                 dataset_id,
                 organization_id,
                 belongs,
@@ -574,7 +575,7 @@ class UserService:
         except Exception as e:
             self.logger.exception(
                 "Error checking user belongs to dataset organization by apikey: apikey=%s, dataset_id=%s, error=%s",
-                apikey,
+                mask_apikey(apikey),
                 dataset_id,
                 e,
             )
@@ -687,14 +688,14 @@ class UserService:
         try:
             self.logger.info(
                 "Checking if user with apikey %s is creator of dataset %s",
-                apikey,
+                mask_apikey(apikey),
                 dataset_id,
             )
 
             # Get user by apikey
             user_data = await self.get_user_by_apikey(apikey)
             if user_data is None:
-                self.logger.info("User not found for apikey: %s", apikey)
+                self.logger.info("User not found for apikey: %s", mask_apikey(apikey))
                 return False
 
             user_id = user_data["id"]
@@ -721,7 +722,7 @@ class UserService:
         except Exception as e:
             self.logger.exception(
                 "Error checking dataset creator by apikey: apikey=%s, dataset_id=%s, error=%s",
-                apikey,
+                mask_apikey(apikey),
                 dataset_id,
                 e,
             )
@@ -740,7 +741,7 @@ class UserService:
         """
         try:
             self.logger.info(
-                "Checking if apikey %s belongs to user %s", apikey, user_id
+                "Checking if apikey %s belongs to user %s", mask_apikey(apikey), user_id
             )
 
             query = select(User).where(User.apikey == apikey)
@@ -748,13 +749,13 @@ class UserService:
             user: Optional[User] = result.scalar_one_or_none()
 
             if user is None:
-                self.logger.info("User not found for apikey: %s", apikey)
+                self.logger.info("User not found for apikey: %s", mask_apikey(apikey))
                 return False
 
             belongs = user.id == user_id
             self.logger.info(
                 "Apikey belongs to user check result: apikey=%s, user_id=%s, found_user_id=%s, result=%s",
-                apikey,
+                mask_apikey(apikey),
                 user_id,
                 user.id,
                 belongs,
@@ -764,7 +765,7 @@ class UserService:
         except Exception as e:
             self.logger.exception(
                 "Error checking apikey belongs to user: apikey=%s, user_id=%s, error=%s",
-                apikey,
+                mask_apikey(apikey),
                 user_id,
                 e,
             )
@@ -831,7 +832,7 @@ class UserService:
         try:
             self.logger.info(
                 "Checking if user with apikey %s belongs to organization %s",
-                apikey,
+                mask_apikey(apikey),
                 organization_id,
             )
 
@@ -840,13 +841,13 @@ class UserService:
             user: Optional[User] = result.scalar_one_or_none()
 
             if user is None:
-                self.logger.info("User not found for apikey: %s", apikey)
+                self.logger.info("User not found for apikey: %s", mask_apikey(apikey))
                 return False
 
             belongs = user.organization == organization_id
             self.logger.info(
                 "User organization check result: apikey=%s, user_org=%s, expected_org=%s, result=%s",
-                apikey,
+                mask_apikey(apikey),
                 user.organization,
                 organization_id,
                 belongs,
@@ -856,7 +857,7 @@ class UserService:
         except Exception as e:
             self.logger.exception(
                 "Error checking user organization by apikey: apikey=%s, organization_id=%s, error=%s",
-                apikey,
+                mask_apikey(apikey),
                 organization_id,
                 e,
             )
@@ -879,7 +880,7 @@ class UserService:
             self.logger.info(
                 "Checking if user %s and user with apikey %s belong to same organization",
                 user_id,
-                apikey,
+                mask_apikey(apikey),
             )
 
             # Get user by ID
@@ -897,7 +898,7 @@ class UserService:
             user_by_apikey: Optional[User] = result_apikey.scalar_one_or_none()
 
             if user_by_apikey is None:
-                self.logger.info("User not found for apikey: %s", apikey)
+                self.logger.info("User not found for apikey: %s", mask_apikey(apikey))
                 return False
 
             same_organization = user_by_id.organization == user_by_apikey.organization
@@ -905,7 +906,7 @@ class UserService:
                 "Same organization check result: user_id=%s (org=%s), apikey=%s (org=%s), result=%s",
                 user_id,
                 user_by_id.organization,
-                apikey,
+                mask_apikey(apikey),
                 user_by_apikey.organization,
                 same_organization,
             )
@@ -915,7 +916,7 @@ class UserService:
             self.logger.exception(
                 "Error checking same organization: user_id=%s, apikey=%s, error=%s",
                 user_id,
-                apikey,
+                mask_apikey(apikey),
                 e,
             )
             return False
@@ -1447,7 +1448,7 @@ class UserService:
             )
 
             has_high_role = await self.check_if_high_role_by_id(approver.id)
-            if not has_high_role:
+            if not has_high_role and not approver.is_superuser:
                 self.logger.warning(
                     "Dataset approval denied due to insufficient role: approver_id=%s dataset_id=%s",
                     approver.id,
@@ -1475,7 +1476,7 @@ class UserService:
             belongs_to_org = await self.check_user_belongs_to_dataset_organization_by_id(
                 approver.id, dataset_id
             )
-            if not belongs_to_org:
+            if not belongs_to_org and not approver.is_superuser:
                 self.logger.warning(
                     "Dataset approval denied due to organization mismatch: approver_id=%s approver_org=%s dataset_id=%s dataset_org=%s",
                     approver.id,
@@ -1510,6 +1511,42 @@ class UserService:
                 e,
             )
             raise
+
+    async def reject_dataset(self, actor: User, dataset_id: UUID) -> None:
+        """Reject an unapproved dataset by deleting it."""
+        from services.typesense_index import safe_delete_dataset_documents
+
+        has_high_role = await self.check_if_high_role_by_id(actor.id)
+        if not has_high_role and not actor.is_superuser:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Unauthorized to reject datasets",
+            )
+        result = await self.session.execute(
+            select(Dataset).where(Dataset.dataset_id == dataset_id)
+        )
+        dataset = result.scalar_one_or_none()
+        if dataset is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Dataset not found",
+            )
+        if dataset.approved:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Approved datasets cannot be rejected from the queue",
+            )
+        belongs = await self.check_user_belongs_to_dataset_organization_by_id(
+            actor.id, dataset_id
+        )
+        if not belongs and not actor.is_superuser:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Unauthorized to reject datasets outside your organization",
+            )
+        await self.session.delete(dataset)
+        await self.session.commit()
+        await safe_delete_dataset_documents(dataset_id)
 
 
 # Dependency function to get user service

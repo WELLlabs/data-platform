@@ -6,6 +6,7 @@ import Contour from '../components/wd/Contour';
 import { DatasetRow } from '../components/wd/DatasetItems';
 import {
   organization_by_id_endpoint,
+  organization_add_member_endpoint,
   approve_user_endpoint,
   reject_user_endpoint,
   change_user_role_endpoint,
@@ -42,6 +43,12 @@ const Organization = () => {
   const [roleDraft, setRoleDraft] = useState(0);
   const [membersActionLoading, setMembersActionLoading] = useState(false);
   const [membersModalError, setMembersModalError] = useState(null);
+  const [addUserOpen, setAddUserOpen] = useState(false);
+  const [addUserEmail, setAddUserEmail] = useState('');
+  const [addUserRole, setAddUserRole] = useState(0);
+  const [addUserApprove, setAddUserApprove] = useState(false);
+  const [addUserLoading, setAddUserLoading] = useState(false);
+  const [addUserError, setAddUserError] = useState('');
 
   const [dsFilter, setDsFilter] = useState('all');
 
@@ -70,10 +77,7 @@ const Organization = () => {
         return;
       }
 
-      let url = organization_by_id_endpoint(organizationId);
-      if (isAuthenticated && user?.apikey) {
-        url += `?apikey=${encodeURIComponent(user.apikey)}`;
-      }
+      const url = organization_by_id_endpoint(organizationId);
 
       const response = await fetch(url, {
         method: 'GET',
@@ -229,6 +233,40 @@ const Organization = () => {
       setMembersModalError(err.message || 'Failed to delete user.');
     } finally {
       setMembersActionLoading(false);
+    }
+  };
+
+  const handleAddUser = async (e) => {
+    e.preventDefault();
+    if (!organization?.id || !addUserEmail.trim()) return;
+    try {
+      setAddUserLoading(true);
+      setAddUserError('');
+      const response = await fetch(
+        organization_add_member_endpoint(organization.id),
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: addUserEmail.trim(),
+            role: addUserRole,
+            approve_now: addUserApprove,
+          }),
+        }
+      );
+      if (!response.ok) {
+        throw new Error(await parseApiError(response, 'Failed to add user.'));
+      }
+      setAddUserOpen(false);
+      setAddUserEmail('');
+      setAddUserRole(0);
+      setAddUserApprove(false);
+      await fetchOrganization();
+    } catch (err) {
+      setAddUserError(err.message || 'Failed to add user.');
+    } finally {
+      setAddUserLoading(false);
     }
   };
 
@@ -421,7 +459,7 @@ const Organization = () => {
         </div>
       </section>
 
-      {organization.members && organization.members.length > 0 && (
+      {(organization.members?.length > 0 || isOrgAdmin) && (
         <section className="wrap" style={{ padding: '0 0 var(--s8)' }}>
           <hr className="divider" style={{ marginBottom: 'var(--s5)' }} />
           <div className="section-head" style={{ marginBottom: 14 }}>
@@ -429,17 +467,28 @@ const Organization = () => {
               Members
             </div>
             {isOrgAdmin && (
-              <button
-                className="btn btn-ghost"
-                onClick={handleOpenMembersEdit}
-                aria-label="Edit organization members"
-              >
-                Edit
-              </button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => {
+                    setAddUserError('');
+                    setAddUserOpen(true);
+                  }}
+                >
+                  Add user
+                </button>
+                <button
+                  className="btn btn-ghost"
+                  onClick={handleOpenMembersEdit}
+                  aria-label="Edit organization members"
+                >
+                  Edit
+                </button>
+              </div>
             )}
           </div>
           <div className="members">
-            {organization.members.map((member) => (
+            {(organization.members || []).map((member) => (
               <div className="member" key={member.id}>
                 <div
                   className="avatar"
@@ -461,7 +510,86 @@ const Organization = () => {
               </div>
             ))}
           </div>
+          {(!organization.members || organization.members.length === 0) && (
+            <p className="muted">No members yet. Add a user by email.</p>
+          )}
         </section>
+      )}
+
+      {addUserOpen && (
+        <div
+          className="cmdk-overlay show"
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !addUserLoading) setAddUserOpen(false);
+          }}
+        >
+          <div className="modal-card">
+            <div className="modal-head">
+              <h3>Add user</h3>
+              <p>Add someone who already has an account, using their email.</p>
+            </div>
+            <form onSubmit={handleAddUser}>
+              <div className="modal-body">
+                {addUserError && (
+                  <p className="muted" style={{ color: 'var(--danger, #c0392b)' }}>
+                    {addUserError}
+                  </p>
+                )}
+                <div className="field">
+                  <label htmlFor="add-user-email">Email</label>
+                  <input
+                    id="add-user-email"
+                    type="email"
+                    required
+                    value={addUserEmail}
+                    onChange={(e) => setAddUserEmail(e.target.value)}
+                    disabled={addUserLoading}
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="add-user-role">Role</label>
+                  <select
+                    id="add-user-role"
+                    value={addUserRole}
+                    onChange={(e) => setAddUserRole(Number(e.target.value))}
+                    disabled={addUserLoading}
+                    style={{ width: '100%' }}
+                  >
+                    {ROLE_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <label className="check" style={{ marginTop: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={addUserApprove}
+                    onChange={(e) => setAddUserApprove(e.target.checked)}
+                    disabled={addUserLoading}
+                  />
+                  Approve immediately (skip the review queue)
+                </label>
+              </div>
+              <div className="modal-foot">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => setAddUserOpen(false)}
+                  disabled={addUserLoading}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={addUserLoading}>
+                  {addUserLoading ? 'Adding…' : 'Add user'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
 
       {membersEditOpen && (

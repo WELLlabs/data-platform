@@ -14,14 +14,20 @@ import {
   edit_dataset_endpoint,
   edit_file_endpoint,
   organization_by_id_endpoint,
-  transfer_dataset_endpoint,
+  dataset_owners_endpoint,
 } from "../api/endpoints";
+import {
+  AVAILABILITY_OPTIONS,
+  AVAILABILITY_PUBLIC,
+  availabilityLabel,
+  parseAvailability,
+} from "../constants/availability";
 
 const initialDatasetEdit = {
   showModal: false,
   title: "",
   description: "",
-  isPrivate: false,
+  availability: AVAILABILITY_PUBLIC,
   tags: "",
   error: "",
   submitting: false,
@@ -35,7 +41,7 @@ function datasetEditReducer(state, action) {
         showModal: true,
         title: action.payload.title ?? "",
         description: action.payload.description ?? "",
-        isPrivate: action.payload.isPrivate ?? false,
+        availability: action.payload.availability ?? AVAILABILITY_PUBLIC,
         tags: action.payload.tags ?? "",
         error: "",
       };
@@ -63,7 +69,6 @@ const initialFileEdit = {
   groundtruthed: false,
   permissions: "CC0: Public Domain",
   duration: 0,
-  value: "low",
   temporalFrom: "",
   temporalTo: "",
   geography: "",
@@ -86,7 +91,6 @@ function fileEditReducer(state, action) {
         groundtruthed: action.payload.groundtruthed ?? false,
         permissions: action.payload.permissions ?? "CC0: Public Domain",
         duration: action.payload.duration ?? 0,
-        value: action.payload.value ?? "low",
         temporalFrom: action.payload.temporalFrom ?? "",
         temporalTo: action.payload.temporalTo ?? "",
         geography: action.payload.geography ?? "",
@@ -119,14 +123,14 @@ function DatasetInfo() {
     delete_file: false,
     add_file: false,
     approval: false,
-    transfer: false,
+    manage_owners: false,
   });
-  const [showTransferModal, setShowTransferModal] = useState(false);
-  const [transferMembers, setTransferMembers] = useState([]);
-  const [transferSelectedUserId, setTransferSelectedUserId] = useState("");
-  const [transferFetchError, setTransferFetchError] = useState("");
-  const [transferLoadingOrg, setTransferLoadingOrg] = useState(false);
-  const [transferSubmitting, setTransferSubmitting] = useState(false);
+  const [showOwnersModal, setShowOwnersModal] = useState(false);
+  const [ownerMembers, setOwnerMembers] = useState([]);
+  const [ownerSelectedUserId, setOwnerSelectedUserId] = useState("");
+  const [ownerFetchError, setOwnerFetchError] = useState("");
+  const [ownerLoadingOrg, setOwnerLoadingOrg] = useState(false);
+  const [ownerSubmitting, setOwnerSubmitting] = useState(false);
   const [downloadingFileId, setDownloadingFileId] = useState(null);
   const [downloadError, setDownloadError] = useState("");
   const [showDatasetDeleteModal, setShowDatasetDeleteModal] = useState(false);
@@ -151,9 +155,9 @@ function DatasetInfo() {
   const editDatasetModalRef = useRef(null);
   const editDatasetTitleInputRef = useRef(null);
   const previousActiveElementRef = useRef(null);
-  const transferModalDialogRef = useRef(null);
-  const transferMemberSelectRef = useRef(null);
-  const transferPreviousActiveElementRef = useRef(null);
+  const ownersModalDialogRef = useRef(null);
+  const ownerMemberSelectRef = useRef(null);
+  const ownersPreviousActiveElementRef = useRef(null);
 
   // File edit modal state
   const [fileEdit, dispatchFileEdit] = useReducer(
@@ -173,7 +177,6 @@ function DatasetInfo() {
       setLoading(true);
       setError("");
       const params = new URLSearchParams({ dataset_id: datasetId });
-      if (user?.apikey) params.set("apikey", user.apikey);
       const response = await fetch(
         `${dataset_info_endpoint}?${params.toString()}`,
         { credentials: "include" }
@@ -207,7 +210,7 @@ function DatasetInfo() {
           delete_file: false,
           add_file: false,
           approval: false,
-          transfer: false,
+          manage_owners: false,
         }
       );
     } catch (err) {
@@ -216,7 +219,7 @@ function DatasetInfo() {
     } finally {
       setLoading(false);
     }
-  }, [searchParams, navigate, user?.apikey]);
+  }, [searchParams, navigate]);
 
   useEffect(() => {
     fetchDatasetInfo();
@@ -426,8 +429,8 @@ function DatasetInfo() {
   };
 
   const handleDeleteDataset = async () => {
-    if (!user?.apikey || !dataset?.dataset_id) {
-      setDeleteError("Missing user authentication or dataset information.");
+    if (!dataset?.dataset_id) {
+      setDeleteError("Missing dataset information.");
       return;
     }
 
@@ -437,7 +440,6 @@ function DatasetInfo() {
     try {
       const params = new URLSearchParams({
         dataset_id: dataset.dataset_id,
-        apikey: user.apikey,
       });
 
       const response = await fetch(
@@ -516,30 +518,27 @@ function DatasetInfo() {
     }
   };
 
-  const roleLabelForTransfer = (role) => {
+  const roleLabelForOwner = (role) => {
     if (role === 0) return "Member";
     if (role === 1) return "Admin";
     if (role === 2) return "Reviewer";
     return "Member";
   };
 
-  const handleOpenTransferModal = async () => {
+  const handleOpenOwnersModal = async () => {
     if (!dataset?.organization) {
       setDeleteError("Missing organization for this dataset.");
       return;
     }
-    setShowTransferModal(true);
-    setTransferMembers([]);
-    setTransferSelectedUserId("");
-    setTransferFetchError("");
-    setTransferLoadingOrg(true);
+    setShowOwnersModal(true);
+    setOwnerMembers([]);
+    setOwnerSelectedUserId("");
+    setOwnerFetchError("");
+    setOwnerLoadingOrg(true);
     try {
-      const params = new URLSearchParams();
-      if (user?.apikey) params.set("apikey", user.apikey);
-      const qs = params.toString();
-      const base = organization_by_id_endpoint(dataset.organization);
-      const url = qs ? `${base}?${qs}` : base;
-      const response = await fetch(url, { credentials: "include" });
+      const response = await fetch(organization_by_id_endpoint(dataset.organization), {
+        credentials: "include",
+      });
       if (!response.ok) {
         let msg = "Failed to load organization members.";
         try {
@@ -548,48 +547,46 @@ function DatasetInfo() {
         } catch {
           msg = response.statusText || msg;
         }
-        setTransferFetchError(msg);
+        setOwnerFetchError(msg);
         return;
       }
       const orgData = await response.json();
       const members = Array.isArray(orgData.members) ? orgData.members : [];
-      setTransferMembers(members);
+      setOwnerMembers(members);
     } catch (err) {
       console.error("Error loading organization:", err);
-      setTransferFetchError(err.message || "Failed to load organization members.");
+      setOwnerFetchError(err.message || "Failed to load organization members.");
     } finally {
-      setTransferLoadingOrg(false);
+      setOwnerLoadingOrg(false);
     }
   };
 
-  const handleCloseTransferModal = useCallback(() => {
-    setShowTransferModal(false);
-    setTransferMembers([]);
-    setTransferSelectedUserId("");
-    setTransferFetchError("");
+  const handleCloseOwnersModal = useCallback(() => {
+    setShowOwnersModal(false);
+    setOwnerMembers([]);
+    setOwnerSelectedUserId("");
+    setOwnerFetchError("");
   }, []);
 
-  const handleSubmitTransfer = async () => {
-    if (!dataset?.dataset_id || !transferSelectedUserId) {
-      setTransferFetchError("Please select a member to transfer to.");
+  const handleAddOwner = async () => {
+    if (!dataset?.dataset_id || !ownerSelectedUserId) {
+      setOwnerFetchError("Please select a member to add as owner.");
       return;
     }
-    setTransferSubmitting(true);
-    setTransferFetchError("");
+    setOwnerSubmitting(true);
+    setOwnerFetchError("");
     try {
-      const params = new URLSearchParams({
-        dataset_id: dataset.dataset_id,
-        user_id: transferSelectedUserId,
+      const response = await fetch(dataset_owners_endpoint, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dataset_id: dataset.dataset_id,
+          user_id: ownerSelectedUserId,
+        }),
       });
-      const response = await fetch(
-        `${transfer_dataset_endpoint}?${params.toString()}`,
-        {
-          method: "POST",
-          credentials: "include",
-        }
-      );
       if (!response.ok) {
-        let errorMessage = "Failed to transfer dataset.";
+        let errorMessage = "Failed to add owner.";
         try {
           const errorData = await response.json();
           errorMessage = errorData.detail || errorData.message || errorMessage;
@@ -598,19 +595,54 @@ function DatasetInfo() {
         }
         throw new Error(errorMessage);
       }
-      handleCloseTransferModal();
+      setOwnerSelectedUserId("");
       await fetchDatasetInfo();
     } catch (err) {
-      console.error("Error transferring dataset:", err);
-      setTransferFetchError(err.message || "Transfer failed. Please try again.");
+      console.error("Error adding owner:", err);
+      setOwnerFetchError(err.message || "Could not add owner.");
     } finally {
-      setTransferSubmitting(false);
+      setOwnerSubmitting(false);
+    }
+  };
+
+  const handleRemoveOwner = async (userId) => {
+    if (!dataset?.dataset_id || !userId) return;
+    setOwnerSubmitting(true);
+    setOwnerFetchError("");
+    try {
+      const params = new URLSearchParams({
+        dataset_id: dataset.dataset_id,
+        user_id: userId,
+      });
+      const response = await fetch(
+        `${dataset_owners_endpoint}?${params.toString()}`,
+        {
+          method: "DELETE",
+          credentials: "include",
+        }
+      );
+      if (!response.ok) {
+        let errorMessage = "Failed to remove owner.";
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.detail || errorData.message || errorMessage;
+        } catch {
+          errorMessage = response.statusText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+      await fetchDatasetInfo();
+    } catch (err) {
+      console.error("Error removing owner:", err);
+      setOwnerFetchError(err.message || "Could not remove owner.");
+    } finally {
+      setOwnerSubmitting(false);
     }
   };
 
   const handleDeleteFile = async () => {
-    if (!user?.apikey || !fileToDelete?.file_id) {
-      setDeleteError("Missing user authentication or file information.");
+    if (!fileToDelete?.file_id) {
+      setDeleteError("Missing file information.");
       return;
     }
 
@@ -620,7 +652,6 @@ function DatasetInfo() {
     try {
       const params = new URLSearchParams({
         file_id: fileToDelete.file_id,
-        apikey: user.apikey,
       });
 
       const response = await fetch(
@@ -669,7 +700,7 @@ function DatasetInfo() {
       payload: {
         title: dataset.dataset_title || "",
         description: dataset.dataset_description || "",
-        isPrivate: Boolean(dataset.private),
+        availability: parseAvailability(dataset.availability),
         tags:
           dataset.tags && Array.isArray(dataset.tags)
             ? dataset.tags.join(", ")
@@ -720,40 +751,38 @@ function DatasetInfo() {
     };
   }, [showDatasetEditModal]);
 
-  // Transfer modal: focus management (select when ready, else close button)
   useEffect(() => {
-    if (!showTransferModal) return;
+    if (!showOwnersModal) return;
     const timer = requestAnimationFrame(() => {
       const canFocusSelect =
-        !transferLoadingOrg &&
-        transferMembers.length > 0 &&
-        transferMemberSelectRef.current;
+        !ownerLoadingOrg &&
+        ownerMembers.length > 0 &&
+        ownerMemberSelectRef.current;
       if (canFocusSelect) {
-        transferMemberSelectRef.current?.focus();
+        ownerMemberSelectRef.current?.focus();
       } else {
         const closeBtn =
-          transferModalDialogRef.current?.querySelector(".btn-close");
+          ownersModalDialogRef.current?.querySelector(".btn-close");
         closeBtn?.focus();
       }
     });
     return () => cancelAnimationFrame(timer);
-  }, [showTransferModal, transferLoadingOrg, transferMembers.length]);
+  }, [showOwnersModal, ownerLoadingOrg, ownerMembers.length]);
 
-  // Transfer modal: Escape + Tab focus trap (aligned with dataset edit modal)
   useEffect(() => {
-    if (!showTransferModal) return;
-    transferPreviousActiveElementRef.current = document.activeElement;
+    if (!showOwnersModal) return;
+    ownersPreviousActiveElementRef.current = document.activeElement;
     const handleKeyDown = (e) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        handleCloseTransferModal();
+        handleCloseOwnersModal();
         return;
       }
-      if (e.key !== "Tab" || !transferModalDialogRef.current) return;
+      if (e.key !== "Tab" || !ownersModalDialogRef.current) return;
       const focusableSelector =
         'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
       const focusables = [
-        ...transferModalDialogRef.current.querySelectorAll(focusableSelector),
+        ...ownersModalDialogRef.current.querySelectorAll(focusableSelector),
       ].filter((el) => el.offsetParent !== null);
       const len = focusables.length;
       if (len === 0) return;
@@ -771,9 +800,9 @@ function DatasetInfo() {
     document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
-      transferPreviousActiveElementRef.current?.focus?.();
+      ownersPreviousActiveElementRef.current?.focus?.();
     };
-  }, [showTransferModal, handleCloseTransferModal]);
+  }, [showOwnersModal, handleCloseOwnersModal]);
 
   const processTagsForSubmit = (tagsText) => {
     if (!tagsText || !String(tagsText).trim()) return [];
@@ -803,7 +832,7 @@ function DatasetInfo() {
         dataset_id: dataset.dataset_id,
         dataset_title: titleTrimmed,
         dataset_description: datasetEdit.description.trim() || null,
-        private: datasetEdit.isPrivate,
+        availability: datasetEdit.availability,
         tags: tagsArray,
       };
       const response = await fetch(edit_dataset_endpoint, {
@@ -855,10 +884,6 @@ function DatasetInfo() {
           file.duration !== undefined && file.duration !== null
             ? Number(file.duration)
             : 0,
-        value:
-          file.value && ["high", "medium", "low"].includes(file.value)
-            ? file.value
-            : "low",
         temporalFrom: formatToDatetimeLocal(file.temporal_from),
         temporalTo: formatToDatetimeLocal(file.temporal_to),
         geography: file.geography || "",
@@ -899,7 +924,6 @@ function DatasetInfo() {
         groundtruthed: fileEdit.groundtruthed,
         permissions: fileEdit.permissions.trim() || null,
         duration: Math.max(0, parseInt(fileEdit.duration, 10) || 0),
-        value: fileEdit.value || null,
         temporal_from: fromStr ? new Date(fromStr).toISOString() : null,
         temporal_to: toStr ? new Date(toStr).toISOString() : null,
         geography: fileEdit.geography.trim() || null,
@@ -978,7 +1002,8 @@ function DatasetInfo() {
 
   // --- Derived presentation values (from whatever the API provides) ---
   const orgName = dataset.organization_name || dataset.organization || "";
-  const isPublic = !dataset.private;
+  const availabilityText = availabilityLabel(dataset.availability);
+  const isPublic = parseAvailability(dataset.availability) === AVAILABILITY_PUBLIC;
   const formatsList = [...new Set(files.map((f) => f.file_format).filter(Boolean))];
   const geoVal = files.map((f) => f.geography).find(Boolean) || "";
   const licenseVal = files.map((f) => f.permissions).find(Boolean) || "";
@@ -1075,7 +1100,7 @@ function DatasetInfo() {
                 ) : (
                   <span className="badge lock">
                     <Ic name="lock" size={13} sw={2} />
-                    Private
+                    {availabilityText}
                   </span>
                 )}
                 {dataset.approved ? (
@@ -1097,10 +1122,10 @@ function DatasetInfo() {
                 <Ic name="cite" size={16} sw={2} />
                 Cite
               </button>
-              {privileges.transfer && (
-                <button className="btn btn-ghost" onClick={handleOpenTransferModal}>
+              {privileges.manage_owners && (
+                <button className="btn btn-ghost" onClick={handleOpenOwnersModal}>
                   <Ic name="link" size={16} sw={2} />
-                  Transfer
+                  Manage owners
                 </button>
               )}
               {privileges.approval && (
@@ -1255,6 +1280,21 @@ function DatasetInfo() {
                     </div>
                   </div>
                   <div className="mgroup">
+                    <div className="mgl">Owners</div>
+                    <div className="mgv">
+                      {Array.isArray(dataset.owners) && dataset.owners.length > 0
+                        ? dataset.owners.map((o, idx) => (
+                            <span key={o.user_id}>
+                              {idx > 0 ? ", " : ""}
+                              <Link to={`/profile?id=${encodeURIComponent(o.user_id)}`}>
+                                {o.full_name || o.user_id}
+                              </Link>
+                            </span>
+                          ))
+                        : "—"}
+                    </div>
+                  </div>
+                  <div className="mgroup">
                     <div className="mgl">Organization</div>
                     <div className="mgv">
                       {dataset.organization ? (
@@ -1391,21 +1431,14 @@ function DatasetInfo() {
                                   <div className="mgv">{origin}</div>
                                 </div>
                               )}
-                              {(file.groundtruthed != null || file.value) && (
+                              {file.groundtruthed != null && (
                                 <div className="mgroup">
                                   <div className="mgl">Quality</div>
                                   <div className="mgv">
-                                    {file.groundtruthed != null && (
-                                      <span className="verified">
-                                        <Ic name="verified" size={14} sw={2} />
-                                        Groundtruthed — {file.groundtruthed ? "Yes" : "No"}
-                                      </span>
-                                    )}
-                                    {file.value && (
-                                      <div style={{ marginTop: "4px" }}>
-                                        Value: {file.value}
-                                      </div>
-                                    )}
+                                    <span className="verified">
+                                      <Ic name="verified" size={14} sw={2} />
+                                      Groundtruthed — {file.groundtruthed ? "Yes" : "No"}
+                                    </span>
                                   </div>
                                 </div>
                               )}
@@ -1599,7 +1632,7 @@ function DatasetInfo() {
                 </div>
                 <div className="rrow">
                   <span className="k">Availability</span>
-                  <span className="v">{isPublic ? "Public" : "Private"}</span>
+                  <span className="v">{availabilityText}</span>
                 </div>
                 <div className="rrow">
                   <span className="k">Status</span>
@@ -1637,116 +1670,106 @@ function DatasetInfo() {
         </div>
       </div>
 
-      {/* Transfer dataset modal */}
-      {showTransferModal && (
+      {showOwnersModal && (
         <div
           className="cmdk-overlay show"
           role="dialog"
           aria-modal="true"
-          aria-labelledby="transfer-dataset-modal-title"
+          aria-labelledby="manage-owners-modal-title"
           onClick={(e) => {
-            if (e.target === e.currentTarget) handleCloseTransferModal();
+            if (e.target === e.currentTarget) handleCloseOwnersModal();
           }}
         >
-          <div className="modal-card" ref={transferModalDialogRef}>
+          <div className="modal-card" ref={ownersModalDialogRef}>
             <div className="modal-head">
-              <h3 id="transfer-dataset-modal-title">Transfer dataset</h3>
-              <p>Move ownership to another member of this organization.</p>
+              <h3 id="manage-owners-modal-title">Manage owners</h3>
+              <p>Add or remove owners. The original creator cannot be removed.</p>
               <button
                 className="btn-close btn btn-quiet"
-                onClick={handleCloseTransferModal}
-                aria-label="Close transfer dialog"
+                onClick={handleCloseOwnersModal}
+                aria-label="Close owners dialog"
                 style={{ position: "absolute", top: "16px", right: "16px" }}
               >
                 <Ic name="close" size={16} sw={2} />
               </button>
             </div>
             <div className="modal-body">
-              {transferLoadingOrg && (
+              {ownerLoadingOrg && (
                 <div className="empty" role="status">
                   <p>Loading members…</p>
                 </div>
               )}
-              {transferFetchError && (
+              {ownerFetchError && (
                 <div className="attn attn-card warn" role="alert" style={{ marginBottom: "14px" }}>
-                  <span>{transferFetchError}</span>
+                  <span>{ownerFetchError}</span>
                 </div>
               )}
-              {!transferLoadingOrg &&
-                !transferFetchError &&
-                transferMembers.length === 0 && (
-                  <p className="muted">No members found for this organization.</p>
-                )}
-              {!transferLoadingOrg && transferMembers.length > 0 && (
+              <div className="mgroups" style={{ marginBottom: "16px" }}>
+                {(dataset.owners || []).map((o) => {
+                  const isCreator = String(o.user_id) === String(dataset.creator);
+                  return (
+                    <div className="mgroup" key={o.user_id}>
+                      <div className="mgl">{isCreator ? "Creator" : "Owner"}</div>
+                      <div className="mgv" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <span>{o.full_name || o.user_id}</span>
+                        {!isCreator && (
+                          <button
+                            type="button"
+                            className="btn btn-quiet"
+                            disabled={ownerSubmitting}
+                            onClick={() => handleRemoveOwner(o.user_id)}
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {!ownerLoadingOrg && ownerMembers.length > 0 && (
                 <>
                   <div className="field">
-                    <label htmlFor="transfer-member-select">Transfer to</label>
+                    <label htmlFor="owner-member-select">Add owner</label>
                     <select
-                      id="transfer-member-select"
-                      ref={transferMemberSelectRef}
-                      value={transferSelectedUserId}
-                      onChange={(e) => setTransferSelectedUserId(e.target.value)}
-                      aria-label="Select member to transfer dataset to"
+                      id="owner-member-select"
+                      ref={ownerMemberSelectRef}
+                      value={ownerSelectedUserId}
+                      onChange={(e) => setOwnerSelectedUserId(e.target.value)}
                       style={{ width: "100%" }}
                     >
                       <option value="">Select a member…</option>
-                      {transferMembers.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.full_name}
-                        </option>
-                      ))}
+                      {ownerMembers
+                        .filter(
+                          (m) =>
+                            !(dataset.owners || []).some(
+                              (o) => String(o.user_id) === String(m.id)
+                            )
+                        )
+                        .map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.full_name} ({roleLabelForOwner(m.role)})
+                          </option>
+                        ))}
                     </select>
                   </div>
-                  {(() => {
-                    const sel = transferMembers.find(
-                      (m) => String(m.id) === String(transferSelectedUserId)
-                    );
-                    return (
-                      <div className="mgroups" style={{ marginTop: "14px" }}>
-                        <div className="mgroup">
-                          <div className="mgl">Name</div>
-                          <div className="mgv">{sel ? sel.full_name : "—"}</div>
-                        </div>
-                        <div className="mgroup">
-                          <div className="mgl">Email</div>
-                          <div className="mgv">{sel ? sel.email : "—"}</div>
-                        </div>
-                        <div className="mgroup">
-                          <div className="mgl">Designation</div>
-                          <div className="mgv">
-                            {sel?.designation != null && sel.designation !== ""
-                              ? sel.designation
-                              : "—"}
-                          </div>
-                        </div>
-                        <div className="mgroup">
-                          <div className="mgl">Role</div>
-                          <div className="mgv">
-                            {sel ? roleLabelForTransfer(sel.role) : "—"}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
                 </>
               )}
             </div>
             <div className="modal-foot">
-              <button className="btn btn-ghost" onClick={handleCloseTransferModal}>
-                Cancel
+              <button className="btn btn-ghost" onClick={handleCloseOwnersModal}>
+                Close
               </button>
               <button
                 className="btn btn-primary"
-                onClick={handleSubmitTransfer}
+                onClick={handleAddOwner}
                 disabled={
-                  transferSubmitting ||
-                  !transferSelectedUserId ||
-                  transferLoadingOrg ||
-                  transferMembers.length === 0
+                  ownerSubmitting ||
+                  !ownerSelectedUserId ||
+                  ownerLoadingOrg
                 }
-                aria-label="Submit dataset transfer"
               >
-                {transferSubmitting ? "Submitting…" : "Submit"}
+                {ownerSubmitting ? "Saving…" : "Add owner"}
               </button>
             </div>
           </div>
@@ -1815,18 +1838,21 @@ function DatasetInfo() {
                 <div className="field">
                   <label>Availability</label>
                   <select
-                    value={datasetEdit.isPrivate ? "private" : "public"}
+                    value={datasetEdit.availability}
                     onChange={(e) =>
                       dispatchDatasetEdit({
                         type: "SET_FIELD",
-                        field: "isPrivate",
-                        value: e.target.value === "private",
+                        field: "availability",
+                        value: Number(e.target.value),
                       })
                     }
                     style={{ width: "100%" }}
                   >
-                    <option value="public">Public</option>
-                    <option value="private">Private</option>
+                    {AVAILABILITY_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div className="field">
@@ -2139,24 +2165,6 @@ function DatasetInfo() {
                     }}
                     min={0}
                   />
-                </div>
-                <div className="field">
-                  <label>Value</label>
-                  <select
-                    value={fileEdit.value}
-                    onChange={(e) =>
-                      dispatchFileEdit({
-                        type: "SET_FIELD",
-                        field: "value",
-                        value: e.target.value,
-                      })
-                    }
-                    style={{ width: "100%" }}
-                  >
-                    <option value="high">high</option>
-                    <option value="medium">medium</option>
-                    <option value="low">low</option>
-                  </select>
                 </div>
                 <div className="field-row">
                   <div className="field">

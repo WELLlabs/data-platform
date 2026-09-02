@@ -1,8 +1,10 @@
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
+from uuid import UUID
 
 from fastapi_users_db_sqlalchemy import SQLAlchemyBaseUserTableUUID
-from sqlalchemy import Boolean, DateTime, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -17,9 +19,16 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
 
     # Additional fields
     full_name: Mapped[str] = mapped_column(String(length=50), nullable=False)
-    student: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     designation: Mapped[Optional[str]] = mapped_column(String(length=25), nullable=True)
-    organization: Mapped[str] = mapped_column(String(length=50), nullable=False)
+    organization: Mapped[Optional[UUID]] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    auth_provider: Mapped[str] = mapped_column(
+        String(length=20), default="password", nullable=False
+    )
     role: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     phone: Mapped[Optional[str]] = mapped_column(String(length=20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -45,3 +54,7 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
         if self.user_contribution is None:
             return 0
         return self.user_contribution.contributions
+
+    @property
+    def profile_complete(self) -> bool:
+        return bool(self.full_name and str(self.full_name).strip() and self.organization)

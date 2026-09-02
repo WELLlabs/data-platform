@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
+from core.availability import parse_availability
 from core.config import settings
 from fastapi import HTTPException, status
 from models.dataset import Dataset
@@ -22,6 +23,7 @@ from services.auth import AuthService
 from services.dataset import DatasetService
 from services.upload import UploadService
 from services.upload_job import get_job_status
+from services.typesense_index import safe_index_dataset
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -179,13 +181,18 @@ async def complete_upload_job(
                     creator=UUID(str(ev["creator"])),
                     dataset_description=ev.get("description"),
                     organization=str(ev["organization"]),
-                    private=bool(ev.get("private", False)),
+                    availability=parse_availability(
+                        ev.get("availability", ev.get("private", 0))
+                    ),
                     approved=appr,
                     approved_by=appr_by,
                     created_at=created_at,
                 )
                 session.add(ds)
                 await session.flush()
+                await dataset_service.seed_creator_as_owner(
+                    ds_id, UUID(str(ev["creator"])), added_by=UUID(str(ev["creator"]))
+                )
                 tags_list = ev.get("tags") or []
                 if isinstance(tags_list, str):
                     tags_list = [tags_list]
@@ -281,7 +288,6 @@ async def complete_upload_job(
             prov, src = _truncate_prov_src(ev.get("provenance"), ev.get("source"))
             tf = _parse_iso(ev.get("temporal_from"))
             tt = _parse_iso(ev.get("temporal_to"))
-            val = ev.get("value") or "low"
             nf = File(
                 file_id=fid,
                 file_title=str(ev["file_title"]),
@@ -298,7 +304,6 @@ async def complete_upload_job(
                 groundtruthed=ev.get("groundtruthed"),
                 permissions=ev.get("permissions") or "CC0: Public Domain",
                 duration=_safe_int(ev.get("duration"), 0),
-                value=val,
                 temporal_from=tf,
                 temporal_to=tt,
                 geography=ev.get("geography"),
@@ -356,5 +361,6 @@ async def complete_upload_job(
 
     for did in dataset_ids_to_invalidate:
         await _invalidate_ds_cache(did, auth_service, logger)
+        await safe_index_dataset(session, did)
 
     return await get_job_status(jid, redis_jobs)

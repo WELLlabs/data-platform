@@ -1,7 +1,6 @@
 # Setup
-Clone the repositories (for https, copy link from github)
+Clone the repository
 ```bash
-git@github.com:WELLlabs/s3-handler.git
 git@github.com:WELLlabs/open-data-portal.git
 ```
 To update the git repository for any new changes,
@@ -73,7 +72,8 @@ sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/copy-ssl-certs.sh
       "Effect": "Allow",
       "Action": [
         "s3:ListBucket",
-        "s3:GetBucketLocation"
+        "s3:GetBucketLocation",
+        "s3:ListBucketMultipartUploads"
       ],
       "Resource": "arn:aws:s3:::your-bucket-name"
     },
@@ -83,7 +83,9 @@ sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/copy-ssl-certs.sh
       "Action": [
         "s3:PutObject",
         "s3:GetObject",
-        "s3:DeleteObject"
+        "s3:DeleteObject",
+        "s3:AbortMultipartUpload",
+        "s3:ListMultipartUploadParts"
       ],
       "Resource": "arn:aws:s3:::your-bucket-name/*"
     }
@@ -123,10 +125,9 @@ uv run --directory src/api alembic upgrade head
 ```
 
 # Docker Compose
-Before executing the docker compose, build the s3handler image. (note: run in s3-handler repo directory)
-```bash
-docker build -t s3handler .
-```
+Set `S3_BUCKET`, `S3_REGION`, and AWS credentials (or an instance IAM role) in `.env`. The API generates S3 presigned URLs (single PUT or multipart) directly.
+
+For search, set `TYPESENSE_HOST` and `TYPESENSE_API_KEY` (see `env.template`). Leave `TYPESENSE_HOST` blank to fall back to PostgreSQL full-text search.
 
 then run the docker compose
 ```bash

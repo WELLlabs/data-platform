@@ -615,7 +615,7 @@ def send_dataset_transfer(
     self: Any, email: str, title: str, new_creator: str, admin_name: str
 ) -> dict[str, Any]:
     """
-    Notify previous creator and/or new creator about a dataset ownership transfer (Brevo template).
+    Notify a user that they were added as a dataset owner (reuses the transfer Brevo template).
 
     Args:
         email: Recipient address

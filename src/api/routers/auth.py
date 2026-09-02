@@ -1,14 +1,17 @@
 import logging
 import re
+import secrets
+from urllib.parse import urlencode
 from uuid import UUID
 
+import httpx
 from core.config import settings
 from fastapi import APIRouter, Body, Depends, Form, HTTPException, Request, status
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPBearer
 from pydantic import EmailStr
-from schemas.user import UserCreate, UserRead
+from schemas.user import CompleteProfileUpdate, UserCreate, UserRead
 from services.auth import (
     AuthService,
     RedisStrategy,
@@ -16,7 +19,7 @@ from services.auth import (
     get_auth_service,
     get_user_db,
 )
-from utils.security import sanitize_input
+from utils.security import is_profile_complete, sanitize_input
 
 # Security scheme for API key authentication
 security = HTTPBearer()
@@ -119,10 +122,9 @@ class AuthController:
         try:
             # Log request details excluding sensitive fields
             self.logger.info(
-                "Sign up request received: email=%s, full_name=%s, student=%s, org=%s, role=%s",
+                "Sign up request received: email=%s, full_name=%s, org=%s, role=%s",
                 user_data.email,
                 user_data.full_name,
-                user_data.student,
                 user_data.organization,
                 user_data.role,
             )
@@ -377,6 +379,212 @@ async def get_current_user(
     Get current authenticated user information.
     """
     return await controller.get_current_user(request)
+
+
+@router.get("/login-options")
+async def login_options():
+    google_enabled = bool(
+        settings.GOOGLE_CLIENT_ID.strip() and settings.GOOGLE_CLIENT_SECRET.strip()
+    )
+    domain = settings.ALLOWED_EMAIL_DOMAIN.strip() or None
+    return JSONResponse(
+        content={
+            "google_enabled": google_enabled,
+            "allowed_email_domain": domain,
+        }
+    )
+
+
+@router.get("/apikey")
+async def reveal_apikey(
+    request: Request,
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    session_token = request.cookies.get(settings.COOKIE_NAME)
+    if not session_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No authentication token found",
+        )
+    strategy = RedisStrategy(auth_service.redis, settings.COOKIE_MAX_AGE_SECONDS)
+    user_id = await strategy.read_token(session_token)
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired session",
+        )
+    user = await auth_service.user_db.get(UUID(user_id))
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found"
+        )
+    return JSONResponse(content={"apikey": user.apikey}, status_code=status.HTTP_200_OK)
+
+
+def _google_redirect_uri() -> str:
+    if settings.GOOGLE_REDIRECT_URI.strip():
+        return settings.GOOGLE_REDIRECT_URI.strip()
+    return f"{settings.DOMAIN.rstrip('/')}/api/auth/google/callback"
+
+
+@router.get("/google")
+async def google_oauth_start(
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    if not (
+        settings.GOOGLE_CLIENT_ID.strip() and settings.GOOGLE_CLIENT_SECRET.strip()
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Google sign-in is not configured",
+        )
+    state = secrets.token_urlsafe(32)
+    await auth_service.redis.setex(f"oauth:google:{state}", 600, "1")
+    params = {
+        "client_id": settings.GOOGLE_CLIENT_ID.strip(),
+        "redirect_uri": _google_redirect_uri(),
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "access_type": "online",
+        "prompt": "select_account",
+    }
+    return RedirectResponse(
+        url=f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}",
+        status_code=status.HTTP_302_FOUND,
+    )
+
+
+@router.get("/google/callback")
+async def google_oauth_callback(
+    request: Request,
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    if not (
+        settings.GOOGLE_CLIENT_ID.strip() and settings.GOOGLE_CLIENT_SECRET.strip()
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Google sign-in is not configured",
+        )
+    error = request.query_params.get("error")
+    if error:
+        return RedirectResponse(
+            url=f"{settings.DOMAIN.rstrip('/')}/signin?error=google",
+            status_code=status.HTTP_302_FOUND,
+        )
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
+    if not code or not state:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing OAuth code or state",
+        )
+    stored = await auth_service.redis.get(f"oauth:google:{state}")
+    await auth_service.redis.delete(f"oauth:google:{state}")
+    if not stored:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired OAuth state",
+        )
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        token_resp = await client.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code,
+                "client_id": settings.GOOGLE_CLIENT_ID.strip(),
+                "client_secret": settings.GOOGLE_CLIENT_SECRET.strip(),
+                "redirect_uri": _google_redirect_uri(),
+                "grant_type": "authorization_code",
+            },
+        )
+        if token_resp.status_code != 200:
+            logger.error("Google token exchange failed: %s", token_resp.status_code)
+            return RedirectResponse(
+                url=f"{settings.DOMAIN.rstrip('/')}/signin?error=google",
+                status_code=status.HTTP_302_FOUND,
+            )
+        access_token = token_resp.json().get("access_token")
+        if not access_token:
+            return RedirectResponse(
+                url=f"{settings.DOMAIN.rstrip('/')}/signin?error=google",
+                status_code=status.HTTP_302_FOUND,
+            )
+        info_resp = await client.get(
+            "https://openidconnect.googleapis.com/v1/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        if info_resp.status_code != 200:
+            return RedirectResponse(
+                url=f"{settings.DOMAIN.rstrip('/')}/signin?error=google",
+                status_code=status.HTTP_302_FOUND,
+            )
+        info = info_resp.json()
+    email = (info.get("email") or "").strip().lower()
+    if not email:
+        return RedirectResponse(
+            url=f"{settings.DOMAIN.rstrip('/')}/signin?error=google",
+            status_code=status.HTTP_302_FOUND,
+        )
+    try:
+        user = await auth_service.get_or_create_google_user(
+            email, info.get("name")
+        )
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_400_BAD_REQUEST:
+            return RedirectResponse(
+                url=f"{settings.DOMAIN.rstrip('/')}/signin?error=domain",
+                status_code=status.HTTP_302_FOUND,
+            )
+        raise
+    cookie = await auth_service.issue_session_cookie(user)
+    dest = "/complete-profile" if not is_profile_complete(user) else "/"
+    response = RedirectResponse(
+        url=f"{settings.DOMAIN.rstrip('/')}{dest}",
+        status_code=status.HTTP_302_FOUND,
+    )
+    response.set_cookie(**cookie)
+    return response
+
+
+@router.get("/complete-profile", response_model=UserRead)
+async def get_complete_profile(
+    request: Request,
+    controller: AuthController = Depends(get_auth_controller),
+):
+    return await controller.get_current_user(request)
+
+
+@router.put("/complete-profile", response_model=UserRead)
+async def put_complete_profile(
+    request: Request,
+    payload: CompleteProfileUpdate,
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    session_token = request.cookies.get(settings.COOKIE_NAME)
+    if not session_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No authentication token found",
+        )
+    strategy = RedisStrategy(auth_service.redis, settings.COOKIE_MAX_AGE_SECONDS)
+    user_id = await strategy.read_token(session_token)
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired session",
+        )
+    user = await auth_service.user_db.get(UUID(user_id))
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found"
+        )
+    user = await auth_service.complete_profile(user, payload)
+    user_read = await auth_service.user_to_user_read(user)
+    return JSONResponse(
+        content=jsonable_encoder(user_read.model_dump()),
+        status_code=status.HTTP_200_OK,
+    )
 
 
 @router.post("/signout")

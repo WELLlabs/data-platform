@@ -25,6 +25,8 @@ export default function Search() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [hasSearched, setHasSearched] = useState(false);
+  const [selectedTags, setSelectedTags] = useState([]);
+  const [tagFacets, setTagFacets] = useState([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -54,18 +56,24 @@ export default function Search() {
     if (searchWithinOrg && orgId?.trim()) p.set("organization_id", orgId.trim());
     if (startDate?.trim()) p.set("start_date", startDate.trim() + "T00:00:00");
     if (endDate?.trim()) p.set("end_date", endDate.trim() + "T23:59:59");
-    if (isAuthenticated && user?.apikey) p.set("apikey", user.apikey);
+    if (selectedTags.length) p.set("tags", selectedTags.join(","));
     try {
       const res = await fetch(`${search_endpoint}?${p.toString()}`, { credentials: "include" });
       if (!res.ok) throw new Error(`Search failed: ${res.statusText}`);
       const data = await res.json();
       setResult(data.result ?? []); setTotal(data.total ?? 0); setCurrentPage(page); setHasSearched(true);
+      setTagFacets(Array.isArray(data.tag_facets) ? data.tag_facets : []);
     } catch (err) {
       setError(err.message || "Search failed. Please try again."); setResult([]); setTotal(0);
     } finally { setLoading(false); }
-  }, [query, searchWithinOrg, orgId, startDate, endDate, isAuthenticated, user?.apikey]);
+  }, [query, searchWithinOrg, orgId, startDate, endDate, selectedTags, isAuthenticated]);
 
   useEffect(() => { if (params.get("q")) runSearch(1); /* eslint-disable-next-line */ }, []);
+
+  useEffect(() => {
+    if (hasSearched) runSearch(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTags]);
 
   const hasMore = currentPage * LIMIT < total;
   const openItem = (item) => { if (item?.dataset_id) navigate(`/dataset-info?dataset_id=${encodeURIComponent(item.dataset_id)}`); };
@@ -101,6 +109,31 @@ export default function Search() {
                 <option value="">Select organization</option>
                 {organizations.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
               </select>
+            </div>
+          </div>
+          <div className="fgroup">
+            <h4>Tags</h4>
+            <div className="fbody">
+              {tagFacets.map((facet) => (
+                <label className="check" key={facet.value}>
+                  <input
+                    type="checkbox"
+                    checked={selectedTags.includes(facet.value)}
+                    onChange={() => {
+                      setSelectedTags((cur) => {
+                        const next = cur.includes(facet.value)
+                          ? cur.filter((t) => t !== facet.value)
+                          : [...cur, facet.value];
+                        return next;
+                      });
+                    }}
+                  />
+                  {facet.value}{facet.count != null ? ` (${facet.count})` : ""}
+                </label>
+              ))}
+              {hasSearched && tagFacets.length === 0 && (
+                <p className="muted" style={{ fontSize: 13 }}>No tag facets</p>
+              )}
             </div>
           </div>
           <div className="fgroup">

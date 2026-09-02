@@ -10,7 +10,7 @@ function FAQ() {
     {
       question: "Who can access the portal?",
       answer:
-        "The portal is accessible to all WELL Labs team members. Public datasets are available to everyone, while private datasets are restricted to members of the same organization.",
+        "Public datasets are visible to everyone. Other levels restrict access to the creator, the organization, organization admins, or dataset owners.",
     },
     {
       question: "How do I upload a dataset?",
@@ -23,9 +23,9 @@ function FAQ() {
         "The portal supports various file formats including CSV, JSON, Excel, and other common data formats. When uploading, you can specify the file format in the dataset metadata.",
     },
     {
-      question: "What is the difference between public and private datasets?",
+      question: "What do the dataset availability levels mean?",
       answer:
-        "Public datasets are visible to all users of the portal, while private datasets are only visible to members of the same organization. You can set the privacy level when creating or editing a dataset.",
+        "Public (0) is visible to everyone. Private (1) is creator-only. Organization (2) is visible to members of the dataset's organization. Admins (3) is visible to organization admins and dataset owners. Owners (4) is visible only to dataset owners (including the creator). Restricted levels require a private organization.",
     },
     {
       question: "How do I download a dataset?",

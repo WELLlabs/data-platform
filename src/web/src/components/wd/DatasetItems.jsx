@@ -1,13 +1,16 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import Ic from "./Icons";
+import { availabilityLabel, isRestrictedAvailability, parseAvailability } from "../../constants/availability";
 
 export const dsLink = (id) => `/dataset-info?dataset_id=${encodeURIComponent(id)}`;
 export const fmtCount = (v) => (typeof v === "number" ? v.toLocaleString() : v == null ? null : v);
 
-export function AvailBadge({ isPrivate }) {
-  return isPrivate
-    ? <span className="badge lock"><Ic name="lock" size={12} sw={1.9} />Private</span>
+export function AvailBadge({ availability }) {
+  const restricted = isRestrictedAvailability(availability);
+  const label = availabilityLabel(availability);
+  return restricted
+    ? <span className="badge lock"><Ic name="lock" size={12} sw={1.9} />{label}</span>
     : <span className="badge public dot">Public</span>;
 }
 
@@ -20,7 +23,7 @@ export function normalize(d) {
     org: d.organization || d.organization_name || "",
     downloads: d.downloads,
     files: d.file_count,
-    isPrivate: !!d.private,
+    availability: parseAvailability(d.availability ?? d.private),
     date: d.created_at || d.updated_at,
   };
 }
@@ -37,7 +40,7 @@ export function DatasetRow({ dataset }) {
       <div className="rm">
         {d.org && <span>{d.org}</span>}
         {specs.length > 0 && <span className="spec">{specs.join(" · ")}</span>}
-        <AvailBadge isPrivate={d.isPrivate} />
+        <AvailBadge availability={d.availability} />
       </div>
       <span className="arrow"><Ic name="arrow" size={16} /></span>
     </Link>
@@ -48,7 +51,7 @@ export function DatasetCard({ dataset }) {
   const d = normalize(dataset);
   return (
     <Link className="dcard" to={dsLink(d.id)}>
-      <div className="top"><span className="cat">Dataset</span><AvailBadge isPrivate={d.isPrivate} /></div>
+      <div className="top"><span className="cat">Dataset</span><AvailBadge availability={d.availability} /></div>
       <h3>{d.title}</h3>
       <p className="desc">{d.desc || "No description provided."}</p>
       {d.org && <div className="prov">{d.org}</div>}

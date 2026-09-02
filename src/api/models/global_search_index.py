@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, String, Text
+from sqlalchemy import DateTime, Integer, Text
 from sqlalchemy.dialects.postgresql import TSVECTOR, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -24,9 +24,9 @@ class GlobalSearchIndex(Base):
     Read-only search index populated by triggers.
 
     - Dataset rows: file_id is NULL; temporal_from/temporal_to are NULL;
-      organization_id and private from datasets.
+      organization_id and availability from datasets.
     - File rows: file_id set; temporal_from/temporal_to from file;
-      organization_id and private from parent dataset.
+      organization_id and availability from parent dataset.
     """
 
     __tablename__ = "global_search_index"
@@ -52,12 +52,12 @@ class GlobalSearchIndex(Base):
         TSVECTOR(),
         nullable=True,
     )
-    organization_id: Mapped[str] = mapped_column(
-        String(length=100),
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
         nullable=False,
         index=True,
     )
-    private: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    availability: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     temporal_from: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True),
         nullable=True,

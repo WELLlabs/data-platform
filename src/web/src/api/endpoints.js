@@ -21,9 +21,12 @@ export const organizations_endpoint = "/api/organizations";
 export const list_organizations_endpoint = "/api/organizations/list_organizations";
 export const organization_validate_endpoint = "/api/organizations/validate";
 export const organization_by_id_endpoint = (id) => `/api/organizations/${id}`;
+export const organization_add_member_endpoint = (id) =>
+  `/api/organizations/${id}/members`;
 
 // Upload/Data endpoints
 export const upload_url_endpoint = "/api/upload_url";
+export const complete_multipart_endpoint = "/api/complete_multipart";
 export const create_upload_job_endpoint = "/api/create_upload_job";
 export const complete_upload_job_endpoint = "/api/complete_upload_job";
 export const create_dataset_endpoint = "/api/create_dataset";
@@ -35,7 +38,11 @@ export const add_files_url_endpoint = "/api/add_file";
 export const delete_dataset_endpoint = "/api/delete_dataset";
 export const delete_file_endpoint = "/api/delete_file";
 export const edit_dataset_endpoint = "/api/edit_dataset";
-export const transfer_dataset_endpoint = "/api/transfer_dataset";
+export const dataset_owners_endpoint = "/api/dataset_owners";
+export const auth_apikey_endpoint = "/api/auth/apikey";
+export const login_options_endpoint = "/api/auth/login-options";
+export const complete_profile_endpoint = "/api/auth/complete-profile";
+export const google_auth_endpoint = "/api/auth/google";
 export const edit_file_endpoint = "/api/edit_file";
 export const profile_endpoint = "/api/profile";
 export const edit_profile_endpoint = "/api/edit_profile";
@@ -49,3 +56,4 @@ export const change_user_role_endpoint = (userId, role) =>
   `/api/change_user_role/${userId}/${role}`;
 export const delete_user_endpoint = (userId) => `/api/delete_user/${userId}`;
 export const approve_dataset_endpoint = (datasetId) => `/api/approve_dataset/${datasetId}`;
+export const reject_dataset_endpoint = (datasetId) => `/api/reject_dataset/${datasetId}`;

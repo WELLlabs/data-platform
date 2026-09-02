@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import { user_datasets_endpoint, send_verify_email_endpoint } from "../api/endpoints";
+import { user_datasets_endpoint, send_verify_email_endpoint, organization_by_id_endpoint } from "../api/endpoints";
 import Ic from "../components/wd/Icons";
 import Contour from "../components/wd/Contour";
 import { useToast } from "../components/wd/Toast";
@@ -21,6 +21,7 @@ function Dashboard() {
   const [verificationMessage, setVerificationMessage] = useState("");
   const [sendingVerification, setSendingVerification] = useState(false);
   const [wsTab, setWsTab] = useState("published");
+  const [orgName, setOrgName] = useState("");
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user, isAuthenticated, verifyUser } = useAuth();
@@ -120,7 +121,15 @@ function Dashboard() {
       }
       fetchUserDatasets(user.id);
     }
-  }, [user?.id, currentPage]);
+    if (user?.organization) {
+      fetch(organization_by_id_endpoint(user.organization), { credentials: "include" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (data?.name) setOrgName(data.name);
+        })
+        .catch(() => {});
+    }
+  }, [user?.id, user?.organization, currentPage]);
 
   // Third useEffect: Refresh user data when window regains focus
   // This ensures user verification status is updated after email verification
@@ -232,12 +241,7 @@ function Dashboard() {
     user.full_name ||
     "there";
   const orgLine =
-    [
-      user.designation || user.role,
-      user.organization || user.organization_name || user.team,
-    ]
-      .filter(Boolean)
-      .join(" · ") || user.email;
+    [user.designation, orgName || null, user.email].filter(Boolean).join(" · ");
 
   // Client-side grouping of the current page of datasets
   const published = datasets.filter((d) => d.approved === true);
@@ -271,6 +275,12 @@ function Dashboard() {
               <p className="ws-sub">{orgLine}</p>
             </div>
             <button
+              className="btn btn-ghost"
+              onClick={() => navigate(`/organisation?id=${encodeURIComponent(user.organization || "")}`)}
+            >
+              Organization
+            </button>
+            <button
               className="btn btn-primary"
               onClick={() => navigate('/create-dataset')}
             >
@@ -279,6 +289,21 @@ function Dashboard() {
             </button>
           </div>
         </section>
+
+        <div className="dash-stats">
+          <div className="dash-stat">
+            <b>{datasetsLoading ? "…" : published.length}</b>
+            <span>Published on this page</span>
+          </div>
+          <div className="dash-stat">
+            <b>{datasetsLoading ? "…" : pendingCount}</b>
+            <span>Awaiting approval</span>
+          </div>
+          <div className="dash-stat">
+            <b>{user.verified ? "Yes" : "Pending"}</b>
+            <span>Organization membership</span>
+          </div>
+        </div>
 
         <div className="sec-label" style={{ marginBottom: 14 }}>
           Needs your attention
@@ -332,7 +357,8 @@ function Dashboard() {
           )}
         </div>
 
-        <section style={{ padding: "28px 0 44px" }}>
+        <section className="dash-grid">
+          <div className="dash-panel">
           <div className="seg">
             <button
               className={wsTab === "published" ? "active" : ""}
@@ -412,6 +438,26 @@ function Dashboard() {
               </button>
             </div>
           )}
+          </div>
+          <aside className="dash-panel">
+            <div className="sec-label" style={{ marginBottom: 12 }}>Quick links</div>
+            <p className="muted" style={{ marginBottom: 14 }}>
+              Manage membership, publish data, and review the queue from one place.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <button className="btn btn-ghost" onClick={() => navigate("/profile")}>
+                Profile
+              </button>
+              {Number(user.role) > 0 && (
+                <button className="btn btn-ghost" onClick={() => navigate("/approvals")}>
+                  Approvals
+                </button>
+              )}
+              <button className="btn btn-primary" onClick={() => navigate("/create-dataset")}>
+                New dataset
+              </button>
+            </div>
+          </aside>
         </section>
       </div>
     </div>

@@ -26,9 +26,15 @@ def parse_celery_accept_content(raw: str) -> List[str]:
 class Settings(BaseSettings):
     POSTGRES_URL: str
     REDIS_URL: str
-    S3_HANDLER_URL: str
-    S3_REGION: str
+    S3_REGION: str = "ap-south-1"
     S3_BUCKET: str
+    AWS_ACCESS_KEY_ID: str = ""
+    AWS_SECRET_ACCESS_KEY: str = ""
+    S3_ACCESS_KEY_ID: str = ""
+    S3_SECRET_ACCESS_KEY: str = ""
+    S3_UPLOAD_MAX_SIZE: int = 53_687_091_200  # 50 GiB
+    S3_UPLOAD_EXP_TIME_MINS: int = 1440  # 1 day
+    S3_DOWNLOAD_EXP_TIME_MINS: int = 1440  # 1 day
     COOKIE_NAME: str = "auth_cookie"
     COOKIE_MAX_AGE_SECONDS: int = 60 * 60 * 24  # 1 day
 
@@ -49,6 +55,12 @@ class Settings(BaseSettings):
     USER_APPROVAL_REQUEST_TEMPLATE_ID: int
     USER_APPROVAL_RESPONSE_TEMPLATE_ID: int
     DATASET_TRANSFER_TEMPLATE_ID: int
+
+    # Google OAuth (button enabled only when client id and secret are set)
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_REDIRECT_URI: str = ""
+    ALLOWED_EMAIL_DOMAIN: str = ""
 
     # Upload jobs (dedicated Redis DB — not session REDIS_URL)
     UPLOAD_JOBS_BACKEND: str = Field(
@@ -73,6 +85,12 @@ class Settings(BaseSettings):
 
     # Search cache (Redis) TTL in seconds; default 120 if not set
     SEARCH_CACHE_AGE_SECONDS: int = 120
+    # Typesense (optional; empty host disables Typesense and uses Postgres FTS)
+    TYPESENSE_HOST: str = ""
+    TYPESENSE_PORT: int = 8108
+    TYPESENSE_PROTOCOL: str = "http"
+    TYPESENSE_API_KEY: str = ""
+    TYPESENSE_COLLECTION: str = "portal_search"
     # Organization list cache (Redis) TTL in seconds; default 604800 (7 days) if not set
     ORGANIZATION_LIST_CACHE_AGE_SECONDS: int = 604800
     # Dataset info cache (Redis) TTL in seconds; default 300 (5 minutes) if not set
@@ -99,6 +117,14 @@ class Settings(BaseSettings):
             k: v.replace("\r", "") if isinstance(v, str) else v
             for k, v in data.items()
         }
+
+    @model_validator(mode="after")
+    def _fallback_s3_access_keys(self) -> "Settings":
+        if not self.AWS_ACCESS_KEY_ID.strip() and self.S3_ACCESS_KEY_ID.strip():
+            self.AWS_ACCESS_KEY_ID = self.S3_ACCESS_KEY_ID.strip()
+        if not self.AWS_SECRET_ACCESS_KEY.strip() and self.S3_SECRET_ACCESS_KEY.strip():
+            self.AWS_SECRET_ACCESS_KEY = self.S3_SECRET_ACCESS_KEY.strip()
+        return self
 
 
 settings = Settings()  # type: ignore[call-arg]

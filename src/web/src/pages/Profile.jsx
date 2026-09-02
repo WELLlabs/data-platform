@@ -7,6 +7,7 @@ import {
   list_organizations_endpoint,
   profile_endpoint,
   user_datasets_endpoint,
+  auth_apikey_endpoint,
 } from "../api/endpoints";
 import Ic from "../components/wd/Icons";
 import Contour from "../components/wd/Contour";
@@ -17,6 +18,8 @@ function Profile() {
   const [profileData, setProfileData] = useState(null);
   const [error, setError] = useState("");
   const [showApiKeyOverlay, setShowApiKeyOverlay] = useState(false);
+  const [revealedApiKey, setRevealedApiKey] = useState("");
+  const [apiKeyLoading, setApiKeyLoading] = useState(false);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user, isAuthenticated, verifyUser } = useAuth();
@@ -91,11 +94,6 @@ function Profile() {
           user_id: idParam,
         });
 
-        // Add apikey if user is signed in
-        if (isAuthenticated && user?.apikey) {
-          params.append("apikey", user.apikey);
-        }
-
         const response = await fetch(
           `${profile_endpoint}?${params.toString()}`,
           { credentials: "include" }
@@ -121,7 +119,7 @@ function Profile() {
     if (searchParams.get("id")) {
       fetchProfile();
     }
-  }, [searchParams, isAuthenticated, user?.apikey, profileRefreshTrigger]);
+  }, [searchParams, isAuthenticated, user?.id, profileRefreshTrigger]);
 
   // Fetch user datasets if privileges.user_datasets is true
   // Wait for profileData to be fetched before checking privileges
@@ -477,11 +475,9 @@ function Profile() {
         {/* Conditional Buttons */}
         {profileData.privileges?.edit && (
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 18 }}>
+            {profileData.auth_provider !== "google" && (
             <button
               className="btn btn-ghost"
-              // the intent is always to change the current user's own password
-              // this button will be hidden if the user of profile page is not the current user or no user is signed in
-              // this button will be visible based on the privileges.edit condition from the backend response
               onClick={() => {
                 const userId = user?.id || profileData?.id;
                 if (userId) {
@@ -491,11 +487,29 @@ function Profile() {
             >
               Change password
             </button>
+            )}
             <button
               className="btn btn-ghost"
-              onClick={() => setShowApiKeyOverlay(true)}
+              onClick={async () => {
+                setApiKeyLoading(true);
+                try {
+                  const resp = await fetch(auth_apikey_endpoint, {
+                    credentials: "include",
+                  });
+                  if (!resp.ok) {
+                    throw new Error("Could not load API key");
+                  }
+                  const data = await resp.json();
+                  setRevealedApiKey(data.apikey || "");
+                  setShowApiKeyOverlay(true);
+                } catch {
+                  setRevealedApiKey("");
+                } finally {
+                  setApiKeyLoading(false);
+                }
+              }}
             >
-              API key
+              {apiKeyLoading ? "Loading…" : "API key"}
             </button>
           </div>
         )}
@@ -659,7 +673,7 @@ function Profile() {
           )}
 
         {/* API Key Overlay */}
-        {showApiKeyOverlay && profileData.apikey && (
+        {showApiKeyOverlay && revealedApiKey && (
           <div
             className="cmdk-overlay show"
             role="dialog"
@@ -676,7 +690,7 @@ function Profile() {
               <div className="modal-body">
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <span className="mono-token" style={{ flex: 1, wordBreak: "break-all" }}>
-                    {profileData.apikey}
+                    {revealedApiKey}
                   </span>
                   <button
                     className="btn btn-quiet"

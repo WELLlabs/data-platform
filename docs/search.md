@@ -59,7 +59,7 @@ The table is defined in the migration and mirrored by the SQLAlchemy model. It h
 | `context`        | TEXT                    | Yes      | Concatenated searchable text (see [Context construction](#context-construction)) |
 | `fts_vector`     | TSVECTOR                | Yes      | Full-text search vector (English) |
 | `organization_id`| VARCHAR(100)            | No       | From dataset (direct or parent) |
-| `private`        | BOOLEAN                 | No       | From dataset (direct or parent) |
+| `availability`   | INTEGER                 | No       | From dataset (0–4) |
 | `temporal_from`  | TIMESTAMP WITH TIME ZONE | Yes      | NULL for datasets; from file when present |
 | `temporal_to`    | TIMESTAMP WITH TIME ZONE | Yes      | NULL for datasets; from file when present |
 
@@ -210,7 +210,7 @@ The core logic lives in `src/api/services/search.py` (`SearchService`).
 
 - **Query:** Must be non-empty after strip; already sanitized by the router.
 - **Visibility (who can see which rows):**
-  - **No apikey:** Only rows with `private = false`. Then optionally filter by `organization_id`, `start_date`, `end_date`.
+  - Visibility uses `availability` plus creator/owner/org/admin rules (`core/availability.py`).
   - **With apikey:** Resolve user’s organization from `users` by `apikey`. If no filters: show rows where `organization_id = user_org` OR `private = false`. If filters are present, combine visibility with filter logic below.
 
 ### 7.2 Filter Rules (Summary)

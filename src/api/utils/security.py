@@ -7,9 +7,45 @@ import string
 from typing import Optional
 
 import bleach
+from fastapi import Header
 from models.user import User
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+
+def mask_apikey(apikey: Optional[str]) -> str:
+    """Return a masked API key representation safe for logs."""
+    if not apikey:
+        return "none"
+    stripped_apikey = apikey.strip()
+    if not stripped_apikey:
+        return "empty"
+    if len(stripped_apikey) <= 4:
+        return f"***{stripped_apikey}"
+    return f"{'*' * (len(stripped_apikey) - 4)}{stripped_apikey[-4:]}"
+
+
+def optional_api_key(
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+) -> Optional[str]:
+    """Script auth: X-API-Key header only (never a query parameter)."""
+    if x_api_key and x_api_key.strip():
+        return x_api_key.strip()
+    return None
+
+
+def email_matches_allowed_domain(email: str, allowed_domain: Optional[str]) -> bool:
+    """If allowed_domain is set, require the email's domain to match (case-insensitive)."""
+    if not allowed_domain or not str(allowed_domain).strip():
+        return True
+    if not email or "@" not in email:
+        return False
+    domain = email.rsplit("@", 1)[-1].strip().lower()
+    return domain == str(allowed_domain).strip().lower()
+
+
+def is_profile_complete(user: User) -> bool:
+    return bool(user.full_name and str(user.full_name).strip() and user.organization)
 
 
 def generate_api_key(length: int = 32) -> str:

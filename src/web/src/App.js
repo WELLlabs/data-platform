@@ -1,5 +1,5 @@
 import React from "react";
-import { BrowserRouter as Router, Routes, Route, Link } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route, Link, useLocation } from "react-router-dom";
 
 import { AuthProvider } from "./contexts/AuthContext";
 import { ToastProvider } from "./components/wd/Toast";
@@ -29,6 +29,8 @@ import Terms from "./pages/Terms";
 import Datasets from "./pages/Datasets";
 import Search from "./pages/Search";
 import Approvals from "./pages/Approvals";
+import CompleteProfile from "./pages/CompleteProfile";
+import ProfileCompleteGate from "./components/ProfileCompleteGate";
 
 const ApiDocs = () => (
   <div className="page"><section className="wrap" style={{ padding: "72px 0", maxWidth: 720 }}>
@@ -48,21 +50,23 @@ const NotFound = () => (
   </section></div>
 );
 
-function App() {
+const AUTH_BARE_PATHS = ["/signin", "/signup"];
+
+function AppShell() {
+  const { pathname } = useLocation();
+  const bare = AUTH_BARE_PATHS.includes(pathname);
   return (
-    <AuthProvider>
-      <Router>
-        <ToastProvider>
-          <CommandPalette>
-            <div className="app-root">
-              <SiteNavbar />
+            <div className={bare ? "app-root auth-bare" : "app-root"}>
+              {!bare && <SiteNavbar />}
               <main id="app">
+                <ProfileCompleteGate>
                 <Routes>
                   <Route path="/" element={<Home />} />
                   <Route path="/datasets" element={<Datasets />} />
                   <Route path="/search" element={<Search />} />
                   <Route path="/signin" element={<SignIn />} />
                   <Route path="/signup" element={<SignUp />} />
+                  <Route path="/complete-profile" element={<CompleteProfile />} />
                   <Route path="/signupsuccess" element={<SignupSuccess />} />
                   <Route path="/change-password" element={<ChangePassword />} />
                   <Route path="/forgot-password" element={<ForgotPassword />} />
@@ -83,9 +87,20 @@ function App() {
                   <Route path="/api" element={<ApiDocs />} />
                   <Route path="*" element={<NotFound />} />
                 </Routes>
+                </ProfileCompleteGate>
               </main>
-              <Footer />
+              {!bare && <Footer />}
             </div>
+  );
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <Router>
+        <ToastProvider>
+          <CommandPalette>
+            <AppShell />
           </CommandPalette>
         </ToastProvider>
       </Router>

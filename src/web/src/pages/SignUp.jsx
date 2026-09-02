@@ -3,6 +3,7 @@ import axios from "axios";
 import { Link, useNavigate } from "react-router-dom";
 import {
     list_organizations_endpoint,
+    login_options_endpoint,
     signup_endpoint,
 } from "../api/endpoints";
 
@@ -11,7 +12,6 @@ function SignUp() {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [confirmPassword, setConfirmPassword] = useState("");
-    const [isStudent, setIsStudent] = useState(false);
     const [designation, setDesignation] = useState("");
     const [organization, setOrganization] = useState("");
     const [organizations, setOrganizations] = useState([]);
@@ -21,23 +21,11 @@ function SignUp() {
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState("");
     const [success, setSuccess] = useState("");
+    const [googleEnabled, setGoogleEnabled] = useState(false);
+    const [allowedDomain, setAllowedDomain] = useState(null);
     const navigate = useNavigate();
 
-    // When student is true, force designation to "student" and lock the field
     useEffect(() => {
-        if (isStudent) {
-            setDesignation("student");
-        }
-    }, [isStudent]);
-
-    // Clear organization whenever isStudent changes so dropdown/input reflects current mode
-    useEffect(() => {
-        setOrganization("");
-    }, [isStudent]);
-
-    // Fetch organization list for dropdown when not a student
-    useEffect(() => {
-        if (isStudent) return;
         let cancelled = false;
         const controller = new AbortController();
         const fetchOrganizations = async () => {
@@ -68,7 +56,19 @@ function SignUp() {
             cancelled = true;
             controller.abort();
         };
-    }, [isStudent]);
+    }, []);
+
+    useEffect(() => {
+        fetch(login_options_endpoint, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data) => {
+                if (data) {
+                    setGoogleEnabled(!!data.google_enabled);
+                    setAllowedDomain(data.allowed_email_domain || null);
+                }
+            })
+            .catch(() => {});
+    }, []);
 
     const passwordsMatch = useMemo(
         () => password.length > 0 && password === confirmPassword,
@@ -76,7 +76,6 @@ function SignUp() {
     );
 
     const emailValid = useMemo(() => {
-        // Simple email regex for client-side validation
         const re = /[^\s@]+@[^\s@]+\.[^\s@]+/;
         return re.test(email.trim());
     }, [email]);
@@ -103,9 +102,7 @@ function SignUp() {
 
     const onPhoneChange = (e) => {
         const value = e.target.value;
-        // Allow only digits
         if (value === "" || /^\d+$/.test(value)) {
-            // Limit to 10 digits
             setPhone(value.slice(0, 10));
         }
     };
@@ -121,11 +118,8 @@ function SignUp() {
                 email: email.trim(),
                 password,
                 full_name: fullName.trim(),
-                student: isStudent,
-                designation: isStudent
-                    ? "student"
-                    : designation?.trim() || null,
-                organization: organization.trim(), // backend expects string
+                designation: designation?.trim() || null,
+                organization: organization.trim(),
                 role: 0,
                 phone: phone ? phone.trim() : null,
             };
@@ -136,17 +130,14 @@ function SignUp() {
             });
 
             if (resp.status === 201 || resp.status === 200) {
-                // Extract returned user fields robustly (API may use snake_case or camelCase)
                 const user = resp.data || {};
                 const returnedEmail = user.email || email;
                 const returnedFullName =
                     user.full_name || user.fullName || fullName;
 
-                // clear sensitive fields
                 setPassword("");
                 setConfirmPassword("");
 
-                // Navigate to signup success page and pass user info via location state
                 navigate("/signupsuccess", {
                     state: { email: returnedEmail, fullName: returnedFullName },
                 });
@@ -216,7 +207,11 @@ function SignUp() {
                                     id="email"
                                     name="email"
                                     type="email"
-                                    placeholder="you@ifmr.ac.in"
+                                    placeholder={
+                                        allowedDomain
+                                            ? `you@${allowedDomain}`
+                                            : "you@ifmr.ac.in"
+                                    }
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
                                     autoComplete="email"
@@ -285,65 +280,43 @@ function SignUp() {
                                 <input
                                     id="designation"
                                     type="text"
-                                    placeholder={
-                                        isStudent
-                                            ? "student"
-                                            : "Enter your designation"
-                                    }
+                                    placeholder="Enter your designation"
                                     value={designation}
                                     onChange={(e) =>
                                         setDesignation(e.target.value.slice(0, 25))
                                     }
-                                    disabled={isStudent}
                                     maxLength={25}
                                 />
                             </div>
 
                             <div className="field">
                                 <label htmlFor="organization">
-                                    {isStudent
-                                        ? "Institution"
-                                        : "Organization ID"}{" "}
+                                    Organization ID{" "}
                                     <span style={{ color: "red" }}>(required)</span>
                                 </label>
-                                {isStudent ? (
-                                    <input
-                                        id="organization"
-                                        type="text"
-                                        placeholder="Enter your institution"
-                                        value={organization}
-                                        onChange={(e) =>
-                                            setOrganization(e.target.value.slice(0, 50))
-                                        }
-                                        required
-                                        maxLength={50}
-                                        aria-label="Institution"
-                                    />
-                                ) : (
-                                    <select
-                                        id="organization"
-                                        style={{ width: "100%" }}
-                                        value={organization}
-                                        onChange={(e) =>
-                                            setOrganization(e.target.value)
-                                        }
-                                        required
-                                        disabled={organizationsLoading}
-                                        aria-label="Organization"
-                                    >
-                                        <option value="">
-                                            {organizationsLoading
-                                                ? "Loading..."
-                                                : "Select organization"}
+                                <select
+                                    id="organization"
+                                    style={{ width: "100%" }}
+                                    value={organization}
+                                    onChange={(e) =>
+                                        setOrganization(e.target.value)
+                                    }
+                                    required
+                                    disabled={organizationsLoading}
+                                    aria-label="Organization"
+                                >
+                                    <option value="">
+                                        {organizationsLoading
+                                            ? "Loading..."
+                                            : "Select organization"}
+                                    </option>
+                                    {organizations.map((org) => (
+                                        <option key={org.id} value={org.id}>
+                                            {org.name}
                                         </option>
-                                        {organizations.map((org) => (
-                                            <option key={org.id} value={org.id}>
-                                                {org.name}
-                                            </option>
-                                        ))}
-                                    </select>
-                                )}
-                                {!isStudent && organizationsError && (
+                                    ))}
+                                </select>
+                                {organizationsError && (
                                     <span style={{ fontSize: 12, color: "#9a6b12" }} role="alert">
                                         {organizationsError}
                                     </span>
@@ -373,6 +346,16 @@ function SignUp() {
                                 {submitting ? "Signing Up…" : "Create account"}
                             </button>
                         </form>
+
+                        {googleEnabled && (
+                            <a
+                                className="btn btn-ghost"
+                                href="/api/auth/google"
+                                style={{ width: "100%", marginTop: 12, textAlign: "center" }}
+                            >
+                                Sign up with Google
+                            </a>
+                        )}
 
                         <div className="auth-foot">
                             Already have an account? <Link to="/signin">Sign in</Link>

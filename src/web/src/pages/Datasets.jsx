@@ -6,6 +6,7 @@ import Contour from "../components/wd/Contour";
 import Ic from "../components/wd/Icons";
 import { useCmdk } from "../components/wd/CommandPalette";
 import { DatasetRow, DatasetCard, normalize } from "../components/wd/DatasetItems";
+import { AVAILABILITY_OPTIONS, availabilityLabel, parseAvailability } from "../constants/availability";
 
 const LIMIT = 10;
 
@@ -57,7 +58,7 @@ export default function Datasets() {
     return datasets.filter((raw) => {
       const d = normalize(raw);
       if (filters.availability.length) {
-        const key = d.isPrivate ? "private" : "public";
+        const key = String(parseAvailability(d.availability));
         if (!filters.availability.includes(key)) return false;
       }
       if (filters.org.length && !filters.org.includes(d.org)) return false;
@@ -74,7 +75,7 @@ export default function Datasets() {
   };
   const clearAll = () => setFilters({ availability: [], org: [] });
   const chips = [
-    ...filters.availability.map((v) => ["availability", v, v === "private" ? "Private" : "Public"]),
+    ...filters.availability.map((v) => ["availability", v, availabilityLabel(v)]),
     ...filters.org.map((v) => ["org", v, v]),
   ];
 
@@ -112,7 +113,7 @@ export default function Datasets() {
       <div className="wrap"><div className="explore-layout">
         <aside className="filters">
           <div className="fh">Refine</div>
-          <FGroup id="availability" label="Availability" options={[["public", "Public"], ["private", "Private"]]} />
+          <FGroup id="availability" label="Availability" options={AVAILABILITY_OPTIONS.map((o) => [String(o.value), o.label])} />
           {orgOptions.length > 0 && <FGroup id="org" label="Organization" options={orgOptions.map((o) => [o, o])} />}
           {isAuthenticated && (
             <div className="fgroup">

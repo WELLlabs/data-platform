@@ -1,121 +1,231 @@
 """
-Upload service for handling S3 presigned URL generation and file status checks.
+Upload service: S3 status, delete, and presigned upload/download (including multipart).
 """
 
+import asyncio
 import logging
+import math
 import mimetypes
-from typing import Any, Dict
-from urllib.parse import quote
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-import httpx
+import boto3
+from botocore.config import Config as BotoConfig
+from botocore.exceptions import BotoCoreError, ClientError
 from core.config import settings
 from fastapi import HTTPException, status
 
 logger = logging.getLogger(__name__)
 
+S3_PUT_OBJECT_MAX_BYTES = 5 * 1024 * 1024 * 1024  # 5 GiB
+MIN_MULTIPART_PART_BYTES = 16 * 1024 * 1024  # 16 MiB
+MAX_MULTIPART_PARTS = 10_000
+
+_s3_client = None
+
+
+def get_s3_client():
+    global _s3_client
+    if _s3_client is None:
+        kwargs: Dict[str, Any] = {
+            "region_name": settings.S3_REGION,
+            "config": BotoConfig(signature_version="s3v4"),
+        }
+        key = settings.AWS_ACCESS_KEY_ID.strip()
+        secret = settings.AWS_SECRET_ACCESS_KEY.strip()
+        if key and secret:
+            kwargs["aws_access_key_id"] = key
+            kwargs["aws_secret_access_key"] = secret
+        _s3_client = boto3.client("s3", **kwargs)
+    return _s3_client
+
 
 class UploadService:
-    """
-    Service class for upload operations with S3 handler API interactions.
-
-    This service handles communication with the S3 handler service to:
-    - Check file existence status
-    - Generate presigned upload URLs
-    """
-
     def __init__(self):
-        self.s3_handler_url = settings.S3_HANDLER_URL.rstrip("/")
         self.s3_region = settings.S3_REGION
         self.s3_bucket = settings.S3_BUCKET
         self.logger = logging.getLogger(__name__)
 
     def _get_content_type(self, filename: str) -> str:
-        """
-        Get content type (MIME type) from filename.
-
-        Args:
-            filename: Name of the file with extension
-
-        Returns:
-            Content type string (default: application/octet-stream)
-        """
         content_type, _ = mimetypes.guess_type(filename)
-        if not content_type:
-            content_type = "application/octet-stream"
-        return content_type
+        return content_type or "application/octet-stream"
+
+    def _upload_expires_seconds(self) -> int:
+        return max(60, int(settings.S3_UPLOAD_EXP_TIME_MINS) * 60)
+
+    def _download_expires_seconds(self) -> int:
+        return max(60, int(settings.S3_DOWNLOAD_EXP_TIME_MINS) * 60)
+
+    def _raise_s3_error(self, action: str, exc: Exception) -> None:
+        self.logger.exception("S3 %s failed: %s", action, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="S3 service unavailable",
+        )
+
+    def _head_object_sync(self, file_key: str) -> Dict[str, Any]:
+        client = get_s3_client()
+        try:
+            resp = client.head_object(Bucket=self.s3_bucket, Key=file_key)
+            return {
+                "key": file_key,
+                "exists": True,
+                "size": resp.get("ContentLength", 0),
+                "last_modified": (
+                    resp["LastModified"].isoformat()
+                    if resp.get("LastModified")
+                    else None
+                ),
+                "etag": (resp.get("ETag") or "").strip('"'),
+            }
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "")
+            if code in ("404", "NoSuchKey", "NotFound"):
+                return {
+                    "key": file_key,
+                    "exists": False,
+                    "size": 0,
+                    "last_modified": None,
+                    "etag": None,
+                }
+            self._raise_s3_error("head_object", e)
+        except BotoCoreError as e:
+            self._raise_s3_error("head_object", e)
+
+    def _delete_object_sync(self, file_key: str) -> bool:
+        client = get_s3_client()
+        try:
+            client.delete_object(Bucket=self.s3_bucket, Key=file_key)
+            return True
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "")
+            if code in ("404", "NoSuchKey", "NotFound"):
+                return False
+            self._raise_s3_error("delete_object", e)
+        except BotoCoreError as e:
+            self._raise_s3_error("delete_object", e)
+
+    def _presign_put_sync(self, file_key: str, content_type: str) -> str:
+        client = get_s3_client()
+        try:
+            return client.generate_presigned_url(
+                "put_object",
+                Params={
+                    "Bucket": self.s3_bucket,
+                    "Key": file_key,
+                    "ContentType": content_type,
+                },
+                ExpiresIn=self._upload_expires_seconds(),
+                HttpMethod="PUT",
+            )
+        except (ClientError, BotoCoreError) as e:
+            self._raise_s3_error("presign_put", e)
+
+    def _presign_get_sync(self, file_key: str) -> str:
+        client = get_s3_client()
+        filename = file_key.rsplit("/", 1)[-1]
+        try:
+            return client.generate_presigned_url(
+                "get_object",
+                Params={
+                    "Bucket": self.s3_bucket,
+                    "Key": file_key,
+                    "ResponseContentDisposition": f'attachment; filename="{filename}"',
+                },
+                ExpiresIn=self._download_expires_seconds(),
+                HttpMethod="GET",
+            )
+        except (ClientError, BotoCoreError) as e:
+            self._raise_s3_error("presign_get", e)
+
+    def _create_multipart_sync(
+        self, file_key: str, content_type: str
+    ) -> str:
+        client = get_s3_client()
+        try:
+            resp = client.create_multipart_upload(
+                Bucket=self.s3_bucket,
+                Key=file_key,
+                ContentType=content_type,
+            )
+            return resp["UploadId"]
+        except (ClientError, BotoCoreError) as e:
+            self._raise_s3_error("create_multipart_upload", e)
+
+    def _presign_upload_part_sync(
+        self, file_key: str, upload_id: str, part_number: int
+    ) -> str:
+        client = get_s3_client()
+        try:
+            return client.generate_presigned_url(
+                "upload_part",
+                Params={
+                    "Bucket": self.s3_bucket,
+                    "Key": file_key,
+                    "UploadId": upload_id,
+                    "PartNumber": part_number,
+                },
+                ExpiresIn=self._upload_expires_seconds(),
+                HttpMethod="PUT",
+            )
+        except (ClientError, BotoCoreError) as e:
+            self._raise_s3_error("presign_upload_part", e)
+
+    def _complete_multipart_sync(
+        self, file_key: str, upload_id: str, parts: List[Dict[str, Any]]
+    ) -> None:
+        client = get_s3_client()
+        boto_parts = [
+            {"ETag": p["etag"], "PartNumber": int(p["part_number"])}
+            for p in sorted(parts, key=lambda x: int(x["part_number"]))
+        ]
+        try:
+            client.complete_multipart_upload(
+                Bucket=self.s3_bucket,
+                Key=file_key,
+                UploadId=upload_id,
+                MultipartUpload={"Parts": boto_parts},
+            )
+        except (ClientError, BotoCoreError) as e:
+            self._raise_s3_error("complete_multipart_upload", e)
+
+    def _abort_multipart_sync(self, file_key: str, upload_id: str) -> None:
+        client = get_s3_client()
+        try:
+            client.abort_multipart_upload(
+                Bucket=self.s3_bucket, Key=file_key, UploadId=upload_id
+            )
+        except ClientError:
+            self.logger.warning(
+                "abort_multipart_upload ignored for key=%s upload_id=%s",
+                file_key,
+                upload_id,
+            )
+
+    @staticmethod
+    def part_size_for(file_size: int) -> int:
+        if file_size <= 0:
+            return MIN_MULTIPART_PART_BYTES
+        needed = math.ceil(file_size / MAX_MULTIPART_PARTS)
+        return max(MIN_MULTIPART_PART_BYTES, needed)
 
     async def check_file_exists(self, user_id: UUID, filename: str) -> Dict[str, Any]:
-        """
-        Check if a file already exists in S3.
+        file_key = f"{user_id}/{filename}"
+        return await self.check_file_status_by_key(file_key)
 
-        Args:
-            user_id: UUID of the user
-            filename: Name of the file
-
-        Returns:
-            Dictionary containing file status information
-
-        Raises:
-            HTTPException: If the S3 handler API request fails
-        """
+    async def check_file_status_by_key(self, file_key: str) -> Dict[str, Any]:
         try:
+            self.logger.info("Checking file status by key: %s", file_key)
+            data = await asyncio.to_thread(self._head_object_sync, file_key)
             self.logger.info(
-                "Checking file existence for user %s, filename: %s", user_id, filename
+                "File status check result for key %s: exists=%s, size=%s",
+                file_key,
+                data.get("exists", False),
+                data.get("size", 0),
             )
-
-            # Construct the file key
-            file_key = f"{user_id}/{filename}"
-
-            # Prepare query parameters
-            params = {
-                "key": file_key,
-                "s3_region": self.s3_region,
-                "s3_bucket": self.s3_bucket,
-            }
-
-            # Make request to S3 handler status endpoint
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                self.logger.info(
-                    f"Making request to S3 handler status endpoint: {self.s3_handler_url}/status"
-                )
-                response = await client.get(
-                    f"{self.s3_handler_url}/status",
-                    params=params,
-                )
-
-                if response.status_code != 200:
-                    self.logger.error(
-                        "S3 handler status endpoint returned status %d: %s",
-                        response.status_code,
-                        response.text,
-                    )
-                    raise HTTPException(
-                        status_code=status.HTTP_502_BAD_GATEWAY,
-                        detail="S3 handler service unavailable",
-                    )
-
-                data = response.json()
-                self.logger.info(
-                    "File status check result for %s: exists=%s",
-                    file_key,
-                    data.get("exists", False),
-                )
-
-                return data
-
-        except httpx.TimeoutException:
-            self.logger.exception("Timeout while checking file status")
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail="S3 handler service timeout",
-            )
-        except httpx.RequestError as e:
-            self.logger.exception("Request error while checking file status: %s", e)
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="S3 handler service connection error",
-            )
+            return data
+        except HTTPException:
+            raise
         except Exception as e:
             self.logger.exception("Unexpected error checking file status: %s", e)
             raise HTTPException(
@@ -126,81 +236,19 @@ class UploadService:
     async def get_presigned_upload_url(
         self, user_id: UUID, filename: str
     ) -> Dict[str, Any]:
-        """
-        Get a presigned URL for uploading a file to S3.
-
-        Args:
-            user_id: UUID of the user
-            filename: Name of the file with extension
-
-        Returns:
-            Dictionary containing presigned URL information
-
-        Raises:
-            HTTPException: If the S3 handler API request fails
-        """
+        file_key = f"{user_id}/{filename}"
+        content_type = self._get_content_type(filename)
         try:
-            self.logger.info(
-                "Requesting presigned upload URL for user %s, filename: %s",
-                user_id,
-                filename,
+            url = await asyncio.to_thread(
+                self._presign_put_sync, file_key, content_type
             )
-
-            # Construct the file key
-            file_key = f"{user_id}/{filename}"
-
-            # Get content type from filename
-            content_type = self._get_content_type(filename)
-
-            # Prepare query parameters
-            params = {
-                "key": file_key,
-                "s3_region": self.s3_region,
-                "s3_bucket": self.s3_bucket,
+            return {
+                "presigned_upload_url": url,
                 "content_type": content_type,
+                "key": file_key,
             }
-
-            # Make request to S3 handler presigned upload endpoint (POST with query params)
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(
-                    f"{self.s3_handler_url}/presigned/upload",
-                    params=params,
-                )
-
-                if response.status_code != 200:
-                    self.logger.error(
-                        "S3 handler presigned upload endpoint returned status %d: %s",
-                        response.status_code,
-                        response.text,
-                    )
-                    raise HTTPException(
-                        status_code=status.HTTP_502_BAD_GATEWAY,
-                        detail="S3 handler service unavailable",
-                    )
-
-                data = response.json()
-                self.logger.info(
-                    "Presigned URL generated successfully for %s", file_key
-                )
-
-                # Include the content_type used to generate the presigned URL
-                # This ensures the frontend uses the exact same content type when uploading
-                data["content_type"] = content_type
-
-                return data
-
-        except httpx.TimeoutException:
-            self.logger.exception("Timeout while getting presigned URL")
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail="S3 handler service timeout",
-            )
-        except httpx.RequestError as e:
-            self.logger.exception("Request error while getting presigned URL: %s", e)
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="S3 handler service connection error",
-            )
+        except HTTPException:
+            raise
         except Exception as e:
             self.logger.exception("Unexpected error getting presigned URL: %s", e)
             raise HTTPException(
@@ -208,155 +256,79 @@ class UploadService:
                 detail="Error generating presigned URL",
             )
 
-    async def check_file_status_by_key(self, file_key: str) -> Dict[str, Any]:
-        """
-        Check if a file exists in S3 by file key.
-
-        This method is used when we already have the file_key
-        (e.g., from form input) and need to verify the file exists
-        and get its metadata.
-
-        Args:
-            file_key: S3 file key (e.g., "user_id/filename")
-
-        Returns:
-            Dictionary containing file status information with keys:
-            - key: The file key
-            - exists: Boolean indicating if file exists
-            - size: File size in bytes (if exists)
-            - last_modified: ISO timestamp (if exists)
-            - etag: File etag (if exists)
-
-        Raises:
-            HTTPException: If the S3 handler API request fails
-        """
+    async def create_multipart_upload(
+        self, user_id: UUID, filename: str, file_size: int
+    ) -> Dict[str, Any]:
+        file_key = f"{user_id}/{filename}"
+        content_type = self._get_content_type(filename)
+        part_size = self.part_size_for(file_size)
+        part_count = max(1, math.ceil(file_size / part_size))
+        if part_count > MAX_MULTIPART_PARTS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File is too large to upload in parts",
+            )
         try:
-            self.logger.info("Checking file status by key: %s", file_key)
-
-            # Prepare query parameters
-            params = {
+            upload_id = await asyncio.to_thread(
+                self._create_multipart_sync, file_key, content_type
+            )
+            parts = []
+            for n in range(1, part_count + 1):
+                url = await asyncio.to_thread(
+                    self._presign_upload_part_sync, file_key, upload_id, n
+                )
+                parts.append({"part_number": n, "url": url})
+            return {
+                "multipart": True,
+                "upload_id": upload_id,
                 "key": file_key,
-                "s3_region": self.s3_region,
-                "s3_bucket": self.s3_bucket,
+                "content_type": content_type,
+                "part_size": part_size,
+                "part_count": part_count,
+                "parts": parts,
             }
-
-            # Make request to S3 handler status endpoint
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                self.logger.info(
-                    f"Making request to S3 handler status endpoint: {self.s3_handler_url}/status"
-                )
-                response = await client.get(
-                    f"{self.s3_handler_url}/status",
-                    params=params,
-                )
-
-                if response.status_code != 200:
-                    self.logger.error(
-                        "S3 handler status endpoint returned status %d: %s",
-                        response.status_code,
-                        response.text,
-                    )
-                    raise HTTPException(
-                        status_code=status.HTTP_502_BAD_GATEWAY,
-                        detail="S3 handler service unavailable",
-                    )
-
-                data = response.json()
-                self.logger.info(
-                    "File status check result for key %s: exists=%s, size=%s",
-                    file_key,
-                    data.get("exists", False),
-                    data.get("size", 0),
-                )
-
-                return data
-
-        except httpx.TimeoutException:
-            self.logger.exception("Timeout while checking file status by key")
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail="S3 handler service timeout",
-            )
-        except httpx.RequestError as e:
-            self.logger.exception(
-                "Request error while checking file status by key: %s", e
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="S3 handler service connection error",
-            )
+        except HTTPException:
+            raise
         except Exception as e:
-            self.logger.exception("Unexpected error checking file status by key: %s", e)
+            self.logger.exception("Unexpected error creating multipart upload: %s", e)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error checking file status",
+                detail="Error generating multipart upload URLs",
+            )
+
+    async def complete_multipart_upload(
+        self, file_key: str, upload_id: str, parts: List[Dict[str, Any]]
+    ) -> None:
+        await asyncio.to_thread(
+            self._complete_multipart_sync, file_key, upload_id, parts
+        )
+
+    async def abort_multipart_upload(self, file_key: str, upload_id: str) -> None:
+        await asyncio.to_thread(self._abort_multipart_sync, file_key, upload_id)
+
+    async def delete_object(self, file_key: str) -> bool:
+        try:
+            return await asyncio.to_thread(self._delete_object_sync, file_key)
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.exception("Unexpected error deleting S3 object: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error deleting file from S3",
             )
 
     async def get_presigned_download_url(self, file_key: str) -> Dict[str, Any]:
-        """
-        Get a presigned URL for downloading a file from S3.
-
-        Args:
-            file_key: S3 file key (e.g., "user_id/filename")
-
-        Returns:
-            Dictionary containing presigned download URL information
-
-        Raises:
-            HTTPException: If the S3 handler API request fails
-        """
         try:
-            self.logger.info(
-                "Requesting presigned download URL for file_key: %s", file_key
-            )
-
-            # Prepare query parameters
-            params = {
-                "s3_region": self.s3_region,
-                "s3_bucket": self.s3_bucket,
+            url = await asyncio.to_thread(self._presign_get_sync, file_key)
+            return {
+                "download_url": url,
+                "presigned_download_url": url,
+                "key": file_key,
+                "expires_in": self._download_expires_seconds(),
             }
-
-            # Make request to S3 handler presigned download endpoint
-            # file_key is used as path parameter - encode special chars but preserve slashes
-            encoded_file_key = quote(file_key, safe="/")
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(
-                    f"{self.s3_handler_url}/presigned/download/{encoded_file_key}",
-                    params=params,
-                )
-
-                if response.status_code != 200:
-                    self.logger.error(
-                        "S3 handler presigned download endpoint returned status %d: %s",
-                        response.status_code,
-                        response.text,
-                    )
-                    raise HTTPException(
-                        status_code=status.HTTP_502_BAD_GATEWAY,
-                        detail="S3 handler service unavailable",
-                    )
-
-                data = response.json()
-                self.logger.info(
-                    "Presigned download URL generated successfully for %s", file_key
-                )
-
-                return data
-
-        except httpx.TimeoutException:
-            self.logger.exception("Timeout while getting presigned download URL")
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail="S3 handler service timeout",
-            )
-        except httpx.RequestError as e:
-            self.logger.exception(
-                "Request error while getting presigned download URL: %s", e
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="S3 handler service connection error",
-            )
+        except HTTPException:
+            raise
         except Exception as e:
             self.logger.exception(
                 "Unexpected error getting presigned download URL: %s", e
@@ -368,10 +340,4 @@ class UploadService:
 
 
 def get_upload_service() -> UploadService:
-    """
-    Dependency function to get UploadService instance.
-
-    Returns:
-        UploadService instance
-    """
     return UploadService()

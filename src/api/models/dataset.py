@@ -14,9 +14,10 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
-    String,
+    Integer,
     Text,
 )
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -60,15 +61,15 @@ class Dataset(Base):
         nullable=True,
         onupdate=func.now(),
     )
-    organization: Mapped[str] = mapped_column(
-        String(length=100),
+    organization: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
         ForeignKey("organizations.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
-    private: Mapped[bool] = mapped_column(
-        Boolean,
-        default=False,
+    availability: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
         nullable=False,
     )
 

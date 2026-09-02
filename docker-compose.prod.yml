@@ -13,10 +13,10 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      s3handler:
-        condition: service_healthy
       email-worker:
         condition: service_healthy
+      typesense:
+        condition: service_started
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
@@ -56,22 +56,22 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "-e", "QUIT"]
-  
-  s3handler:
-    image: s3handler:latest
+
+  typesense:
+    image: typesense/typesense:27.1
     networks:
       - appnet
-    # expose at random port, internally backend fetches from 8000
     ports:
-      - "33333:8000"
-    env_file:
-      - ./.env
+      - "8108:8108"
+    volumes:
+      - typesense_data:/data
+    command: ["--data-dir", "/data", "--api-key", "${TYPESENSE_API_KEY:-xyz}", "--enable-cors"]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
-      interval: 30s
+      test: ["CMD-SHELL", "curl -sf http://localhost:8108/health || exit 1"]
+      interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 10
       start_period: 10s
 
   email-worker:
@@ -120,3 +120,6 @@ services:
 
 networks:
   appnet:
+
+volumes:
+  typesense_data:

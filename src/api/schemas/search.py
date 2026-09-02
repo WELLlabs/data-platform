@@ -17,6 +17,11 @@ class SearchResultItem(BaseModel):
     score: float = Field(..., description="Weighted rank (fts_score * 0.7 + trigram_score * 0.3)")
 
 
+class TagFacet(BaseModel):
+    value: str = Field("", description="Tag name")
+    count: int = Field(0, description="Number of matching documents")
+
+
 class SearchResponse(BaseModel):
     """Response for GET /search: result array and total for pagination."""
 
@@ -25,3 +30,7 @@ class SearchResponse(BaseModel):
         description="Search results in descending order of score (paginated by limit/offset)",
     )
     total: int = Field(..., description="Total number of results (before pagination)")
+    tag_facets: List[TagFacet] = Field(
+        default_factory=list,
+        description="Tag facet counts from Typesense when available",
+    )

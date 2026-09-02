@@ -4,6 +4,7 @@ import { datasets_endpoint, homepage_stats_endpoint } from "../api/endpoints";
 import Contour from "../components/wd/Contour";
 import Ic from "../components/wd/Icons";
 import { useCmdk } from "../components/wd/CommandPalette";
+import { availabilityLabel, isRestrictedAvailability } from "../constants/availability";
 
 const fmt = (v) => (typeof v === "number" ? v.toLocaleString() : v == null ? "—" : v);
 const dsLink = (d) => `/dataset-info?dataset_id=${encodeURIComponent(d.dataset_id)}`;
@@ -19,8 +20,10 @@ const TOPICS = [
 ];
 
 function StatusBadge({ d }) {
-  return d.private
-    ? <span className="badge lock"><Ic name="lock" size={12} sw={1.9} />Private</span>
+  const restricted = isRestrictedAvailability(d.availability);
+  const label = availabilityLabel(d.availability);
+  return restricted
+    ? <span className="badge lock"><Ic name="lock" size={12} sw={1.9} />{label}</span>
     : <span className="badge approved"><Ic name="verified" size={12} sw={2} />Public</span>;
 }
 

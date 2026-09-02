@@ -1,8 +1,9 @@
 from datetime import datetime
 from typing import List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from sqlalchemy import ARRAY, Boolean, DateTime, Integer, String, Text
+from sqlalchemy import ARRAY, Boolean, DateTime, String, Text
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -12,9 +13,11 @@ from .base import Base
 class Organization(Base):
     __tablename__ = "organizations"
 
-    # Primary key - alphanumerical ID generated from name
-    id: Mapped[str] = mapped_column(
-        String(length=100), primary_key=True, nullable=False
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+        nullable=False,
     )
 
     # Required fields

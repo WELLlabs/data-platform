@@ -59,7 +59,7 @@ class OrganizationCreate(OrganizationBase):
 class OrganizationRead(OrganizationBase):
     """Schema for reading organization data"""
 
-    id: str = Field(..., description="Organization ID (generated from name)")
+    id: UUID = Field(..., description="Organization UUID")
     creator: Optional[UUID] = Field(None, description="Creator user ID")
     created_at: datetime = Field(..., description="Creation timestamp")
     modified_at: Optional[datetime] = Field(None, description="Last modification timestamp")
@@ -123,7 +123,7 @@ class OrganizationUpdate(BaseModel):
 class OrganizationListItem(BaseModel):
     """Schema for a single item in the organization list (id and name only)."""
 
-    id: str = Field(..., description="Organization ID")
+    id: UUID = Field(..., description="Organization UUID")
     name: str = Field(..., description="Organization name")
 
 
@@ -133,6 +133,15 @@ class OrganizationListResponse(BaseModel):
     items: List[OrganizationListItem] = Field(
         default_factory=list,
         description="List of organizations with id and name",
+    )
+
+
+class OrganizationAddMember(BaseModel):
+    email: str = Field(..., min_length=3, max_length=320)
+    role: int = Field(default=0, ge=0, le=2)
+    approve_now: bool = Field(
+        default=False,
+        description="If true, mark the member verified immediately",
     )
 
 

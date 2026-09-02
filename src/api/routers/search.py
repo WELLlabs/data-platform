@@ -7,9 +7,11 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
+from models.user import User
+from routers.dataset import get_current_active_user_optional
 from schemas.search import SearchResponse
 from services.search import SearchService, get_search_service
-from utils.security import sanitize_input
+from utils.security import optional_api_key, sanitize_input
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -32,21 +34,18 @@ async def search(
     ),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of results"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
-    apikey: Optional[str] = Query(
+    apikey: Optional[str] = Depends(optional_api_key),
+    current_user: Optional[User] = Depends(get_current_active_user_optional),
+    tags: Optional[str] = Query(
         None,
-        description="Optional API key for visibility (see datasets endpoint)",
+        description="Comma-separated tag names to facet-filter",
     ),
     search_service: SearchService = Depends(get_search_service),
 ) -> SearchResponse:
     """
     Search datasets and files by keywords with optional filters.
 
-    Uses the global_search_index (FTS + trigram). Visibility rules match the
-    datasets endpoint: without apikey only public results; with valid apikey
-    also includes results from the user's organization. Results are cached
-    in Redis (top 100) when no filters are applied.
-
-    Optional filters: organization_id, start_date, end_date (temporal overlap).
+    Uses Typesense when `TYPESENSE_HOST` is set, otherwise PostgreSQL FTS on `global_search_index`. Visibility follows dataset availability (0–4). Tag facets are returned as `tag_facets`. Optional `tags` query param filters by tag names.
     """
     sanitized = sanitize_input(query)
     if not sanitized or not sanitized.strip():
@@ -60,4 +59,7 @@ async def search(
         limit=limit,
         offset=offset,
         apikey=apikey,
+        viewer_org=current_user.organization if current_user else None,
+        current_user=current_user,
+        tags=tags,
     )

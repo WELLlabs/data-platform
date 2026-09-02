@@ -1,13 +1,14 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import { signin_endpoint } from "../api/endpoints";
+import { login_options_endpoint, signin_endpoint } from "../api/endpoints";
 
 function SignIn() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [googleEnabled, setGoogleEnabled] = useState(false);
   const { signIn, user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const formRef = useRef(null);
@@ -15,9 +16,22 @@ function SignIn() {
   // Redirect authenticated users to dashboard (single navigation; no navigate in handleSubmit)
   useEffect(() => {
     if (!authLoading && user) {
-      navigate(`/dashboard?userId=${user.id}`, { replace: true });
+      if (user.profile_complete === false) {
+        navigate("/complete-profile", { replace: true });
+      } else {
+        navigate(`/dashboard?userId=${user.id}`, { replace: true });
+      }
     }
   }, [authLoading, user, navigate]);
+
+  useEffect(() => {
+    fetch(login_options_endpoint, { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data) setGoogleEnabled(!!data.google_enabled);
+      })
+      .catch(() => {});
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -40,7 +54,13 @@ function SignIn() {
       });
 
       if (!response.ok) {
-        setError("Sign in failed. Please check your credentials.");
+        if (response.status === 502 || response.status === 503 || response.status === 504) {
+          setError(
+            "The API is not running. Start the backend (Docker compose on port 8000), then try again."
+          );
+        } else {
+          setError("Sign in failed. Please check your credentials.");
+        }
         setLoading(false);
         return;
       }
@@ -146,6 +166,16 @@ function SignIn() {
                 {loading ? "Signing In…" : "Sign in"}
               </button>
             </form>
+
+            {googleEnabled && (
+              <a
+                className="btn btn-ghost"
+                href="/api/auth/google"
+                style={{ width: "100%", marginTop: 12, textAlign: "center" }}
+              >
+                Sign in with Google
+              </a>
+            )}
 
             <div className="auth-foot">
               <Link to="/forgot-password">Forgot password?</Link>

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { changepassword_endpoint } from "../api/endpoints";
+import Ic from "../components/wd/Icons";
 
 const ChangePassword = () => {
   const [currentPassword, setCurrentPassword] = useState("");
@@ -130,6 +131,18 @@ const ChangePassword = () => {
     <div className="page">
       <div className="wrap">
         <div className="auth-wrap">
+          <button
+            type="button"
+            className="back"
+            style={{ background: "none", border: "none", padding: 0, marginBottom: 16, cursor: "pointer" }}
+            onClick={() => {
+              const uid = searchParams.get("user_id") || user?.id;
+              navigate(uid ? `/profile?userId=${uid}` : "/profile");
+            }}
+          >
+            <Ic name="chevLeft" size={16} sw={2} />
+            Back to profile
+          </button>
           <div className="auth-card">
             <h1 className="display">Change password</h1>
             <p className="auth-sub">

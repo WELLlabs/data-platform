@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { homepage_stats_endpoint } from "../api/endpoints";
 import Ic from "../components/wd/Icons";
-
-const fmt = (v) => (typeof v === "number" ? v.toLocaleString() : v == null ? "—" : v);
+import { RankRow } from "../components/wd/RankList";
 
 export default function Contributors() {
   const [contributors, setContributors] = useState([]);
@@ -28,8 +27,6 @@ export default function Contributors() {
     })();
     return () => { cancelled = true; };
   }, []);
-
-  const maxContrib = contributors.reduce((m, c) => Math.max(m, c.contributions || 0), 0) || 1;
 
   return (
     <div className="page">
@@ -61,20 +58,13 @@ export default function Contributors() {
         ) : (
           <div className="rank-list">
             {contributors.map((c, i) => (
-              <div
-                className="rank-row"
+              <RankRow
                 key={c.user_id}
-                style={{ animationDelay: `${80 + i * 90}ms` }}
-              >
-                <span className="rank-num">#{i + 1}</span>
-                <div className="rank-body">
-                  <b>{c.full_name || "Contributor"}</b>
-                  <span>{fmt(c.contributions)} contributions</span>
-                  <div className="rank-bar" aria-hidden="true">
-                    <i style={{ "--bar": `${Math.max(8, ((c.contributions || 0) / maxContrib) * 100)}%`, animationDelay: `${180 + i * 90}ms` }} />
-                  </div>
-                </div>
-              </div>
+                rank={i + 1}
+                name={c.full_name || "Contributor"}
+                contributions={c.contributions}
+                delay={80 + i * 90}
+              />
             ))}
           </div>
         )}

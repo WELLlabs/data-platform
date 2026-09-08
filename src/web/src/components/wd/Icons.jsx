@@ -27,6 +27,9 @@ const P = {
   star: <path d="M12 3.2l2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8Z"/>,
   trophy: <><path d="M8 4h8v4a4 4 0 0 1-8 0V4Z"/><path d="M8 6H5v1a3 3 0 0 0 3 3M16 6h3v1a3 3 0 0 1-3 3"/><path d="M12 12v3M9 20h6M10 20v-2.5a2 2 0 0 1 4 0V20"/></>,
   mail: <><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></>,
+  copy: <><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></>,
+  menu: <path d="M4 6h16M4 12h16M4 18h16"/>,
+  medal: <><circle cx="12" cy="15" r="6"/><path d="M8.5 9.5 6 3h4l2 4M15.5 9.5 18 3h-4l-2 4"/><path d="m12 12.6.9 1.9 2 .3-1.5 1.4.4 2-1.8-1-1.8 1 .4-2L9.1 14.8l2-.3.9-1.9Z"/></>,
   google: null,
 };
 

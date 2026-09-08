@@ -66,7 +66,7 @@ export function BrandLockup({ className = "brand", to = "/", onClick }) {
   return (
     <Link className={className} to={to} aria-label={`${productName} home`} onClick={onClick}>
       {glyph}
-      <span>
+      <span className="bwrap">
         <span className="bt">{productName}</span>
         {hostName ? <span className="bs">by {hostName}</span> : null}
       </span>

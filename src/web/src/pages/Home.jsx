@@ -6,6 +6,7 @@ import Ic from "../components/wd/Icons";
 import { useCmdk } from "../components/wd/CommandPalette";
 import { availabilityLabel, isRestrictedAvailability } from "../constants/availability";
 import { orgDisplayName, useOrganizationNames } from "../components/wd/DatasetItems";
+import { RankRow } from "../components/wd/RankList";
 import { useBranding } from "../branding";
 
 const fmt = (v) => (typeof v === "number" ? v.toLocaleString() : v == null ? "—" : v);
@@ -87,7 +88,6 @@ export default function Home() {
   const contributors = [...(stats?.top_contributors || [])].sort(
     (a, b) => (b.contributions || 0) - (a.contributions || 0)
   );
-  const maxContrib = contributors.reduce((m, c) => Math.max(m, c.contributions || 0), 0) || 1;
 
   return (
     <div className="page">
@@ -181,31 +181,14 @@ export default function Home() {
           <Link className="link-arrow" to="/contributors">View all <Ic name="arrow" size={16} /></Link>
         </div>
         <div className="rank-list">
-          {contributors.slice(0, 8).map((c, i) => (
-            <div
-              className={"rank-row" + (i === 0 ? " top" : "")}
+          {contributors.slice(0, 10).map((c, i) => (
+            <RankRow
               key={c.user_id}
-              style={{ animationDelay: `${80 + i * 90}ms` }}
-            >
-              <span className="rank-num">
-                {i === 0 ? <Ic name="trophy" size={20} sw={2} /> : `#${i + 1}`}
-              </span>
-              <div className="rank-body">
-                <b>
-                  {c.full_name || "Contributor"}
-                  {i === 0 && (
-                    <span className="badge top" style={{ marginLeft: 8 }}>
-                      <Ic name="trophy" size={12} sw={2} />
-                      Top contributor
-                    </span>
-                  )}
-                </b>
-                <span>{fmt(c.contributions)} contributions</span>
-                <div className="rank-bar" aria-hidden="true">
-                  <i style={{ "--bar": `${Math.max(8, ((c.contributions || 0) / maxContrib) * 100)}%`, animationDelay: `${180 + i * 90}ms` }} />
-                </div>
-              </div>
-            </div>
+              rank={i + 1}
+              name={c.full_name || "Contributor"}
+              contributions={c.contributions}
+              delay={80 + i * 90}
+            />
           ))}
           {!loading && !contributors.length && <div className="empty" style={{ padding: "40px 0" }}><p>Contributor rankings are not available yet.</p></div>}
         </div>

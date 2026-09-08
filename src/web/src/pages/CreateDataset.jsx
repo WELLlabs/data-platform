@@ -389,14 +389,27 @@ function CreateDataset() {
             <div className="page">
                 <div className="wrap" style={{ maxWidth: 560, padding: "72px 0 88px" }}>
                     <div className="auth-card" style={{ textAlign: "center" }}>
-                        <div className="eic" style={{ margin: "0 auto 18px", color: "var(--green)", background: "var(--green-soft)", borderColor: "var(--green-line)" }}>
-                            <Ic name="check" size={24} sw={2.4} />
+                        <div
+                            style={{
+                                width: 56,
+                                height: 56,
+                                borderRadius: "50%",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                margin: "0 auto 18px",
+                                color: "var(--green)",
+                                background: "var(--green-soft)",
+                                border: "1px solid var(--green-line)",
+                            }}
+                        >
+                            <Ic name="check" size={26} sw={2.4} />
                         </div>
                         <span className="eyebrow">Datasets</span>
-                        <h1 className="display" style={{ marginTop: 6 }}>Upload in progress</h1>
-                        <p className="auth-sub" style={{ maxWidth: "40ch", margin: "8px auto 0" }}>
-                            Your dataset is being processed and will appear in your
-                            dashboard shortly.
+                        <h1 className="display" style={{ marginTop: 6 }}>Dataset submitted</h1>
+                        <p className="auth-sub" style={{ maxWidth: "42ch", margin: "8px auto 0" }}>
+                            Your dataset was uploaded successfully. It is being processed
+                            and will appear in your dashboard shortly.
                         </p>
                         <div style={{ marginTop: 24, display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
                             <button

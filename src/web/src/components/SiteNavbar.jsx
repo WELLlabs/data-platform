@@ -56,7 +56,7 @@ export default function SiteNavbar() {
         </div>
       )}
       <header className={"nav" + (open ? " open" : "")}>
-        <div className="wrap nav-inner">
+        <div className="nav-inner">
           <BrandLockup onClick={() => setOpen(false)} />
           <nav className="nav-links" aria-label="Primary">
             {links.map((l) => (
@@ -64,25 +64,28 @@ export default function SiteNavbar() {
                 {l.label}
               </Link>
             ))}
+            {isAuthenticated && (
+              <button className="nav-menu-signout" onClick={handleSignOut}>Sign out</button>
+            )}
           </nav>
           <div className="nav-right">
-            <button className="navk" onClick={() => cmdk.open()} aria-label="Search (Command K)">
-              <Ic name="search" size={15} sw={2} />
-              <span>Search</span>
-              <kbd>⌘K</kbd>
+            <button className="navk-icon" onClick={() => cmdk.open()} aria-label="Search (Command K)" title="Search  ⌘K">
+              <Ic name="search" size={17} sw={2} />
             </button>
             {isAuthenticated ? (
-              <Link to={`/profile${user?.id ? `?userId=${user.id}` : ""}`} className="avatar" title={user?.name || user?.email || "Profile"}>
-                {initials(user?.name || user?.email)}
-              </Link>
+              <>
+                <Link to={`/profile${user?.id ? `?userId=${user.id}` : ""}`} className="avatar" title={user?.name || user?.email || "Profile"}>
+                  {initials(user?.name || user?.email)}
+                </Link>
+                <button className="btn btn-ghost nav-signout" onClick={handleSignOut} style={{ padding: "9px 12px" }}>Sign out</button>
+              </>
             ) : (
-              <Link className="btn btn-ghost" to="/signin">Sign in</Link>
-            )}
-            {isAuthenticated && (
-              <button className="btn btn-ghost" onClick={handleSignOut} style={{ padding: "9px 12px" }}>Sign out</button>
+              <Link className="btn btn-primary" to="/signin">Sign in</Link>
             )}
           </div>
-          <button className="nav-burger" onClick={() => setOpen((o) => !o)} aria-label="Menu">☰</button>
+          <button className="nav-burger" onClick={() => setOpen((o) => !o)} aria-label="Menu">
+            <Ic name="menu" size={18} sw={2} />
+          </button>
         </div>
       </header>
     </>

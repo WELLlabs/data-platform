@@ -5,7 +5,7 @@ import { user_datasets_endpoint, send_verify_email_endpoint, organization_by_id_
 import Ic from "../components/wd/Icons";
 import Contour from "../components/wd/Contour";
 import { useToast } from "../components/wd/Toast";
-import { DatasetRow } from "../components/wd/DatasetItems";
+import { DatasetRow, DatasetCard } from "../components/wd/DatasetItems";
 
 function greeting() {
   const h = new Date().getHours();
@@ -21,6 +21,7 @@ function Dashboard() {
   const [verificationMessage, setVerificationMessage] = useState("");
   const [sendingVerification, setSendingVerification] = useState(false);
   const [wsTab, setWsTab] = useState("published");
+  const [view, setView] = useState("list");
   const [orgName, setOrgName] = useState("");
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -380,6 +381,26 @@ function Dashboard() {
                 </span>
               </button>
             </div>
+            <div className="view-toggle" role="group" aria-label="View mode">
+              <button
+                className={view === "list" ? "active" : ""}
+                onClick={() => setView("list")}
+                aria-label="List view"
+                aria-pressed={view === "list"}
+                title="List view"
+              >
+                <Ic name="list" size={16} sw={2} />
+              </button>
+              <button
+                className={view === "grid" ? "active" : ""}
+                onClick={() => setView("grid")}
+                aria-label="Grid view"
+                aria-pressed={view === "grid"}
+                title="Grid view"
+              >
+                <Ic name="grid" size={16} sw={2} />
+              </button>
+            </div>
           </div>
 
           <div>
@@ -397,6 +418,12 @@ function Dashboard() {
                 <button className="btn btn-primary" onClick={() => navigate("/create-dataset")}>
                   <Ic name="plus" size={15} sw={2} /> Publish a dataset
                 </button>
+              </div>
+            ) : view === "grid" ? (
+              <div className="explore-grid">
+                {tabList.map((dataset) => (
+                  <DatasetCard key={dataset.dataset_id} dataset={dataset} />
+                ))}
               </div>
             ) : (
               <div className="rows">

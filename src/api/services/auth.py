@@ -173,11 +173,11 @@ class AuthService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Email domain is not allowed",
                 )
-            # Sanitize input data
+            # Sanitize string fields only. organization is a UUID, not HTML text.
             sanitized_data = {
                 "full_name": sanitize_input(user_data.full_name),
                 "designation": sanitize_input(user_data.designation),
-                "organization": sanitize_input(user_data.organization),
+                "organization": user_data.organization,
             }
 
             # Validate required fields after sanitization
@@ -352,6 +352,8 @@ class AuthService:
 
             return user
 
+        except HTTPException:
+            raise
         except IntegrityError as e:
             self.logger.exception("Integrity error during user creation: %s", e)
             error_str = str(e).lower()

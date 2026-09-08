@@ -11,6 +11,18 @@
   background-color: #ffffff;
   color: #0f233a;
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Sticky footer: main grows to fill the viewport so the footer always sits
+   at the bottom instead of floating up on short pages. */
+.app-root > #app {
+  flex: 1 0 auto;
+}
+
+.app-root > .footer {
+  flex-shrink: 0;
 }
 
 /* Navbar */

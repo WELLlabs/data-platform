@@ -8,10 +8,28 @@ import {
   profile_endpoint,
   user_datasets_endpoint,
   auth_apikey_endpoint,
+  homepage_stats_endpoint,
 } from "../api/endpoints";
 import Ic from "../components/wd/Icons";
 import Contour from "../components/wd/Contour";
 import { DatasetRow } from "../components/wd/DatasetItems";
+
+// 1 -> "1st", 2 -> "2nd", 11 -> "11th", etc.
+const ordinal = (n) => {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return `${n}${s[(v - 20) % 10] || s[v] || s[0]}`;
+};
+
+// Contribution-rank badge shown beside the user's name. Rank is the user's
+// position on the platform-wide contributor leaderboard, so the top three get
+// gold / silver / bronze medals.
+function rankBadge(rank) {
+  if (rank === 1) return { cls: "place gold", icon: "trophy", label: "1st place" };
+  if (rank === 2) return { cls: "place silver", icon: "medal", label: "2nd place" };
+  if (rank === 3) return { cls: "place bronze", icon: "medal", label: "3rd place" };
+  return { cls: "public", icon: "star", label: `${ordinal(rank)} place` };
+}
 
 function Profile() {
   const [loading, setLoading] = useState(true);
@@ -20,6 +38,8 @@ function Profile() {
   const [showApiKeyOverlay, setShowApiKeyOverlay] = useState(false);
   const [revealedApiKey, setRevealedApiKey] = useState("");
   const [apiKeyLoading, setApiKeyLoading] = useState(false);
+  const [apiKeyCopied, setApiKeyCopied] = useState(false);
+  const [contribRank, setContribRank] = useState(null);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user, isAuthenticated, verifyUser } = useAuth();
@@ -120,6 +140,31 @@ function Profile() {
       fetchProfile();
     }
   }, [searchParams, isAuthenticated, user?.id, profileRefreshTrigger]);
+
+  // Determine this user's position on the contributor leaderboard so we can
+  // show their rank beside their name.
+  useEffect(() => {
+    const id = profileData?.id;
+    if (!id) return undefined;
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch(homepage_stats_endpoint, { credentials: "include" });
+        if (!res.ok) return;
+        const data = await res.json();
+        const list = [...(data.top_contributors || [])].sort(
+          (a, b) => (b.contributions || 0) - (a.contributions || 0)
+        );
+        const idx = list.findIndex((c) => String(c.user_id) === String(id));
+        if (active) setContribRank(idx >= 0 ? idx + 1 : null);
+      } catch {
+        if (active) setContribRank(null);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [profileData?.id]);
 
   // Fetch user datasets if privileges.user_datasets is true
   // Wait for profileData to be fetched before checking privileges
@@ -374,7 +419,33 @@ function Profile() {
                 {getInitials(profileData.full_name)}
               </div>
               <div>
-                <h1 className="ws-hi display">{profileData.full_name || "N/A"}</h1>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <h1 className="ws-hi display">{profileData.full_name || "N/A"}</h1>
+                  {contribRank != null ? (
+                    (() => {
+                      const r = rankBadge(contribRank);
+                      return (
+                        <span
+                          className={"badge " + r.cls}
+                          style={{ cursor: "help", marginLeft: 0 }}
+                          title={`Ranked ${ordinal(contribRank)} among contributors — your rank is based on the number of datasets you've published.`}
+                        >
+                          <Ic name={r.icon} size={12} sw={2} />
+                          Rank #{contribRank}
+                        </span>
+                      );
+                    })()
+                  ) : (Number(profileData.contributions) || 0) === 0 ? (
+                    <span
+                      className="badge draft"
+                      style={{ cursor: "help" }}
+                      title="Publish your first dataset to join the contributor rankings."
+                    >
+                      <Ic name="star" size={12} sw={2} />
+                      Unranked
+                    </span>
+                  ) : null}
+                </div>
                 <p className="ws-sub">
                   {profileData.organization_name || "No organization"} · {roleLabel}
                 </p>
@@ -688,20 +759,31 @@ function Profile() {
                 <p>Use this key to authenticate API requests.</p>
               </div>
               <div className="modal-body">
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span className="mono-token" style={{ flex: 1, wordBreak: "break-all" }}>
-                    {revealedApiKey}
-                  </span>
+                <div className="linkfield">
+                  <input
+                    className="mono"
+                    readOnly
+                    value={revealedApiKey}
+                    aria-label="API key"
+                    onFocus={(e) => e.target.select()}
+                  />
                   <button
-                    className="btn btn-quiet"
-                    onClick={() => {
-                      // TODO: Implement reload/regenerate API key
-                      console.log("Reload API key clicked");
+                    className={"copy-btn" + (apiKeyCopied ? " done" : "")}
+                    style={{ position: "static" }}
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(revealedApiKey);
+                        setApiKeyCopied(true);
+                        setTimeout(() => setApiKeyCopied(false), 1900);
+                      } catch {
+                        // clipboard unavailable — ignore
+                      }
                     }}
-                    title="Reload API Key"
-                    aria-label="Reload API Key"
+                    title="Copy API key"
+                    aria-label="Copy API key"
                   >
-                    <Ic name="arrow" size={16} />
+                    <Ic name={apiKeyCopied ? "check" : "copy"} size={15} sw={2} />
+                    <span>{apiKeyCopied ? "Copied" : "Copy"}</span>
                   </button>
                 </div>
               </div>

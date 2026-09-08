@@ -158,6 +158,31 @@ class DatasetService:
             )
             raise
 
+    async def get_organization_names(self, org_ids: List[Any]) -> Dict[str, str]:
+        """Map organization UUIDs to display names."""
+        unique_ids = []
+        seen = set()
+        for org_id in org_ids:
+            if org_id is None:
+                continue
+            try:
+                coerced = OrganizationService.coerce_org_id(org_id)
+            except (ValueError, TypeError, AttributeError):
+                continue
+            key = str(coerced)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_ids.append(coerced)
+        if not unique_ids:
+            return {}
+        result = await self.session.execute(
+            select(Organization.id, Organization.name).where(
+                Organization.id.in_(unique_ids)
+            )
+        )
+        return {str(row[0]): row[1] for row in result.all()}
+
     async def get_organization_with_private_status(self, org_id: str) -> Organization:
         """
         Get organization and return with its private status.

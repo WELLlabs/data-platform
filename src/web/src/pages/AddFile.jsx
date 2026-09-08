@@ -21,10 +21,8 @@ function AddFile() {
   const [success, setSuccess] = useState(false);
 
   // Form state
-  const [file, setFile] = useState(null);
-  const [fileTitle, setFileTitle] = useState("");
+  const [files, setFiles] = useState([]);
   const [fileDescription, setFileDescription] = useState("");
-  const [fileFormat, setFileFormat] = useState("");
   const [provenance, setProvenance] = useState("");
   const [source, setSource] = useState("");
   const [citeAs, setCiteAs] = useState("");
@@ -36,9 +34,7 @@ function AddFile() {
   const [geography, setGeography] = useState("");
 
   // Validation error states
-  const [fileTitleError, setFileTitleError] = useState(false);
   const [fileDescriptionError, setFileDescriptionError] = useState(false);
-  const [fileFormatError, setFileFormatError] = useState(false);
   const [provenanceError, setProvenanceError] = useState(false);
   const [sourceError, setSourceError] = useState(false);
   const [citeAsError, setCiteAsError] = useState(false);
@@ -74,29 +70,25 @@ function AddFile() {
   }, []);
 
   const handleFileChange = (e) => {
-    const f = e.target.files && e.target.files[0] ? e.target.files[0] : null;
-    setFile(f);
-    if (f && !fileTitle) {
-      // Filter special characters from filename when auto-filling
-      const filteredName = f.name.replace(/[<>"'&;()]/g, "");
-      const title = filteredName.slice(0, 200);
-      setFileTitle(title);
-      if (title !== f.name.slice(0, 200)) {
-        setFileTitleError(true);
-      }
-    }
-    if (f && !fileFormat) {
-      const parts = f.name.split(".");
-      if (parts.length > 1) {
-        const format = parts.pop().slice(0, 20);
-        // Filter special characters from format
-        const filteredFormat = format.replace(/[<>"'&;()]/g, "");
-        setFileFormat(filteredFormat);
-        if (filteredFormat !== format) {
-          setFileFormatError(true);
-        }
-      }
-    }
+    const picked = e.target.files ? Array.from(e.target.files) : [];
+    if (!picked.length) return;
+    setFiles((prev) => {
+      const next = [...prev];
+      picked.forEach((f) => {
+        const filteredName = f.name.replace(/[<>"'&;()]/g, "");
+        const parts = f.name.split(".");
+        const ext = parts.length > 1 ? parts.pop().slice(0, 20) : "";
+        const entry = {
+          key: `${f.name}-${f.size}-${f.lastModified}`,
+          file: f,
+          title: filteredName.slice(0, 200),
+          format: ext.replace(/[<>"'&;()]/g, ""),
+        };
+        if (!next.some((x) => x.key === entry.key)) next.push(entry);
+      });
+      return next;
+    });
+    e.target.value = "";
   };
 
   const constrained = (v, max) => (v || "").slice(0, max);
@@ -128,13 +120,13 @@ function AddFile() {
       return;
     }
 
-    if (!file) {
-      setError("Please select a file.");
+    if (!files.length) {
+      setError("Please select at least one file.");
       return;
     }
 
-    if (!fileTitle.trim()) {
-      setError("File title is required.");
+    if (files.some((item) => !item.title.trim())) {
+      setError("Each file needs a title.");
       return;
     }
 
@@ -164,44 +156,50 @@ function AddFile() {
         throw new Error("Job ID missing in create upload job response.");
       }
 
-      // 2) Presign and upload the selected file to S3
-      const { fileId } = await requestAndUploadFile({
-        jobId,
-        file,
-        onProgress: setProgress,
-      });
+      const totalBytes = files.reduce((sum, item) => sum + (item.file.size || 0), 0);
+      let uploadedBytes = 0;
+      for (const item of files) {
+        const { fileId } = await requestAndUploadFile({
+          jobId,
+          file: item.file,
+          onProgress: (pct) => {
+            const current = (item.file.size || 0) * (pct / 100);
+            const overall = totalBytes
+              ? Math.round(((uploadedBytes + current) / totalBytes) * 100)
+              : pct;
+            setProgress(Math.min(99, overall));
+          },
+        });
 
-      // 4) Call add_file endpoint with FormData
-      const form = new FormData();
-      form.append("job_id", jobId);
-      form.append("file_id", fileId);
-      form.append("file_title", constrained(fileTitle, 200));
-      form.append("file_description", constrained(fileDescription, 1000));
-      form.append("file_format", constrained(fileFormat, 20));
-      form.append("dataset_id", datasetId);
-      form.append("provenance", constrained(provenance, 125));
-      form.append("source", constrained(source, 1000));
-      form.append("cite_as", constrained(citeAs, 1500));
-      if (groundtruthed) form.append("groundtruthed", "true");
-      form.append("permissions", constrained(permissions, 1000));
-      form.append("duration", duration.toString());
-      if (temporalFrom) form.append("temporal_from", temporalFrom);
-      if (temporalTo) form.append("temporal_to", temporalTo);
-      if (geography) form.append("geography", constrained(geography, 2000));
+        const form = new FormData();
+        form.append("job_id", jobId);
+        form.append("file_id", fileId);
+        form.append("file_title", constrained(item.title, 200));
+        form.append("file_description", constrained(fileDescription, 1000));
+        form.append("file_format", constrained(item.format, 20));
+        form.append("dataset_id", datasetId);
+        form.append("provenance", constrained(provenance, 125));
+        form.append("source", constrained(source, 1000));
+        form.append("cite_as", constrained(citeAs, 1500));
+        if (groundtruthed) form.append("groundtruthed", "true");
+        form.append("permissions", constrained(permissions, 1000));
+        form.append("duration", duration.toString());
+        if (temporalFrom) form.append("temporal_from", temporalFrom);
+        if (temporalTo) form.append("temporal_to", temporalTo);
+        if (geography) form.append("geography", constrained(geography, 2000));
 
-      const addFileResp = await fetch(add_files_url_endpoint, {
-        method: "POST",
-        body: form,
-        credentials: "include",
-      });
+        const addFileResp = await fetch(add_files_url_endpoint, {
+          method: "POST",
+          body: form,
+          credentials: "include",
+        });
 
-      if (!addFileResp.ok) {
-        const txt = await addFileResp.text();
-        throw new Error(`Failed to add file: ${txt}`);
+        if (!addFileResp.ok) {
+          const txt = await addFileResp.text();
+          throw new Error(`Failed to add file: ${txt}`);
+        }
+        uploadedBytes += item.file.size || 0;
       }
-
-      const result = await addFileResp.json();
-      console.log("File added successfully:", result);
 
       // 5) Complete the upload job
       const completeJobResp = await fetch(
@@ -284,36 +282,50 @@ function AddFile() {
           <form onSubmit={onSubmit}>
             <div className="field">
               <label htmlFor="file">
-                File <span style={{ color: "var(--red, #c62828)" }}>(required)</span>
+                Files <span style={{ color: "var(--red, #c62828)" }}>(required)</span>
               </label>
               <input
                 type="file"
                 id="file"
                 onChange={handleFileChange}
-                required
+                multiple
+                accept="*/*"
                 disabled={submitting}
               />
-            </div>
-
-            <div className="field">
-              <label htmlFor="fileTitle">
-                Title <span style={{ color: "var(--red, #c62828)" }}>(required)</span>
-              </label>
-              <input
-                type="text"
-                id="fileTitle"
-                value={fileTitle}
-                onChange={(e) =>
-                  validateAndFilterSpecialChars(e.target.value, setFileTitle, setFileTitleError, 200)
-                }
-                required
-                maxLength={200}
-                disabled={submitting}
-              />
-              {fileTitleError && (
-                <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
-                  no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
-                </span>
+              {files.length > 0 && (
+                <div className="file-stack">
+                  {files.map((item) => (
+                    <div className="file-stack-item" key={item.key}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                        <b>{item.file.name}</b>
+                        <button
+                          type="button"
+                          className="btn-quiet"
+                          onClick={() => setFiles((prev) => prev.filter((x) => x.key !== item.key))}
+                          disabled={submitting}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      <div className="field" style={{ marginTop: 8, marginBottom: 0 }}>
+                        <label>File title</label>
+                        <input
+                          type="text"
+                          value={item.title}
+                          onChange={(e) =>
+                            setFiles((prev) =>
+                              prev.map((x) =>
+                                x.key === item.key ? { ...x, title: e.target.value.slice(0, 200) } : x
+                              )
+                            )
+                          }
+                          required
+                          disabled={submitting}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
 

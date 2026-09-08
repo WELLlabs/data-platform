@@ -17,9 +17,14 @@ from brevo_python.models.send_smtp_email import SendSmtpEmail
 from brevo_python.models.send_smtp_email_to import SendSmtpEmailTo
 from celery import signature
 from core.celery import celery_app
-from core.config import settings
+from core.config import host_name_from_env, settings
 
 logger = logging.getLogger(__name__)
+
+
+def _sender_name() -> str:
+    host = host_name_from_env() or (settings.HOST_NAME or "").strip()
+    return f"Data Platform by {host}" if host else "Data Platform"
 
 
 def _recipient_display_name_for_email(addr: str, display_name: str) -> str:
@@ -164,7 +169,7 @@ def send_forgot_password_email(
             to=[SendSmtpEmailTo(email=email, name=full_name)],
             template_id=settings.FORGOT_PASSWORD_TEMPLATE_ID,
             params=params,
-            sender={"name": "WELL Labs Data Portal", "email": settings.EMAIL_SENDER},
+            sender={"name": _sender_name(), "email": settings.EMAIL_SENDER},
         )
 
         # Send email
@@ -289,7 +294,7 @@ def send_verify_email(
             to=[SendSmtpEmailTo(email=email, name=full_name)],
             template_id=settings.VERIFY_EMAIL_TEMPLATE_ID,
             params=params,
-            sender={"name": "WELL Labs Data Portal", "email": settings.EMAIL_SENDER},
+            sender={"name": _sender_name(), "email": settings.EMAIL_SENDER},
         )
 
         # Send email
@@ -397,7 +402,7 @@ def send_upload_approval(
             ],
             template_id=settings.UPLOAD_APPROVAL_TEMPLATE_ID,
             params=params,
-            sender={"name": "WELL Labs Data Portal", "email": settings.EMAIL_SENDER},
+            sender={"name": _sender_name(), "email": settings.EMAIL_SENDER},
         )
         api_response = api_instance.send_transac_email(send_smtp_email)
         message_id = api_response.message_id
@@ -456,7 +461,7 @@ def send_upload_approval_response(
             ],
             template_id=settings.UPLOAD_APPROVAL_RESPONSE_TEMPLATE_ID,
             params=params,
-            sender={"name": "WELL Labs Data Portal", "email": settings.EMAIL_SENDER},
+            sender={"name": _sender_name(), "email": settings.EMAIL_SENDER},
         )
         api_response = api_instance.send_transac_email(send_smtp_email)
         message_id = api_response.message_id
@@ -519,7 +524,7 @@ def send_user_approval_response(
             ],
             template_id=settings.USER_APPROVAL_RESPONSE_TEMPLATE_ID,
             params=params,
-            sender={"name": "WELL Labs Data Portal", "email": settings.EMAIL_SENDER},
+            sender={"name": _sender_name(), "email": settings.EMAIL_SENDER},
         )
         api_response = api_instance.send_transac_email(send_smtp_email)
         message_id = api_response.message_id
@@ -579,7 +584,7 @@ def send_user_approval_request(self: Any, email: str, name: str) -> dict[str, An
             ],
             template_id=settings.USER_APPROVAL_REQUEST_TEMPLATE_ID,
             params=params,
-            sender={"name": "WELL Labs Data Portal", "email": settings.EMAIL_SENDER},
+            sender={"name": _sender_name(), "email": settings.EMAIL_SENDER},
         )
         api_response = api_instance.send_transac_email(send_smtp_email)
         message_id = api_response.message_id
@@ -644,7 +649,7 @@ def send_dataset_transfer(
             ],
             template_id=settings.DATASET_TRANSFER_TEMPLATE_ID,
             params=params,
-            sender={"name": "WELL Labs Data Portal", "email": settings.EMAIL_SENDER},
+            sender={"name": _sender_name(), "email": settings.EMAIL_SENDER},
         )
         api_response = api_instance.send_transac_email(send_smtp_email)
         message_id = api_response.message_id

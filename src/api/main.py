@@ -3,6 +3,7 @@ import os
 import sys
 
 import uvicorn
+from core.config import host_name_from_env, settings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -50,9 +51,9 @@ def create_app() -> FastAPI:
         )
 
     app = FastAPI(
-        title="WELL Labs Data Portal API",
+        title=f"Data Platform API by {host_name_from_env() or (settings.HOST_NAME or '').strip()}".strip(),
         version=__version__,
-        description="Open data portal API from WELL Labs",
+        description="Open data portal API",
         docs_url="/docs",
         redoc_url="/redoc",
         root_path="/api",
@@ -95,6 +96,20 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health() -> JSONResponse:
         return JSONResponse({"status": "healthy", "version": __version__})
+
+    def _branding_payload() -> dict:
+        host = host_name_from_env() or (settings.HOST_NAME or "").strip()
+        return {
+            "host_name": host,
+            "product_name": "Data Platform",
+            "brand_line": f"Data Platform by {host}" if host else "Data Platform",
+        }
+
+    # Served at /branding (nginx/CRA strip /api) and /api/branding (direct uvicorn + OpenAPI root_path).
+    @app.get("/branding")
+    @app.get("/api/branding")
+    async def branding() -> JSONResponse:
+        return JSONResponse(_branding_payload())
 
     # API routes
     app.include_router(

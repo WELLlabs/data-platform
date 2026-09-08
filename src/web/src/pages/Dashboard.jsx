@@ -246,11 +246,10 @@ function Dashboard() {
   // Client-side grouping of the current page of datasets
   const published = datasets.filter((d) => d.approved === true);
   const pending = datasets.filter((d) => d.approved !== true);
-  const drafts = [];
   const pendingCount = pending.length;
 
-  const tabList =
-    wsTab === "published" ? published : wsTab === "pending" ? pending : drafts;
+  const tabList = wsTab === "pending" ? pending : published;
+
 
   return (
     <div className="page">
@@ -275,12 +274,6 @@ function Dashboard() {
               <p className="ws-sub">{orgLine}</p>
             </div>
             <button
-              className="btn btn-ghost"
-              onClick={() => navigate(`/organisation?id=${encodeURIComponent(user.organization || "")}`)}
-            >
-              Organization
-            </button>
-            <button
               className="btn btn-primary"
               onClick={() => navigate('/create-dataset')}
             >
@@ -293,111 +286,118 @@ function Dashboard() {
         <div className="dash-stats">
           <div className="dash-stat">
             <b>{datasetsLoading ? "…" : published.length}</b>
-            <span>Published on this page</span>
+            <span>Published datasets</span>
+            <span className="trend"><Ic name="grid" size={13} /> Shown on this page</span>
           </div>
           <div className="dash-stat">
             <b>{datasetsLoading ? "…" : pendingCount}</b>
-            <span>Awaiting approval</span>
+            <span>Awaiting review</span>
+            <span className="trend"><Ic name="warn" size={13} /> In the approval queue</span>
           </div>
           <div className="dash-stat">
-            <b>{user.verified ? "Yes" : "Pending"}</b>
+            <b style={{ fontSize: 22 }}>{user.verified ? "Active" : "Pending"}</b>
             <span>Organization membership</span>
+            <span className="trend"><Ic name="org" size={13} /> {orgName || "Your organization"}</span>
           </div>
         </div>
 
-        <div className="sec-label" style={{ marginBottom: 14 }}>
-          Needs your attention
-        </div>
-        <div className="attn">
-          {pendingCount > 0 && (
-            <div
-              className="attn-card warn"
-              onClick={() => setWsTab("pending")}
-              style={{ cursor: "pointer" }}
-            >
-              <div className="aic">
-                <Ic name="warn" size={18} sw={2} />
-              </div>
-              <div>
-                <b>
-                  {pendingCount} dataset{pendingCount === 1 ? "" : "s"} awaiting
-                  approval
-                </b>
-                <p>Your submissions are in the review queue.</p>
-              </div>
-              <span className="go">
-                <Ic name="arrow" size={16} />
-              </span>
+        {(pendingCount > 0 || isUnverified) && (
+          <>
+            <div className="sec-label" style={{ marginBottom: 14 }}>
+              Needs your attention
             </div>
-          )}
+            <div className="attn">
+              {pendingCount > 0 && (
+                <div
+                  className="attn-card warn"
+                  onClick={() => setWsTab("pending")}
+                  style={{ cursor: "pointer" }}
+                >
+                  <div className="aic">
+                    <Ic name="warn" size={18} sw={2} />
+                  </div>
+                  <div>
+                    <b>
+                      {pendingCount} dataset{pendingCount === 1 ? "" : "s"} awaiting
+                      approval
+                    </b>
+                    <p>Your submissions are in the review queue.</p>
+                  </div>
+                  <span className="go">
+                    <Ic name="arrow" size={16} />
+                  </span>
+                </div>
+              )}
 
-          {isUnverified && (
-            <div
-              className="attn-card info"
-              onClick={handleSendVerificationEmail}
-              style={{ cursor: sendingVerification ? "default" : "pointer" }}
-            >
-              <div className="aic">
-                <Ic name="info" size={18} sw={2} />
-              </div>
-              <div>
-                <b>Verify your email address</b>
-                <p>
-                  {sendingVerification
-                    ? "Sending verification email…"
-                    : verificationMessage
-                    ? verificationMessage
-                    : "Confirm your email to unlock publishing and approvals."}
-                </p>
-              </div>
-              <span className="go">
-                <Ic name="arrow" size={16} />
-              </span>
+              {isUnverified && (
+                <div
+                  className="attn-card info"
+                  onClick={handleSendVerificationEmail}
+                  style={{ cursor: sendingVerification ? "default" : "pointer" }}
+                >
+                  <div className="aic">
+                    <Ic name="info" size={18} sw={2} />
+                  </div>
+                  <div>
+                    <b>Verify your email address</b>
+                    <p>
+                      {sendingVerification
+                        ? "Sending verification email…"
+                        : verificationMessage
+                        ? verificationMessage
+                        : "Confirm your email to unlock publishing and approvals."}
+                    </p>
+                  </div>
+                  <span className="go">
+                    <Ic name="arrow" size={16} />
+                  </span>
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          </>
+        )}
 
-        <section className="dash-grid">
+        <section className="dash-grid solo">
           <div className="dash-panel">
-          <div className="seg">
-            <button
-              className={wsTab === "published" ? "active" : ""}
-              onClick={() => setWsTab("published")}
-            >
-              Published{" "}
-              <span className="muted mono" style={{ fontSize: 11 }}>
-                {published.length}
-              </span>
-            </button>
-            <button
-              className={wsTab === "pending" ? "active" : ""}
-              onClick={() => setWsTab("pending")}
-            >
-              Pending{" "}
-              <span className="muted mono" style={{ fontSize: 11 }}>
-                {pending.length}
-              </span>
-            </button>
-            <button
-              className={wsTab === "drafts" ? "active" : ""}
-              onClick={() => setWsTab("drafts")}
-            >
-              Drafts{" "}
-              <span className="muted mono" style={{ fontSize: 11 }}>
-                {drafts.length}
-              </span>
-            </button>
+          <div className="panel-head">
+            <div className="seg">
+              <button
+                className={wsTab === "published" ? "active" : ""}
+                onClick={() => setWsTab("published")}
+              >
+                Published{" "}
+                <span className="muted mono" style={{ fontSize: 11 }}>
+                  {published.length}
+                </span>
+              </button>
+              <button
+                className={wsTab === "pending" ? "active" : ""}
+                onClick={() => setWsTab("pending")}
+              >
+                Pending{" "}
+                <span className="muted mono" style={{ fontSize: 11 }}>
+                  {pending.length}
+                </span>
+              </button>
+            </div>
           </div>
 
-          <div style={{ marginTop: 18 }}>
+          <div>
             {datasetsLoading ? (
               <div className="empty"><p>Loading datasets…</p></div>
             ) : tabList.length === 0 ? (
-              <p className="muted" style={{ padding: "34px 0" }}>
-                {wsTab === "drafts"
-                  ? "No drafts in progress."
-                  : "Nothing here yet."}
-              </p>
+              <div className="empty" style={{ padding: "48px 0" }}>
+                <div className="eic"><Ic name="file" size={22} /></div>
+                <h3>{wsTab === "pending" ? "Nothing awaiting review" : "No published datasets yet"}</h3>
+                <p>
+                  {wsTab === "published"
+                    ? "Datasets you publish will appear here once approved."
+                    : "Submissions waiting on a reviewer will show up here."}
+                </p>
+                <button className="btn btn-primary" onClick={() => navigate("/create-dataset")}>
+                  <Ic name="plus" size={15} sw={2} /> Publish a dataset
+                </button>
+              </div>
             ) : (
               <div className="rows">
                 {tabList.map((dataset) => (
@@ -439,25 +439,6 @@ function Dashboard() {
             </div>
           )}
           </div>
-          <aside className="dash-panel">
-            <div className="sec-label" style={{ marginBottom: 12 }}>Quick links</div>
-            <p className="muted" style={{ marginBottom: 14 }}>
-              Manage membership, publish data, and review the queue from one place.
-            </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <button className="btn btn-ghost" onClick={() => navigate("/profile")}>
-                Profile
-              </button>
-              {Number(user.role) > 0 && (
-                <button className="btn btn-ghost" onClick={() => navigate("/approvals")}>
-                  Approvals
-                </button>
-              )}
-              <button className="btn btn-primary" onClick={() => navigate("/create-dataset")}>
-                New dataset
-              </button>
-            </div>
-          </aside>
         </section>
       </div>
     </div>

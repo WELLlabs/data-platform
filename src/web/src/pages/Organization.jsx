@@ -3,10 +3,8 @@ import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Ic from '../components/wd/Icons';
 import Contour from '../components/wd/Contour';
-import { DatasetRow } from '../components/wd/DatasetItems';
 import {
   organization_by_id_endpoint,
-  organization_add_member_endpoint,
   approve_user_endpoint,
   reject_user_endpoint,
   change_user_role_endpoint,
@@ -18,6 +16,23 @@ const ROLE_OPTIONS = [
   { value: 1, label: 'Admin' },
   { value: 2, label: 'Reviewer' },
 ];
+
+const roleClass = (role) => {
+  if (Number(role) === 1) return 'admin';
+  if (Number(role) === 2) return 'reviewer';
+  return '';
+};
+
+// Best-effort contribution count from whatever the API exposes per member.
+const contributionsOf = (m = {}) =>
+  Number(
+    m.contributions ??
+      m.datasets_count ??
+      m.contributions_count ??
+      m.dataset_count ??
+      m.datasets ??
+      0
+  ) || 0;
 
 const initials = (name = '') =>
   name
@@ -43,14 +58,6 @@ const Organization = () => {
   const [roleDraft, setRoleDraft] = useState(0);
   const [membersActionLoading, setMembersActionLoading] = useState(false);
   const [membersModalError, setMembersModalError] = useState(null);
-  const [addUserOpen, setAddUserOpen] = useState(false);
-  const [addUserEmail, setAddUserEmail] = useState('');
-  const [addUserRole, setAddUserRole] = useState(0);
-  const [addUserApprove, setAddUserApprove] = useState(false);
-  const [addUserLoading, setAddUserLoading] = useState(false);
-  const [addUserError, setAddUserError] = useState('');
-
-  const [dsFilter, setDsFilter] = useState('all');
 
   const orgIdFromQuery = searchParams.get('id');
 
@@ -236,40 +243,6 @@ const Organization = () => {
     }
   };
 
-  const handleAddUser = async (e) => {
-    e.preventDefault();
-    if (!organization?.id || !addUserEmail.trim()) return;
-    try {
-      setAddUserLoading(true);
-      setAddUserError('');
-      const response = await fetch(
-        organization_add_member_endpoint(organization.id),
-        {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email: addUserEmail.trim(),
-            role: addUserRole,
-            approve_now: addUserApprove,
-          }),
-        }
-      );
-      if (!response.ok) {
-        throw new Error(await parseApiError(response, 'Failed to add user.'));
-      }
-      setAddUserOpen(false);
-      setAddUserEmail('');
-      setAddUserRole(0);
-      setAddUserApprove(false);
-      await fetchOrganization();
-    } catch (err) {
-      setAddUserError(err.message || 'Failed to add user.');
-    } finally {
-      setAddUserLoading(false);
-    }
-  };
-
   const getRoleDisplay = (role) => {
     if (role === 0) return 'Member';
     if (role === 1) return 'Admin';
@@ -330,22 +303,13 @@ const Organization = () => {
   const since = organization.created_at
     ? new Date(organization.created_at).getFullYear()
     : null;
-  const datasets = Array.isArray(organization.datasets)
-    ? organization.datasets
-    : [];
   const datasetCount =
-    organization.datasets_count ??
-    (datasets.length || organization.contributions);
-  const cats = [
-    ...new Set(
-      datasets.map((d) => d.category || d.cat).filter(Boolean)
-    ),
-  ];
-  const shownDatasets =
-    dsFilter === 'all'
-      ? datasets
-      : datasets.filter((d) => (d.category || d.cat) === dsFilter);
+    organization.datasets_count ?? organization.contributions;
   const tagline = organization.org_type || organization.contact || '';
+  const maxContrib = (organization.members || []).reduce(
+    (max, m) => Math.max(max, contributionsOf(m)),
+    0
+  );
 
   return (
     <div className="page">
@@ -386,15 +350,22 @@ const Organization = () => {
                 ))}
               </div>
             )}
-            {(organization.privileges?.create ||
-              organization.privileges?.edit) && (
-              <div className="dh-actions" style={{ marginTop: 20 }}>
-                {organization.privileges?.create && (
+            <div className="org-areas" style={{ marginTop: 12 }}>
+              {organization.private ? (
+                <span className="badge lock">Private data enabled</span>
+              ) : (
+                <span className="badge public dot">Public organization</span>
+              )}
+            </div>
+            {(user?.is_superuser || organization.privileges?.edit) && (
+              <div className="org-actions">
+                {user?.is_superuser && (
                   <button
                     className="btn btn-primary"
                     onClick={() => navigate('/createorg')}
                   >
-                    Create
+                    <Ic name="plus" size={15} sw={2} />
+                    Create organization
                   </button>
                 )}
                 {organization.privileges?.edit && (
@@ -420,176 +391,103 @@ const Organization = () => {
         </section>
       )}
 
-      <section className="wrap" style={{ padding: 'var(--s7) 0 var(--s6)' }}>
-        <div className="section-head">
-          <h2 className="section-title">Datasets</h2>
-          {cats.length > 0 && (
-            <div className="seg">
-              <button
-                className={dsFilter === 'all' ? 'active' : ''}
-                onClick={() => setDsFilter('all')}
-              >
-                All
-              </button>
-              {cats.map((c) => (
-                <button
-                  key={c}
-                  className={dsFilter === c ? 'active' : ''}
-                  onClick={() => setDsFilter(c)}
-                >
-                  {c}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-        <div className="rows">
-          {shownDatasets.length > 0 ? (
-            shownDatasets.map((d) => (
-              <DatasetRow
-                key={d.dataset_id ?? d.id ?? d.datasetId}
-                dataset={d}
-              />
-            ))
-          ) : (
-            <p className="muted" style={{ padding: '22px 0' }}>
-              No datasets in this area yet.
-            </p>
-          )}
-        </div>
-      </section>
-
       {(organization.members?.length > 0 || isOrgAdmin) && (
-        <section className="wrap" style={{ padding: '0 0 var(--s8)' }}>
+        <section className="wrap" style={{ padding: 'var(--s7) 0 var(--s8)' }}>
           <hr className="divider" style={{ marginBottom: 'var(--s5)' }} />
           <div className="section-head" style={{ marginBottom: 14 }}>
-            <div className="sec-label" style={{ marginBottom: 0 }}>
-              Members
+            <div>
+              <div className="sec-label" style={{ marginBottom: 4 }}>
+                Members
+              </div>
+              <span className="muted" style={{ fontSize: 13.5 }}>
+                {(organization.members?.length || 0)}{' '}
+                {(organization.members?.length || 0) === 1 ? 'person' : 'people'} in
+                this organization
+              </span>
             </div>
             {isOrgAdmin && (
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button
-                  className="btn btn-primary"
-                  onClick={() => {
-                    setAddUserError('');
-                    setAddUserOpen(true);
-                  }}
-                >
-                  Add user
-                </button>
-                <button
-                  className="btn btn-ghost"
-                  onClick={handleOpenMembersEdit}
-                  aria-label="Edit organization members"
-                >
-                  Edit
-                </button>
-              </div>
+              <button
+                className="btn btn-ghost"
+                onClick={handleOpenMembersEdit}
+                aria-label="Edit organization members"
+              >
+                <Ic name="verified" size={15} sw={2} />
+                Manage members
+              </button>
             )}
           </div>
-          <div className="members">
-            {(organization.members || []).map((member) => (
-              <div className="member" key={member.id}>
-                <div
-                  className="avatar"
-                  style={{ width: 40, height: 40, fontSize: 14 }}
-                >
-                  {initials(member.full_name)}
-                </div>
-                <div>
-                  <b>
-                    <Link
-                      to={`/profile?id=${member.id}`}
-                      style={{ color: 'inherit' }}
+          {(() => {
+            const members = organization.members || [];
+            const topId =
+              maxContrib > 0
+                ? members.reduce(
+                    (best, m) =>
+                      contributionsOf(m) > contributionsOf(best) ? m : best,
+                    members[0]
+                  )?.id
+                : null;
+            return (
+              <div className="member-grid">
+                {members.map((member, i) => {
+                  const isTop = member.id === topId;
+                  const contribs = contributionsOf(member);
+                  const roleLabel = getRoleDisplay(member.role);
+                  return (
+                    <div
+                      className={'member-card' + (isTop ? ' top' : '')}
+                      key={member.id}
+                      style={{ animationDelay: `${Math.min(i * 55, 400)}ms` }}
                     >
-                      {member.full_name}
-                    </Link>
-                  </b>
-                  <span>{member.designation || getRoleDisplay(member.role)}</span>
-                </div>
+                      <div className="m-av">{initials(member.full_name)}</div>
+                      <div className="m-body">
+                        <div className="m-name">
+                          <Link to={`/profile?id=${member.id}`}>
+                            {member.full_name}
+                          </Link>
+                          {isTop && (
+                            <span className="badge top">
+                              <Ic name="trophy" size={12} sw={2} />
+                              Top contributor
+                            </span>
+                          )}
+                          {member.verified === false && (
+                            <span className="badge pending">Pending</span>
+                          )}
+                        </div>
+                        {member.designation && (
+                          <div className="m-desig">{member.designation}</div>
+                        )}
+                        {member.email && (
+                          <div className="m-mail" title={member.email}>
+                            <Ic name="mail" size={13} sw={2} />
+                            <span>{member.email}</span>
+                          </div>
+                        )}
+                        <div className="m-meta">
+                          <span className={'role-badge ' + roleClass(member.role)}>
+                            {Number(member.role) === 1 && (
+                              <Ic name="star" size={11} sw={2} />
+                            )}
+                            {roleLabel}
+                          </span>
+                          {contribs > 0 && (
+                            <span className="contrib-count">
+                              <b>{contribs.toLocaleString('en-IN')}</b>{' '}
+                              {contribs === 1 ? 'dataset' : 'datasets'}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            ))}
-          </div>
+            );
+          })()}
           {(!organization.members || organization.members.length === 0) && (
-            <p className="muted">No members yet. Add a user by email.</p>
+            <p className="muted">No members yet.</p>
           )}
         </section>
-      )}
-
-      {addUserOpen && (
-        <div
-          className="cmdk-overlay show"
-          role="dialog"
-          aria-modal="true"
-          onClick={(e) => {
-            if (e.target === e.currentTarget && !addUserLoading) setAddUserOpen(false);
-          }}
-        >
-          <div className="modal-card">
-            <div className="modal-head">
-              <h3>Add user</h3>
-              <p>Add someone who already has an account, using their email.</p>
-            </div>
-            <form onSubmit={handleAddUser}>
-              <div className="modal-body">
-                {addUserError && (
-                  <p className="muted" style={{ color: 'var(--danger, #c0392b)' }}>
-                    {addUserError}
-                  </p>
-                )}
-                <div className="field">
-                  <label htmlFor="add-user-email">Email</label>
-                  <input
-                    id="add-user-email"
-                    type="email"
-                    required
-                    value={addUserEmail}
-                    onChange={(e) => setAddUserEmail(e.target.value)}
-                    disabled={addUserLoading}
-                  />
-                </div>
-                <div className="field">
-                  <label htmlFor="add-user-role">Role</label>
-                  <select
-                    id="add-user-role"
-                    value={addUserRole}
-                    onChange={(e) => setAddUserRole(Number(e.target.value))}
-                    disabled={addUserLoading}
-                    style={{ width: '100%' }}
-                  >
-                    {ROLE_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <label className="check" style={{ marginTop: 8 }}>
-                  <input
-                    type="checkbox"
-                    checked={addUserApprove}
-                    onChange={(e) => setAddUserApprove(e.target.checked)}
-                    disabled={addUserLoading}
-                  />
-                  Approve immediately (skip the review queue)
-                </label>
-              </div>
-              <div className="modal-foot">
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() => setAddUserOpen(false)}
-                  disabled={addUserLoading}
-                >
-                  Cancel
-                </button>
-                <button type="submit" className="btn btn-primary" disabled={addUserLoading}>
-                  {addUserLoading ? 'Adding…' : 'Add user'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
       )}
 
       {membersEditOpen && (

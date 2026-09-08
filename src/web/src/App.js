@@ -2,6 +2,7 @@ import React from "react";
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from "react-router-dom";
 
 import { AuthProvider } from "./contexts/AuthContext";
+import { BrandingProvider } from "./branding";
 import { ToastProvider } from "./components/wd/Toast";
 import { CommandPalette } from "./components/wd/CommandPalette";
 import SiteNavbar from "./components/SiteNavbar";
@@ -16,6 +17,7 @@ import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import VerifyEmail from "./pages/VerifyEmail";
 import OrgSearch from "./pages/OrgSearch";
+import Contributors from "./pages/Contributors";
 import Dashboard from "./pages/Dashboard";
 import Profile from "./pages/Profile";
 import CreateOrg from "./pages/CreateOrg";
@@ -73,6 +75,7 @@ function AppShell() {
                   <Route path="/reset-password" element={<ResetPassword />} />
                   <Route path="/verify-email" element={<VerifyEmail />} />
                   <Route path="/orgsearch" element={<OrgSearch />} />
+                  <Route path="/contributors" element={<Contributors />} />
                   <Route path="/dashboard" element={<Dashboard />} />
                   <Route path="/approvals" element={<Approvals />} />
                   <Route path="/profile" element={<Profile />} />
@@ -97,13 +100,15 @@ function AppShell() {
 function App() {
   return (
     <AuthProvider>
-      <Router>
-        <ToastProvider>
-          <CommandPalette>
-            <AppShell />
-          </CommandPalette>
-        </ToastProvider>
-      </Router>
+      <BrandingProvider>
+        <Router>
+          <ToastProvider>
+            <CommandPalette>
+              <AppShell />
+            </CommandPalette>
+          </ToastProvider>
+        </Router>
+      </BrandingProvider>
     </AuthProvider>
   );
 }

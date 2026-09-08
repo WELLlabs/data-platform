@@ -1,12 +1,49 @@
 import json
+import os
 from pathlib import Path
 from typing import Any, List
 
+from dotenv import load_dotenv
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Repo root .env: src/api/core/config.py -> parent^4 = repository root (not src/)
-_REPO_ROOT_ENV = Path(__file__).resolve().parent.parent.parent.parent / ".env"
+_CONFIG_FILE = Path(__file__).resolve()
+
+
+def _env_candidates() -> list[Path]:
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for n in range(0, 6):
+        try:
+            candidate = _CONFIG_FILE.parents[n] / ".env"
+        except IndexError:
+            break
+        if candidate not in seen:
+            seen.add(candidate)
+            paths.append(candidate)
+    cwd_env = Path.cwd() / ".env"
+    if cwd_env not in seen:
+        paths.append(cwd_env)
+    return paths
+
+
+def _load_dotenv_files() -> None:
+    for path in _env_candidates():
+        if path.is_file():
+            load_dotenv(path, override=False)
+
+
+_load_dotenv_files()
+_REPO_ROOT_ENV = next((p for p in _env_candidates() if p.is_file()), Path(".env"))
+
+
+def host_name_from_env() -> str:
+    """Read display host name from process env (HOST_NAME, with HOTS_NAME typo fallback)."""
+    for key in ("HOST_NAME", "HOTS_NAME"):
+        val = os.environ.get(key)
+        if val and str(val).strip():
+            return str(val).strip().replace("\r", "")
+    return ""
 
 
 def parse_celery_accept_content(raw: str) -> List[str]:
@@ -42,6 +79,10 @@ class Settings(BaseSettings):
     DOMAIN: str
     SECRET: str
     LONG_TOKEN_AGE_SECONDS: int
+    HOST_NAME: str = Field(
+        default="",
+        description="Display host name used in product branding",
+    )
 
     # Email configuration
     EMAIL_BROKER_URL: str
@@ -113,10 +154,15 @@ class Settings(BaseSettings):
         """CRLF .env files can leave '\\r' on values (breaks bool parsing)."""
         if not isinstance(data, dict):
             return data
-        return {
+        cleaned = {
             k: v.replace("\r", "") if isinstance(v, str) else v
             for k, v in data.items()
         }
+        if not str(cleaned.get("HOST_NAME") or "").strip():
+            alt = cleaned.get("HOTS_NAME") or host_name_from_env()
+            if alt:
+                cleaned["HOST_NAME"] = alt
+        return cleaned
 
     @model_validator(mode="after")
     def _fallback_s3_access_keys(self) -> "Settings":
@@ -124,6 +170,8 @@ class Settings(BaseSettings):
             self.AWS_ACCESS_KEY_ID = self.S3_ACCESS_KEY_ID.strip()
         if not self.AWS_SECRET_ACCESS_KEY.strip() and self.S3_SECRET_ACCESS_KEY.strip():
             self.AWS_SECRET_ACCESS_KEY = self.S3_SECRET_ACCESS_KEY.strip()
+        if not (self.HOST_NAME or "").strip():
+            self.HOST_NAME = host_name_from_env()
         return self
 
 

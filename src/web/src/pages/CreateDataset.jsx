@@ -7,9 +7,11 @@ import {
     create_dataset_endpoint,
     add_files_url_endpoint,
     organization_by_id_endpoint,
+    dataset_owners_endpoint,
 } from "../api/endpoints";
 import { requestAndUploadFile } from "../api/s3Upload";
 import HelpTooltip from "../components/HelpTooltip";
+import Ic from "../components/wd/Icons";
 import {
     AVAILABILITY_OPTIONS,
     AVAILABILITY_PUBLIC,
@@ -21,6 +23,8 @@ function CreateDataset() {
     const [searchParams, setSearchParams] = useSearchParams();
 
     const [orgPrivate, setOrgPrivate] = useState(false);
+    const [orgMembers, setOrgMembers] = useState([]);
+    const [ownerIds, setOwnerIds] = useState([]);
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [progress, setProgress] = useState(0);
@@ -39,10 +43,7 @@ function CreateDataset() {
     const [permissions, setPermissions] = useState("CC0: Public Domain");
     const [duration, setDuration] = useState(0);
 
-    const [file, setFile] = useState(null);
-    const [fileTitle, setFileTitle] = useState("");
-    const [fileDescription, setFileDescription] = useState("");
-    const [fileFormat, setFileFormat] = useState("");
+    const [files, setFiles] = useState([]);
     const [temporalFrom, setTemporalFrom] = useState("");
     const [temporalTo, setTemporalTo] = useState("");
     const [geography, setGeography] = useState("");
@@ -56,9 +57,6 @@ function CreateDataset() {
     const [sourceError, setSourceError] = useState(false);
     const [citeAsError, setCiteAsError] = useState(false);
     const [permissionsError, setPermissionsError] = useState(false);
-    const [fileTitleError, setFileTitleError] = useState(false);
-    const [fileDescriptionError, setFileDescriptionError] = useState(false);
-    const [fileFormatError, setFileFormatError] = useState(false);
 
     // Ensure auth and populate query params with userId and organization
     useEffect(() => {
@@ -93,8 +91,11 @@ function CreateDataset() {
                     if (resp.ok) {
                         const data = await resp.json();
                         setOrgPrivate(Boolean(data.private));
+                        const members = Array.isArray(data.members) ? data.members : [];
+                        setOrgMembers(members);
                     } else {
                         setOrgPrivate(false);
+                        setOrgMembers([]);
                     }
                 }
             } catch (e) {
@@ -108,31 +109,50 @@ function CreateDataset() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    const toFileEntry = (f) => {
+        const filteredName = f.name.replace(/[<>"'&;()]/g, "");
+        const parts = f.name.split(".");
+        const ext = parts.length > 1 ? parts.pop().slice(0, 20) : "";
+        const filteredFormat = ext.replace(/[<>"'&;()]/g, "");
+        return {
+            key: `${f.name}-${f.size}-${f.lastModified}`,
+            file: f,
+            title: filteredName.slice(0, 200),
+            description: "",
+            format: filteredFormat,
+        };
+    };
+
     const handleFileChange = (e) => {
-        const f =
-            e.target.files && e.target.files[0] ? e.target.files[0] : null;
-        setFile(f);
-        if (f && !fileTitle) {
-            // Filter special characters from filename when auto-filling
-            const filteredName = f.name.replace(/[<>"'&;()]/g, "");
-            const title = filteredName.slice(0, 200);
-            setFileTitle(title);
-            if (title !== f.name.slice(0, 200)) {
-                setFileTitleError(true);
-            }
-        }
-        if (f && !fileFormat) {
-            const parts = f.name.split(".");
-            if (parts.length > 1) {
-                const format = parts.pop().slice(0, 20);
-                // Filter special characters from format
-                const filteredFormat = format.replace(/[<>"'&;()]/g, "");
-                setFileFormat(filteredFormat);
-                if (filteredFormat !== format) {
-                    setFileFormatError(true);
-                }
-            }
-        }
+        const picked = e.target.files ? Array.from(e.target.files) : [];
+        if (!picked.length) return;
+        setFiles((prev) => {
+            const next = [...prev];
+            picked.forEach((f) => {
+                const entry = toFileEntry(f);
+                if (!next.some((x) => x.key === entry.key)) next.push(entry);
+            });
+            return next;
+        });
+        e.target.value = "";
+    };
+
+    const updateFileEntry = (key, field, value) => {
+        setFiles((prev) =>
+            prev.map((item) =>
+                item.key === key ? { ...item, [field]: value } : item
+            )
+        );
+    };
+
+    const removeFileEntry = (key) => {
+        setFiles((prev) => prev.filter((item) => item.key !== key));
+    };
+
+    const toggleOwner = (id) => {
+        setOwnerIds((prev) =>
+            prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+        );
     };
 
     const constrained = (v, max) => (v || "").slice(0, max);
@@ -167,8 +187,8 @@ function CreateDataset() {
             navigate("/signin");
             return;
         }
-        if (!file) {
-            setError("Please select a file.");
+        if (!files.length) {
+            setError("Add at least one file to this dataset folder.");
             return;
         }
         if (!title.trim()) {
@@ -179,8 +199,8 @@ function CreateDataset() {
             setError("Tags are required.");
             return;
         }
-        if (!fileTitle.trim()) {
-            setError("File title is required.");
+        if (files.some((item) => !item.title.trim())) {
+            setError("Each file needs a title.");
             return;
         }
 
@@ -244,48 +264,58 @@ function CreateDataset() {
                 throw new Error("Dataset ID not found in response.");
             }
 
-            // 3) Presign and upload the selected file to S3
-            const { fileId } = await requestAndUploadFile({
-                jobId: datasetJobId,
-                file,
-                onProgress: setProgress,
-            });
+            // 3) Upload every file into this dataset folder
+            const totalBytes = files.reduce((sum, item) => sum + (item.file.size || 0), 0);
+            let uploadedBytes = 0;
+            for (const item of files) {
+                const { fileId } = await requestAndUploadFile({
+                    jobId: datasetJobId,
+                    file: item.file,
+                    onProgress: (pct) => {
+                        const current = (item.file.size || 0) * (pct / 100);
+                        const overall = totalBytes
+                            ? Math.round(((uploadedBytes + current) / totalBytes) * 100)
+                            : pct;
+                        setProgress(Math.min(99, overall));
+                    },
+                });
 
-            // 4) Stage file metadata using job_id + file_id
-            const addFileForm = new FormData();
-            addFileForm.append("job_id", datasetJobId);
-            addFileForm.append("file_id", fileId);
-            addFileForm.append("file_title", constrained(fileTitle, 200));
-            addFileForm.append(
-                "file_description",
-                constrained(fileDescription, 1000)
-            );
-            addFileForm.append("file_format", constrained(fileFormat, 20));
-            addFileForm.append("dataset_id", datasetId);
-            if (groundtruthed) addFileForm.append("groundtruthed", "true");
-            addFileForm.append("provenance", constrained(provenance, 125));
-            addFileForm.append("source", constrained(source, 1000));
-            addFileForm.append("cite_as", constrained(citeAs, 1500));
-            addFileForm.append("permissions", constrained(permissions, 1000));
-            addFileForm.append("duration", duration.toString());
-            if (temporalFrom) addFileForm.append("temporal_from", temporalFrom);
-            if (temporalTo) addFileForm.append("temporal_to", temporalTo);
-            if (geography) {
-                addFileForm.append("geography", constrained(geography, 2000));
+                const addFileForm = new FormData();
+                addFileForm.append("job_id", datasetJobId);
+                addFileForm.append("file_id", fileId);
+                addFileForm.append("file_title", constrained(item.title, 200));
+                addFileForm.append(
+                    "file_description",
+                    constrained(item.description, 1000)
+                );
+                addFileForm.append("file_format", constrained(item.format, 20));
+                addFileForm.append("dataset_id", datasetId);
+                if (groundtruthed) addFileForm.append("groundtruthed", "true");
+                addFileForm.append("provenance", constrained(provenance, 125));
+                addFileForm.append("source", constrained(source, 1000));
+                addFileForm.append("cite_as", constrained(citeAs, 1500));
+                addFileForm.append("permissions", constrained(permissions, 1000));
+                addFileForm.append("duration", duration.toString());
+                if (temporalFrom) addFileForm.append("temporal_from", temporalFrom);
+                if (temporalTo) addFileForm.append("temporal_to", temporalTo);
+                if (geography) {
+                    addFileForm.append("geography", constrained(geography, 2000));
+                }
+
+                const addFileResp = await fetch(add_files_url_endpoint, {
+                    method: "POST",
+                    body: addFileForm,
+                    credentials: "include",
+                });
+                if (!addFileResp.ok) {
+                    const txt = await addFileResp.text();
+                    throw new Error(`Failed to add file: ${txt}`);
+                }
+                await addFileResp.json();
+                uploadedBytes += item.file.size || 0;
             }
 
-            const addFileResp = await fetch(add_files_url_endpoint, {
-                method: "POST",
-                body: addFileForm,
-                credentials: "include",
-            });
-            if (!addFileResp.ok) {
-                const txt = await addFileResp.text();
-                throw new Error(`Failed to add file: ${txt}`);
-            }
-            await addFileResp.json();
-
-            // 5) Complete upload job
+            // 4) Complete upload job
             const completeResp = await fetch(
                 `${complete_upload_job_endpoint}?job_id=${encodeURIComponent(
                     datasetJobId
@@ -301,6 +331,24 @@ function CreateDataset() {
             }
             await completeResp.json();
 
+            // 5) Attach extra owners after the dataset exists
+            for (const ownerId of ownerIds) {
+                if (!ownerId || String(ownerId) === String(user.id)) continue;
+                try {
+                    await fetch(dataset_owners_endpoint, {
+                        method: "POST",
+                        credentials: "include",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            dataset_id: datasetId,
+                            user_id: ownerId,
+                        }),
+                    });
+                } catch (ownerErr) {
+                    console.error("Failed to add owner", ownerId, ownerErr);
+                }
+            }
+
             setProgress(100);
             setSuccess(true);
         } catch (err) {
@@ -311,10 +359,23 @@ function CreateDataset() {
         }
     };
 
+    const invalidCharsNote = (
+        <span className="err">
+            No special characters &lt; &gt; " ' &amp; ; ( )
+        </span>
+    );
+
+    const fmtBytes = (n) => {
+        if (!n && n !== 0) return "";
+        if (n < 1024) return `${n} B`;
+        if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`;
+        return `${(n / 1048576).toFixed(1)} MB`;
+    };
+
     if (loading) {
         return (
             <div className="page">
-                <div className="wrap" style={{ maxWidth: 720, padding: "48px 0 88px" }}>
+                <div className="wrap" style={{ maxWidth: 760, padding: "48px 0 88px" }}>
                     <div className="empty"><p>Loading…</p></div>
                 </div>
             </div>
@@ -326,24 +387,32 @@ function CreateDataset() {
     if (success) {
         return (
             <div className="page">
-                <div className="wrap" style={{ maxWidth: 720, padding: "48px 0 88px" }}>
-                    <div className="auth-wrap">
-                        <div className="auth-card">
-                            <span className="eyebrow">Datasets</span>
-                            <h1 className="display">Upload in progress</h1>
-                            <p className="auth-sub">
-                                Dataset upload is in progress, it will soon be
-                                available in your dashboard.
-                            </p>
-                            <div style={{ marginTop: 22 }}>
-                                <button
-                                    type="button"
-                                    className="btn btn-primary"
-                                    onClick={() => navigate("/dashboard")}
-                                >
-                                    Dashboard
-                                </button>
-                            </div>
+                <div className="wrap" style={{ maxWidth: 560, padding: "72px 0 88px" }}>
+                    <div className="auth-card" style={{ textAlign: "center" }}>
+                        <div className="eic" style={{ margin: "0 auto 18px", color: "var(--green)", background: "var(--green-soft)", borderColor: "var(--green-line)" }}>
+                            <Ic name="check" size={24} sw={2.4} />
+                        </div>
+                        <span className="eyebrow">Datasets</span>
+                        <h1 className="display" style={{ marginTop: 6 }}>Upload in progress</h1>
+                        <p className="auth-sub" style={{ maxWidth: "40ch", margin: "8px auto 0" }}>
+                            Your dataset is being processed and will appear in your
+                            dashboard shortly.
+                        </p>
+                        <div style={{ marginTop: 24, display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+                            <button
+                                type="button"
+                                className="btn btn-primary"
+                                onClick={() => navigate("/dashboard")}
+                            >
+                                Go to dashboard
+                            </button>
+                            <button
+                                type="button"
+                                className="btn btn-ghost"
+                                onClick={() => window.location.reload()}
+                            >
+                                Publish another
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -353,504 +422,568 @@ function CreateDataset() {
 
     return (
         <div className="page">
-            <div className="wrap" style={{ maxWidth: 720, padding: "48px 0 88px" }}>
+            <div className="wrap ds-form" style={{ padding: "48px 0 88px" }}>
                 <span className="eyebrow">Datasets</span>
                 <div className="section-head" style={{ marginTop: 8 }}>
-                    <h2 className="section-title">Create a dataset</h2>
+                    <div>
+                        <h2 className="section-title">Publish a dataset</h2>
+                        <p className="muted" style={{ marginTop: 8, maxWidth: "56ch" }}>
+                            A dataset is a folder for any number of files. Set tags,
+                            availability, and ownership once; then add every file type
+                            that belongs in this collection.
+                        </p>
+                    </div>
                 </div>
 
                 {error && (
-                    <div className="attn-card warn" role="alert" style={{ marginBottom: 20 }}>
+                    <div className="attn-card warn" role="alert" style={{ margin: "20px 0" }}>
+                        <div className="aic"><Ic name="warn" size={18} sw={2} /></div>
                         <div><b>{error}</b></div>
                     </div>
                 )}
 
-                <form onSubmit={onSubmit} className="form-layout">
-                    <div className="form-panel">
-                    <h3 className="display">Dataset</h3>
-                    <div className="field">
-                        <label>
-                            Dataset Title{" "}
-                            <span style={{ color: "var(--red, #c62828)" }}>(required)</span>
-                            <HelpTooltip
-                                text="Name of the dataset. For example: Bangalore Rainfall Data would be dataset and you can add several datasets by year under that Title"
-                                id="tooltip-dataset-title"
-                            />
-                        </label>
-                        <input
-                            type="text"
-                            value={title}
-                            onChange={(e) =>
-                                validateAndFilterSpecialChars(
-                                    e.target.value,
-                                    setTitle,
-                                    setTitleError,
-                                    200
-                                )
-                            }
-                            required
-                        />
-                        {titleError && (
-                            <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
-                                no special characters &lt; , &gt; , " , ' , &amp; ,
-                                ; , ( , )
-                            </span>
-                        )}
-                    </div>
-
-                    <div className="field">
-                        <label>
-                            Dataset Description
-                            <HelpTooltip
-                                text="What does the dataset contain."
-                                id="tooltip-dataset-description"
-                            />
-                        </label>
-                        <textarea
-                            rows={4}
-                            value={datasetDescription}
-                            onChange={(e) =>
-                                validateAndFilterSpecialChars(
-                                    e.target.value,
-                                    setDatasetDescription,
-                                    setDatasetDescriptionError,
-                                    2000
-                                )
-                            }
-                        />
-                        {datasetDescriptionError && (
-                            <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
-                                no special characters &lt; , &gt; , " , ' , &amp; ,
-                                ; , ( , )
-                            </span>
-                        )}
-                    </div>
-
-                    <div className="field">
-                        <label>
-                            Tags (keywords separated by comma){" "}
-                            <span style={{ color: "var(--red, #c62828)" }}>(required)</span>
-                            <HelpTooltip
-                                text="Think keyword. Which all search results should this dataset appear in."
-                                id="tooltip-tags"
-                            />
-                        </label>
-                        <input
-                            type="text"
-                            value={tags}
-                            onChange={(e) =>
-                                validateAndFilterSpecialChars(
-                                    e.target.value,
-                                    setTags,
-                                    setTagsError,
-                                    500
-                                )
-                            }
-                        />
-                        {tagsError && (
-                            <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
-                                no special characters &lt; , &gt; , " , ' , &amp; ,
-                                ; , ( , )
-                            </span>
-                        )}
-                    </div>
-
-                    <div className="field">
-                        <label>
-                            Availability
-                            <HelpTooltip
-                                text="Who can view this dataset: Public, Private (creator only), Organization, Admins, or Owners. Restricted levels apply only when your organization is private."
-                                id="tooltip-private"
-                            />
-                        </label>
-                        <select
-                            value={availability}
-                            onChange={(e) =>
-                                setAvailability(Number(e.target.value))
-                            }
-                            disabled={!orgPrivate}
-                        >
-                            {AVAILABILITY_OPTIONS.map((opt) => (
-                                <option
-                                    key={opt.value}
-                                    value={opt.value}
-                                    disabled={!orgPrivate && opt.value !== AVAILABILITY_PUBLIC}
-                                >
-                                    {opt.label}
-                                </option>
-                            ))}
-                        </select>
-                        {!orgPrivate && (
-                            <span className="muted" style={{ fontSize: 13 }}>
-                                Your organization is public, so datasets stay public.
-                            </span>
-                        )}
-                    </div>
-                    </div>
-                    <div className="form-panel">
-                    <h3 className="display">File</h3>
-
-                    <div className="field">
-                        <label>
-                            File <span style={{ color: "var(--red, #c62828)" }}>(required)</span>
-                        </label>
-                        <input
-                            type="file"
-                            onChange={handleFileChange}
-                            accept="*/*"
-                        />
-                    </div>
-
-                    <div className="field">
-                        <label>
-                            File Title{" "}
-                            <span style={{ color: "var(--red, #c62828)" }}>(required)</span>
-                        </label>
-                        <input
-                            type="text"
-                            value={fileTitle}
-                            onChange={(e) =>
-                                validateAndFilterSpecialChars(
-                                    e.target.value,
-                                    setFileTitle,
-                                    setFileTitleError,
-                                    200
-                                )
-                            }
-                            required
-                        />
-                        {fileTitleError && (
-                            <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
-                                no special characters &lt; , &gt; , " , ' , &amp; ,
-                                ; , ( , )
-                            </span>
-                        )}
-                    </div>
-
-                    <div className="field">
-                        <label>File Description</label>
-                        <textarea
-                            rows={3}
-                            value={fileDescription}
-                            onChange={(e) =>
-                                validateAndFilterSpecialChars(
-                                    e.target.value,
-                                    setFileDescription,
-                                    setFileDescriptionError,
-                                    1000
-                                )
-                            }
-                        />
-                        {fileDescriptionError && (
-                            <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
-                                no special characters &lt; , &gt; , " , ' , &amp; ,
-                                ; , ( , )
-                            </span>
-                        )}
-                    </div>
-
-                    <div className="field">
-                        <label>
-                            Provenance
-                            <HelpTooltip
-                                text="Who own the dataset?"
-                                id="tooltip-provenance"
-                            />
-                        </label>
-                        <input
-                            type="text"
-                            value={provenance}
-                            onChange={(e) =>
-                                validateAndFilterSpecialChars(
-                                    e.target.value,
-                                    setProvenance,
-                                    setProvenanceError,
-                                    125
-                                )
-                            }
-                        />
-                        {provenanceError && (
-                            <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
-                                no special characters &lt; , &gt; , " , ' , &amp; ,
-                                ; , ( , )
-                            </span>
-                        )}
-                    </div>
-
-                    <div className="field">
-                        <label>
-                            Source
-                            <HelpTooltip
-                                text="Who gave you the dataset?"
-                                id="tooltip-source"
-                            />
-                        </label>
-                        <input
-                            type="text"
-                            value={source}
-                            onChange={(e) =>
-                                validateAndFilterSpecialChars(
-                                    e.target.value,
-                                    setSource,
-                                    setSourceError,
-                                    1000
-                                )
-                            }
-                        />
-                        {sourceError && (
-                            <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
-                                no special characters &lt; , &gt; , " , ' , &amp; ,
-                                ; , ( , )
-                            </span>
-                        )}
-                    </div>
-
-                    <div className="field">
-                        <label>
-                            Permissions
-                            <HelpTooltip
-                                text={
-                                    <>
-                                        To know more about the Creative Commons Licenses please visit{" "}
-                                        <a
-                                            href="https://creativecommons.org/share-your-work/cclicenses/"
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            onClick={(e) => e.stopPropagation()}
-                                        >
-                                            here
-                                        </a>
-                                        .
-                                    </>
-                                }
-                                id="tooltip-permissions"
-                            />
-                        </label>
-                        <select
-                            value={permissions}
-                            onChange={(e) => setPermissions(e.target.value)}
-                        >
-                            <option value="CC0: Public Domain">CC0: Public Domain</option>
-                            <option value="CC BY: Attribution">CC BY: Attribution</option>
-                            <option value="CC BY-SA: Attribution-ShareAlike">CC BY-SA: Attribution-ShareAlike</option>
-                            <option value="CC BY-NC: Attribution-NonCommercial">CC BY-NC: Attribution-NonCommercial</option>
-                            <option value="CC BY-NC-SA: Attribution-NonCommercial-ShareAlike">CC BY-NC-SA: Attribution-NonCommercial-ShareAlike</option>
-                            <option value="CC BY-ND: Attribution-NoDerivatives">CC BY-ND: Attribution-NoDerivatives</option>
-                            <option value="CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives">CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives</option>
-                        </select>
-                    </div>
-
-                    <div className="field">
-                        <label>
-                            Cite As
-                            <HelpTooltip
-                                text="How should someone give credit for the data?"
-                                id="tooltip-cite-as"
-                            />
-                        </label>
-                        <textarea
-                            rows={4}
-                            value={citeAs}
-                            onChange={(e) =>
-                                validateAndFilterSpecialChars(
-                                    e.target.value,
-                                    setCiteAs,
-                                    setCiteAsError,
-                                    1500
-                                )
-                            }
-                        />
-                        {citeAsError && (
-                            <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
-                                no special characters &lt; , &gt; , " , ' , &amp; ,
-                                ; , ( , )
-                            </span>
-                        )}
-                    </div>
-
-                    <div className="field">
-                        <label>
-                            Groundtruthed
-                            <HelpTooltip
-                                text="Has this data been validated in the field?"
-                                id="tooltip-groundtruthed"
-                            />
-                        </label>
-                        <div style={{ display: "flex", gap: 18, alignItems: "center" }}>
-                            <label className="check" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                                <input
-                                    type="radio"
-                                    name="groundtruthed"
-                                    id="gt_no"
-                                    checked={!groundtruthed}
-                                    onChange={() => setGroundtruthed(false)}
-                                />
-                                No
-                            </label>
-                            <label className="check" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                                <input
-                                    type="radio"
-                                    name="groundtruthed"
-                                    id="gt_yes"
-                                    checked={groundtruthed}
-                                    onChange={() => setGroundtruthed(true)}
-                                />
-                                Yes
-                            </label>
+                <form onSubmit={onSubmit} style={{ marginTop: 24 }}>
+                    {/* Section 1 — Dataset details */}
+                    <div className="form-section">
+                        <div className="fs-head">
+                            <span className="fs-num">1</span>
+                            <div>
+                                <h3>Dataset details</h3>
+                                <p>Folder metadata: title, tags, availability, and who owns it.</p>
+                            </div>
                         </div>
-                    </div>
 
-                    <div className="field">
-                        <label>
-                            Duration
-                            <HelpTooltip
-                                text="How many years can this data be used for from the date of creation? 0 if not applicable"
-                                id="tooltip-duration"
-                            />
-                        </label>
-                        <input
-                            type="number"
-                            value={duration}
-                            onChange={(e) => {
-                                const val = parseInt(e.target.value) || 0;
-                                setDuration(Math.max(0, val));
-                            }}
-                            min="0"
-                        />
-                    </div>
-
-                    <div className="field-row">
                         <div className="field">
                             <label>
-                                Temporal Coverage From
+                                Dataset title <span className="req">(required)</span>
                                 <HelpTooltip
-                                    text="Start date of temporal coverage (ISO format: YYYY-MM-DDTHH:mm:ssZ)"
-                                    id="tooltip-temporal-from"
+                                    text="Name of the dataset. For example: Bangalore Rainfall Data would be the dataset, and you can add several files by year under that title."
+                                    id="tooltip-dataset-title"
                                 />
                             </label>
                             <input
-                                type="datetime-local"
-                                value={temporalFrom ? (() => {
-                                    // Convert ISO string to datetime-local format (YYYY-MM-DDTHH:mm)
-                                    try {
-                                        const date = new Date(temporalFrom);
-                                        if (isNaN(date.getTime())) return "";
-                                        // Get local datetime string in format YYYY-MM-DDTHH:mm
-                                        const year = date.getFullYear();
-                                        const month = String(date.getMonth() + 1).padStart(2, '0');
-                                        const day = String(date.getDate()).padStart(2, '0');
-                                        const hours = String(date.getHours()).padStart(2, '0');
-                                        const minutes = String(date.getMinutes()).padStart(2, '0');
-                                        return `${year}-${month}-${day}T${hours}:${minutes}`;
-                                    } catch {
-                                        return "";
+                                type="text"
+                                value={title}
+                                onChange={(e) =>
+                                    validateAndFilterSpecialChars(
+                                        e.target.value,
+                                        setTitle,
+                                        setTitleError,
+                                        200
+                                    )
+                                }
+                                required
+                            />
+                            {titleError && invalidCharsNote}
+                        </div>
+
+                        <div className="field">
+                            <label>
+                                Dataset description
+                                <HelpTooltip
+                                    text="What does the dataset contain?"
+                                    id="tooltip-dataset-description"
+                                />
+                            </label>
+                            <textarea
+                                rows={4}
+                                value={datasetDescription}
+                                onChange={(e) =>
+                                    validateAndFilterSpecialChars(
+                                        e.target.value,
+                                        setDatasetDescription,
+                                        setDatasetDescriptionError,
+                                        2000
+                                    )
+                                }
+                            />
+                            {datasetDescriptionError && invalidCharsNote}
+                        </div>
+
+                        <div className="field">
+                            <label>
+                                Tags <span className="req">(required)</span>
+                                <HelpTooltip
+                                    text="Think keywords. Which search results should this dataset appear in?"
+                                    id="tooltip-tags"
+                                />
+                            </label>
+                            <input
+                                type="text"
+                                placeholder="Separate keywords with commas, e.g. rainfall, karnataka, groundwater"
+                                value={tags}
+                                onChange={(e) =>
+                                    validateAndFilterSpecialChars(
+                                        e.target.value,
+                                        setTags,
+                                        setTagsError,
+                                        500
+                                    )
+                                }
+                            />
+                            {tagsError && invalidCharsNote}
+                        </div>
+
+                        <div className="field">
+                            <label>
+                                Availability
+                                <HelpTooltip
+                                    text="Who can view this dataset: Public, Private (creator only), Organization, Admins, or Owners. Restricted levels apply only when your organization is private."
+                                    id="tooltip-private"
+                                />
+                            </label>
+                            <select
+                                value={String(availability)}
+                                onChange={(e) =>
+                                    setAvailability(Number(e.target.value))
+                                }
+                                disabled={!orgPrivate}
+                                aria-disabled={!orgPrivate}
+                            >
+                                {AVAILABILITY_OPTIONS.map((opt) => (
+                                    <option
+                                        key={opt.value}
+                                        value={String(opt.value)}
+                                    >
+                                        {opt.label}
+                                    </option>
+                                ))}
+                            </select>
+                            {!orgPrivate && (
+                                <span className="hint">
+                                    Availability is locked to Public because your
+                                    organization does not have private data enabled.
+                                </span>
+                            )}
+                        </div>
+
+                        <div className="field">
+                            <label>
+                                Ownership
+                                <HelpTooltip
+                                    text="You are the creator. Optionally add other organization members as owners of this dataset folder."
+                                    id="tooltip-ownership"
+                                />
+                            </label>
+                            <div className="owner-pick">
+                                <label className="check">
+                                    <input type="checkbox" checked disabled />
+                                    You (creator)
+                                </label>
+                                {orgMembers
+                                    .filter((m) => String(m.id) !== String(user.id))
+                                    .map((m) => (
+                                        <label className="check" key={m.id}>
+                                            <input
+                                                type="checkbox"
+                                                checked={ownerIds.includes(m.id)}
+                                                onChange={() => toggleOwner(m.id)}
+                                            />
+                                            {m.full_name || m.email}
+                                        </label>
+                                    ))}
+                                {orgMembers.filter((m) => String(m.id) !== String(user.id)).length === 0 && (
+                                    <span className="hint">No other organization members to add yet.</span>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Section 2 — File upload */}
+                    <div className="form-section">
+                        <div className="fs-head">
+                            <span className="fs-num">2</span>
+                            <div>
+                                <h3>Files in this folder</h3>
+                                <p>Add any file types. Each file stays inside this dataset.</p>
+                            </div>
+                        </div>
+
+                        <div className="field">
+                            <label>
+                                Data files <span className="req">(required)</span>
+                            </label>
+                            <div className="file-drop">
+                                <span className="fdic"><Ic name="dl" size={18} sw={2} /></span>
+                                <div className="fdmain">
+                                    <b>{files.length ? `${files.length} file${files.length === 1 ? "" : "s"} selected` : "Choose files to add"}</b>
+                                    <span>Any format. You can select multiple files at once.</span>
+                                </div>
+                                <input
+                                    type="file"
+                                    onChange={handleFileChange}
+                                    accept="*/*"
+                                    multiple
+                                />
+                            </div>
+                            {files.length > 0 && (
+                                <div className="file-stack">
+                                    {files.map((item) => (
+                                        <div className="file-stack-item" key={item.key}>
+                                            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                                                <div>
+                                                    <b>{item.file.name}</b>
+                                                    <span className="muted" style={{ display: "block", fontSize: 12.5 }}>
+                                                        {fmtBytes(item.file.size)}{item.format ? ` · ${item.format.toUpperCase()}` : ""}
+                                                    </span>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    className="btn-quiet"
+                                                    onClick={() => removeFileEntry(item.key)}
+                                                >
+                                                    Remove
+                                                </button>
+                                            </div>
+                                            <div className="field" style={{ marginTop: 10, marginBottom: 0 }}>
+                                                <label>File title</label>
+                                                <input
+                                                    type="text"
+                                                    value={item.title}
+                                                    onChange={(e) =>
+                                                        updateFileEntry(item.key, "title", e.target.value.slice(0, 200))
+                                                    }
+                                                    required
+                                                />
+                                            </div>
+                                            <div className="field" style={{ marginTop: 10, marginBottom: 0 }}>
+                                                <label>File description</label>
+                                                <textarea
+                                                    rows={2}
+                                                    value={item.description}
+                                                    onChange={(e) =>
+                                                        updateFileEntry(item.key, "description", e.target.value.slice(0, 1000))
+                                                    }
+                                                />
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Section 3 — Attribution and licensing */}
+                    <div className="form-section">
+                        <div className="fs-head">
+                            <span className="fs-num">3</span>
+                            <div>
+                                <h3>Attribution &amp; licensing</h3>
+                                <p>Where the data came from and how others may use it.</p>
+                            </div>
+                        </div>
+
+                        <div className="field-row">
+                            <div className="field">
+                                <label>
+                                    Provenance
+                                    <HelpTooltip
+                                        text="Who owns the dataset?"
+                                        id="tooltip-provenance"
+                                    />
+                                </label>
+                                <input
+                                    type="text"
+                                    value={provenance}
+                                    onChange={(e) =>
+                                        validateAndFilterSpecialChars(
+                                            e.target.value,
+                                            setProvenance,
+                                            setProvenanceError,
+                                            125
+                                        )
                                     }
-                                })() : ""}
-                                onChange={(e) => {
-                                    const val = e.target.value;
-                                    // Convert to ISO format with timezone
-                                    if (val) {
-                                        // datetime-local gives us YYYY-MM-DDTHH:mm in local time
-                                        // We need to convert it to ISO format
-                                        const date = new Date(val);
-                                        if (!isNaN(date.getTime())) {
-                                            setTemporalFrom(date.toISOString());
+                                />
+                                {provenanceError && invalidCharsNote}
+                            </div>
+
+                            <div className="field">
+                                <label>
+                                    Source
+                                    <HelpTooltip
+                                        text="Who gave you the dataset?"
+                                        id="tooltip-source"
+                                    />
+                                </label>
+                                <input
+                                    type="text"
+                                    value={source}
+                                    onChange={(e) =>
+                                        validateAndFilterSpecialChars(
+                                            e.target.value,
+                                            setSource,
+                                            setSourceError,
+                                            1000
+                                        )
+                                    }
+                                />
+                                {sourceError && invalidCharsNote}
+                            </div>
+                        </div>
+
+                        <div className="field">
+                            <label>
+                                Permissions
+                                <HelpTooltip
+                                    text={
+                                        <>
+                                            To learn more about the Creative Commons licenses, visit{" "}
+                                            <a
+                                                href="https://creativecommons.org/share-your-work/cclicenses/"
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                onClick={(e) => e.stopPropagation()}
+                                            >
+                                                here
+                                            </a>
+                                            .
+                                        </>
+                                    }
+                                    id="tooltip-permissions"
+                                />
+                            </label>
+                            <select
+                                value={permissions}
+                                onChange={(e) => setPermissions(e.target.value)}
+                            >
+                                <option value="CC0: Public Domain">CC0: Public Domain</option>
+                                <option value="CC BY: Attribution">CC BY: Attribution</option>
+                                <option value="CC BY-SA: Attribution-ShareAlike">CC BY-SA: Attribution-ShareAlike</option>
+                                <option value="CC BY-NC: Attribution-NonCommercial">CC BY-NC: Attribution-NonCommercial</option>
+                                <option value="CC BY-NC-SA: Attribution-NonCommercial-ShareAlike">CC BY-NC-SA: Attribution-NonCommercial-ShareAlike</option>
+                                <option value="CC BY-ND: Attribution-NoDerivatives">CC BY-ND: Attribution-NoDerivatives</option>
+                                <option value="CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives">CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives</option>
+                            </select>
+                        </div>
+
+                        <div className="field">
+                            <label>
+                                Cite as
+                                <HelpTooltip
+                                    text="How should someone give credit for the data?"
+                                    id="tooltip-cite-as"
+                                />
+                            </label>
+                            <textarea
+                                rows={3}
+                                value={citeAs}
+                                onChange={(e) =>
+                                    validateAndFilterSpecialChars(
+                                        e.target.value,
+                                        setCiteAs,
+                                        setCiteAsError,
+                                        1500
+                                    )
+                                }
+                            />
+                            {citeAsError && invalidCharsNote}
+                        </div>
+                    </div>
+
+                    {/* Section 4 — Coverage and validity */}
+                    <div className="form-section">
+                        <div className="fs-head">
+                            <span className="fs-num">4</span>
+                            <div>
+                                <h3>Coverage &amp; validity</h3>
+                                <p>When and where the data applies, and how long it stays valid.</p>
+                            </div>
+                        </div>
+
+                        <div className="field">
+                            <label>
+                                Groundtruthed
+                                <HelpTooltip
+                                    text="Has this data been validated in the field?"
+                                    id="tooltip-groundtruthed"
+                                />
+                            </label>
+                            <div className="seg-radio" role="radiogroup" aria-label="Groundtruthed">
+                                <label className={!groundtruthed ? "on" : ""}>
+                                    <input
+                                        type="radio"
+                                        name="groundtruthed"
+                                        id="gt_no"
+                                        checked={!groundtruthed}
+                                        onChange={() => setGroundtruthed(false)}
+                                    />
+                                    No
+                                </label>
+                                <label className={groundtruthed ? "on" : ""}>
+                                    <input
+                                        type="radio"
+                                        name="groundtruthed"
+                                        id="gt_yes"
+                                        checked={groundtruthed}
+                                        onChange={() => setGroundtruthed(true)}
+                                    />
+                                    Yes
+                                </label>
+                            </div>
+                        </div>
+
+                        <div className="field-row">
+                            <div className="field">
+                                <label>
+                                    Temporal coverage from
+                                    <HelpTooltip
+                                        text="Start date of temporal coverage (ISO format: YYYY-MM-DDTHH:mm:ssZ)"
+                                        id="tooltip-temporal-from"
+                                    />
+                                </label>
+                                <input
+                                    type="datetime-local"
+                                    value={temporalFrom ? (() => {
+                                        try {
+                                            const date = new Date(temporalFrom);
+                                            if (isNaN(date.getTime())) return "";
+                                            const year = date.getFullYear();
+                                            const month = String(date.getMonth() + 1).padStart(2, '0');
+                                            const day = String(date.getDate()).padStart(2, '0');
+                                            const hours = String(date.getHours()).padStart(2, '0');
+                                            const minutes = String(date.getMinutes()).padStart(2, '0');
+                                            return `${year}-${month}-${day}T${hours}:${minutes}`;
+                                        } catch {
+                                            return "";
+                                        }
+                                    })() : ""}
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        if (val) {
+                                            const date = new Date(val);
+                                            if (!isNaN(date.getTime())) {
+                                                setTemporalFrom(date.toISOString());
+                                            } else {
+                                                setTemporalFrom("");
+                                            }
                                         } else {
                                             setTemporalFrom("");
                                         }
-                                    } else {
-                                        setTemporalFrom("");
-                                    }
-                                }}
-                            />
-                        </div>
-
-                        <div className="field">
-                            <label>
-                                Temporal Coverage To
-                                <HelpTooltip
-                                    text="End date of temporal coverage (ISO format: YYYY-MM-DDTHH:mm:ssZ)"
-                                    id="tooltip-temporal-to"
+                                    }}
                                 />
-                            </label>
-                            <input
-                                type="datetime-local"
-                                value={temporalTo ? (() => {
-                                    // Convert ISO string to datetime-local format (YYYY-MM-DDTHH:mm)
-                                    try {
-                                        const date = new Date(temporalTo);
-                                        if (isNaN(date.getTime())) return "";
-                                        // Get local datetime string in format YYYY-MM-DDTHH:mm
-                                        const year = date.getFullYear();
-                                        const month = String(date.getMonth() + 1).padStart(2, '0');
-                                        const day = String(date.getDate()).padStart(2, '0');
-                                        const hours = String(date.getHours()).padStart(2, '0');
-                                        const minutes = String(date.getMinutes()).padStart(2, '0');
-                                        return `${year}-${month}-${day}T${hours}:${minutes}`;
-                                    } catch {
-                                        return "";
-                                    }
-                                })() : ""}
-                                onChange={(e) => {
-                                    const val = e.target.value;
-                                    // Convert to ISO format with timezone
-                                    if (val) {
-                                        // datetime-local gives us YYYY-MM-DDTHH:mm in local time
-                                        // We need to convert it to ISO format
-                                        const date = new Date(val);
-                                        if (!isNaN(date.getTime())) {
-                                            setTemporalTo(date.toISOString());
+                            </div>
+
+                            <div className="field">
+                                <label>
+                                    Temporal coverage to
+                                    <HelpTooltip
+                                        text="End date of temporal coverage (ISO format: YYYY-MM-DDTHH:mm:ssZ)"
+                                        id="tooltip-temporal-to"
+                                    />
+                                </label>
+                                <input
+                                    type="datetime-local"
+                                    value={temporalTo ? (() => {
+                                        try {
+                                            const date = new Date(temporalTo);
+                                            if (isNaN(date.getTime())) return "";
+                                            const year = date.getFullYear();
+                                            const month = String(date.getMonth() + 1).padStart(2, '0');
+                                            const day = String(date.getDate()).padStart(2, '0');
+                                            const hours = String(date.getHours()).padStart(2, '0');
+                                            const minutes = String(date.getMinutes()).padStart(2, '0');
+                                            return `${year}-${month}-${day}T${hours}:${minutes}`;
+                                        } catch {
+                                            return "";
+                                        }
+                                    })() : ""}
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        if (val) {
+                                            const date = new Date(val);
+                                            if (!isNaN(date.getTime())) {
+                                                setTemporalTo(date.toISOString());
+                                            } else {
+                                                setTemporalTo("");
+                                            }
                                         } else {
                                             setTemporalTo("");
                                         }
-                                    } else {
-                                        setTemporalTo("");
-                                    }
-                                }}
-                            />
-                        </div>
-                    </div>
-
-                    <div className="field">
-                        <label>
-                            Geographical Extent
-                            <HelpTooltip
-                                text="Geographic coverage or location information"
-                                id="tooltip-geography"
-                            />
-                        </label>
-                        <textarea
-                            rows={3}
-                            value={geography}
-                            onChange={(e) => setGeography(e.target.value)}
-                        />
-                    </div>
-
-                    {submitting && (
-                        <div className="field">
-                            <label>Upload progress</label>
-                            <div style={{ background: "var(--wash, #eef2f6)", borderRadius: 999, height: 8, overflow: "hidden" }}>
-                                <div
-                                    role="progressbar"
-                                    aria-valuenow={progress}
-                                    aria-valuemin="0"
-                                    aria-valuemax="100"
-                                    style={{ width: `${progress}%`, height: "100%", background: "var(--blue, #1b75e0)", transition: "width .2s" }}
+                                    }}
                                 />
                             </div>
-                            <span className="mono-token" style={{ marginTop: 6, display: "inline-block" }}>{progress}%</span>
                         </div>
-                    )}
+
+                        <div className="field-row">
+                            <div className="field">
+                                <label>
+                                    Duration (years)
+                                    <HelpTooltip
+                                        text="How many years can this data be used for from the date of creation? 0 if not applicable."
+                                        id="tooltip-duration"
+                                    />
+                                </label>
+                                <input
+                                    type="number"
+                                    value={duration}
+                                    onChange={(e) => {
+                                        const val = parseInt(e.target.value) || 0;
+                                        setDuration(Math.max(0, val));
+                                    }}
+                                    min="0"
+                                />
+                            </div>
+
+                            <div className="field">
+                                <label>
+                                    Geographical extent
+                                    <HelpTooltip
+                                        text="Geographic coverage or location information"
+                                        id="tooltip-geography"
+                                    />
+                                </label>
+                                <input
+                                    type="text"
+                                    value={geography}
+                                    onChange={(e) => setGeography(e.target.value)}
+                                />
+                            </div>
+                        </div>
                     </div>
 
-                    <button
-                        type="submit"
-                        className="btn btn-primary"
-                        disabled={submitting}
-                        style={{ gridColumn: "1 / -1", justifySelf: "start" }}
-                    >
-                        {submitting ? "Submitting…" : "Submit"}
-                    </button>
+                    {/* Sticky submit bar */}
+                    <div className="form-actions">
+                        <div style={{ flex: 1, minWidth: 200 }}>
+                            {submitting ? (
+                                <>
+                                    <div className="progress-track">
+                                        <div
+                                            className="progress-fill"
+                                            role="progressbar"
+                                            aria-valuenow={progress}
+                                            aria-valuemin="0"
+                                            aria-valuemax="100"
+                                            style={{ width: `${progress}%` }}
+                                        />
+                                    </div>
+                                    <span className="mono-token" style={{ marginTop: 6, display: "inline-block" }}>
+                                        Uploading… {progress}%
+                                    </span>
+                                </>
+                            ) : (
+                                <span className="fa-note">
+                                    Fields marked <span className="req">(required)</span> must be filled before publishing.
+                                </span>
+                            )}
+                        </div>
+                        <div style={{ display: "flex", gap: 10 }}>
+                            <button
+                                type="button"
+                                className="btn btn-ghost"
+                                onClick={() => navigate("/dashboard")}
+                                disabled={submitting}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="submit"
+                                className="btn btn-primary"
+                                disabled={submitting}
+                            >
+                                {submitting ? "Publishing…" : "Publish dataset"}
+                            </button>
+                        </div>
+                    </div>
                 </form>
             </div>
         </div>

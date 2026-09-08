@@ -15,6 +15,12 @@ const ROLE_OPTIONS = [
   { value: 2, label: "Reviewer" },
 ];
 
+function initials(name) {
+  if (!name) return "U";
+  const parts = String(name).trim().split(/\s+/);
+  return ((parts[0]?.[0] || "") + (parts[1]?.[0] || "")).toUpperCase() || "U";
+}
+
 function Approvals() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -308,65 +314,129 @@ function Approvals() {
     );
   }
 
+  const totalPending = users.length + datasets.length;
+
   return (
     <div className="page">
       <div className="wrap" style={{ padding: "48px 0 88px" }}>
         <span className="eyebrow">Review queue</span>
-        <div className="section-head" style={{ marginTop: 8 }}>
-          <h2 className="section-title">Approvals</h2>
+        <div className="appr-head" style={{ marginTop: 8 }}>
+          <div>
+            <h2 className="section-title">Approvals</h2>
+            <p className="muted" style={{ marginTop: 8 }}>
+              Review membership requests and unpublished datasets for your organization.
+            </p>
+          </div>
+          <span className="badge pending dot" style={{ fontSize: 12.5 }}>
+            {totalPending} pending
+          </span>
         </div>
-        <p className="muted" style={{ marginBottom: 24 }}>
-          Review membership requests and unpublished datasets for your organization.
-        </p>
 
         {error && (
-          <div className="attn-card warn" role="alert" style={{ marginBottom: 20 }}>
+          <div className="attn-card warn" role="alert" style={{ margin: "20px 0" }}>
+            <div className="aic"><Ic name="warn" size={18} sw={2} /></div>
             <div><b>{error}</b></div>
           </div>
         )}
 
-        <div className="appr-grid">
+        <div className="appr-grid" style={{ marginTop: 24 }}>
         {hasUsersSection && (
-          <section className="dash-panel" style={{ marginBottom: 0 }}>
-            <div className="sec-label" style={{ marginBottom: 14 }}>
-              User approvals
-              <span className="appr-count">{users.length}</span>
+          <section className="dash-panel appr-panel" style={{ marginBottom: 0 }}>
+            <div className="panel-head">
+              <div className="sec-label" style={{ margin: 0, display: "flex", alignItems: "center", gap: 10 }}>
+                Membership requests
+                <span className={"count-pill" + (users.length === 0 ? " zero" : "")}>{users.length}</span>
+              </div>
             </div>
-            <div className="rows">
+            <div>
               {users.map((pendingUser) => (
-                <div className="drow" key={pendingUser.user_id}>
-                  <div className="rt">
-                    <span className="badge pending">Pending</span>
-                    <h3>{pendingUser.full_name || "N/A"}</h3>
-                  </div>
-                  <div className="rm">
-                    <span>{pendingUser.email || "N/A"}</span>
-                    <span className="spec">
-                      {pendingUser.designation || "N/A"}
+                <div className="arow" key={pendingUser.user_id}>
+                  <span className="aav">{initials(pendingUser.full_name || pendingUser.email)}</span>
+                  <div className="amain">
+                    <b>{pendingUser.full_name || "Unnamed user"}</b>
+                    <span className="asub">
+                      <span>{pendingUser.email || "No email"}</span>
+                      {pendingUser.designation && <span className="mono">{pendingUser.designation}</span>}
                     </span>
+                  </div>
+                  <div className="aact">
                     <button
                       type="button"
                       className="btn btn-primary"
-                      style={{ marginLeft: "auto" }}
                       onClick={() => handleOpenUserModal(pendingUser)}
                       disabled={processingUserId === pendingUser.user_id}
                       aria-label={`Review ${pendingUser.full_name || pendingUser.email || "user"}`}
                     >
-                      {processingUserId === pendingUser.user_id
-                        ? "Working…"
-                        : "Review"}
+                      {processingUserId === pendingUser.user_id ? "Working…" : "Review"}
                     </button>
                   </div>
                 </div>
               ))}
               {users.length === 0 && (
-                <div className="empty">
-                  <p>No pending users found.</p>
+                <div className="empty" style={{ padding: "40px 0" }}>
+                  <div className="eic"><Ic name="check" size={20} /></div>
+                  <p style={{ marginBottom: 0 }}>No membership requests to review.</p>
                 </div>
               )}
             </div>
           </section>
         )}
+
+        {hasDatasetsSection && (
+          <section className="dash-panel appr-panel">
+            <div className="panel-head">
+              <div className="sec-label" style={{ margin: 0, display: "flex", alignItems: "center", gap: 10 }}>
+                Dataset approvals
+                <span className={"count-pill" + (datasets.length === 0 ? " zero" : "")}>{datasets.length}</span>
+              </div>
+            </div>
+            <div>
+              {datasets.map((dataset) => (
+                <div className="arow" key={dataset.dataset_id}>
+                  <span className="aic-file"><Ic name="file" size={18} /></span>
+                  <div className="amain">
+                    <b>{dataset.dataset_title || "Untitled dataset"}</b>
+                    <span className="asub">
+                      <span>by {dataset.creator_name || "Unknown"}</span>
+                    </span>
+                  </div>
+                  <div className="aact">
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() => handleViewDataset(dataset.dataset_id)}
+                    >
+                      View
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() => handleRejectDataset(dataset.dataset_id)}
+                      disabled={processingDatasetId === dataset.dataset_id}
+                    >
+                      Reject
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => handleApproveDataset(dataset.dataset_id)}
+                      disabled={processingDatasetId === dataset.dataset_id}
+                    >
+                      {processingDatasetId === dataset.dataset_id ? "Working…" : "Approve"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {datasets.length === 0 && (
+                <div className="empty" style={{ padding: "40px 0" }}>
+                  <div className="eic"><Ic name="check" size={20} /></div>
+                  <p style={{ marginBottom: 0 }}>No datasets waiting for approval.</p>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+        </div>
 
         {pendingModalUser && (
           <div
@@ -381,25 +451,25 @@ function Approvals() {
           >
             <div className="modal-card">
               <div className="modal-head">
-                <h3 id="userApprovalModalTitle">User approval</h3>
-                <p>Review this member and assign a role.</p>
+                <h3 id="userApprovalModalTitle">Review membership request</h3>
+                <p>Confirm this member and assign their role.</p>
               </div>
               <div className="modal-body">
                 <div className="rrow">
-                  <span>User</span>
-                  <span>{pendingModalUser.full_name || "N/A"}</span>
+                  <span className="k">Name</span>
+                  <span className="v">{pendingModalUser.full_name || "N/A"}</span>
                 </div>
                 <div className="rrow">
-                  <span>Email</span>
-                  <span>{pendingModalUser.email || "N/A"}</span>
+                  <span className="k">Email</span>
+                  <span className="v">{pendingModalUser.email || "N/A"}</span>
                 </div>
                 <div className="rrow">
-                  <span>Designation</span>
-                  <span>{pendingModalUser.designation || "N/A"}</span>
+                  <span className="k">Designation</span>
+                  <span className="v">{pendingModalUser.designation || "N/A"}</span>
                 </div>
-                <div className="field" style={{ marginTop: 16, marginBottom: 0 }}>
+                <div className="field" style={{ marginTop: 18, marginBottom: 0 }}>
                   <label id="role-select-label" htmlFor="user-approval-role">
-                    Role
+                    Assign role
                   </label>
                   <select
                     id="user-approval-role"
@@ -441,69 +511,18 @@ function Approvals() {
                   {processingUserId === pendingModalUser.user_id &&
                   processingAction === "approve"
                     ? "Approving…"
-                    : "Approve"}
+                    : "Approve member"}
                 </button>
               </div>
             </div>
           </div>
         )}
 
-        {hasDatasetsSection && (
-          <section className="dash-panel">
-            <div className="sec-label" style={{ marginBottom: 14 }}>
-              Dataset approvals
-              <span className="appr-count">{datasets.length}</span>
-            </div>
-            <div className="rows">
-              {datasets.map((dataset) => (
-                <div className="drow" key={dataset.dataset_id}>
-                  <div className="rt">
-                    <span className="badge pending">Pending</span>
-                    <h3>{dataset.dataset_title || "N/A"}</h3>
-                  </div>
-                  <div className="rm">
-                    <span>{dataset.creator_name || "N/A"}</span>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      onClick={() => handleViewDataset(dataset.dataset_id)}
-                    >
-                      View
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      onClick={() => handleRejectDataset(dataset.dataset_id)}
-                      disabled={processingDatasetId === dataset.dataset_id}
-                    >
-                      Reject
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      onClick={() => handleApproveDataset(dataset.dataset_id)}
-                      disabled={processingDatasetId === dataset.dataset_id}
-                    >
-                      {processingDatasetId === dataset.dataset_id
-                        ? "Working…"
-                        : "Approve"}
-                    </button>
-                  </div>
-                </div>
-              ))}
-              {datasets.length === 0 && (
-                <div className="empty">
-                  <p>No pending datasets found.</p>
-                </div>
-              )}
-            </div>
-          </section>
-        )}
-        </div>
-
         {!hasUsersSection && !hasDatasetsSection && !error && (
           <div className="empty">
-            <p>No pending approvals found.</p>
+            <div className="eic"><Ic name="check" size={22} /></div>
+            <h3>All clear</h3>
+            <p>There are no pending approvals right now.</p>
           </div>
         )}
       </div>

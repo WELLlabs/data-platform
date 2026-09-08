@@ -1,11 +1,14 @@
 import React from "react";
+import { useBranding } from "../branding";
 
 function FAQ() {
+  const { hostName, brandLine, productName } = useBranding();
+  const org = hostName || productName;
   const faqItems = [
     {
-      question: "What is the WELL Labs Open Data Portal?",
+      question: `What is the ${brandLine}?`,
       answer:
-        "The WELL Labs Open Data Portal is a centralized platform that serves as a source of truth for all datasets within the organization. It provides easy access to datasets, helping team members discover data that can be useful for their work.",
+        `The ${brandLine} is a centralized platform that serves as a source of truth for all datasets within the organization. It provides easy access to datasets, helping team members discover data that can be useful for their work.`,
     },
     {
       question: "Who can access the portal?",
@@ -50,7 +53,7 @@ function FAQ() {
     {
       question: "What should I do if I encounter an error?",
       answer:
-        "If you encounter any errors or issues while using the portal, please contact the WELL Labs support team. Include details about the error message and what you were trying to do when the error occurred.",
+        `If you encounter any errors or issues while using the portal, please contact the ${org} support team. Include details about the error message and what you were trying to do when the error occurred.`,
     },
   ];
 
@@ -62,7 +65,7 @@ function FAQ() {
           Frequently asked questions
         </h1>
         <p className="lede">
-          Find answers to common questions about the WELL Labs Open Data Portal.
+          Find answers to common questions about the {brandLine}.
         </p>
 
         <div style={{ marginTop: 32 }}>
@@ -81,7 +84,7 @@ function FAQ() {
           <div className="prose">
             <p>
               If you couldn't find the answer you're looking for, please contact
-              the WELL Labs support team for assistance.
+              the {org} support team for assistance.
             </p>
           </div>
         </div>

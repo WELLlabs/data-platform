@@ -5,7 +5,7 @@ import { datasets_endpoint } from "../api/endpoints";
 import Contour from "../components/wd/Contour";
 import Ic from "../components/wd/Icons";
 import { useCmdk } from "../components/wd/CommandPalette";
-import { DatasetRow, DatasetCard, normalize } from "../components/wd/DatasetItems";
+import { DatasetRow, DatasetCard, normalize, useOrganizationNames } from "../components/wd/DatasetItems";
 import { AVAILABILITY_OPTIONS, availabilityLabel, parseAvailability } from "../constants/availability";
 
 const LIMIT = 10;
@@ -23,6 +23,7 @@ export default function Datasets() {
   const [view, setView] = useState("list");
   const [filters, setFilters] = useState({ availability: [], org: [] });
   const [collapsed, setCollapsed] = useState({});
+  const orgNames = useOrganizationNames();
 
   useEffect(() => {
     let active = true;
@@ -50,13 +51,14 @@ export default function Datasets() {
   // client-side facets from the current page
   const orgOptions = useMemo(() => {
     const s = new Set();
-    datasets.forEach((d) => { const o = normalize(d).org; if (o) s.add(o); });
+    datasets.forEach((d) => { const o = normalize(d, orgNames).org; if (o) s.add(o); });
     return [...s];
-  }, [datasets]);
+  }, [datasets, orgNames]);
 
   const shown = useMemo(() => {
+    if (isAuthenticated) return datasets;
     return datasets.filter((raw) => {
-      const d = normalize(raw);
+      const d = normalize(raw, orgNames);
       if (filters.availability.length) {
         const key = String(parseAvailability(d.availability));
         if (!filters.availability.includes(key)) return false;
@@ -64,7 +66,7 @@ export default function Datasets() {
       if (filters.org.length && !filters.org.includes(d.org)) return false;
       return true;
     });
-  }, [datasets, filters]);
+  }, [datasets, filters, isAuthenticated, orgNames]);
 
   const toggle = (group, val) => {
     setFilters((f) => {
@@ -110,24 +112,24 @@ export default function Datasets() {
         </div>
       </section>
 
-      <div className="wrap"><div className="explore-layout">
-        <aside className="filters">
-          <div className="fh">Refine</div>
-          <FGroup id="availability" label="Availability" options={AVAILABILITY_OPTIONS.map((o) => [String(o.value), o.label])} />
-          {orgOptions.length > 0 && <FGroup id="org" label="Organization" options={orgOptions.map((o) => [o, o])} />}
-          {isAuthenticated && (
-            <div className="fgroup">
-              <button className="btn btn-primary" style={{ width: "100%", marginTop: 8 }} onClick={() => navigate("/create-dataset")}>
-                <Ic name="plus" size={15} />Publish a dataset
-              </button>
-            </div>
-          )}
-        </aside>
+      <div className="wrap"><div className={"explore-layout" + (isAuthenticated ? " no-filters" : "")}>
+        {!isAuthenticated && (
+          <aside className="filters">
+            <div className="fh">Refine</div>
+            <FGroup id="availability" label="Availability" options={AVAILABILITY_OPTIONS.map((o) => [String(o.value), o.label])} />
+            {orgOptions.length > 0 && <FGroup id="org" label="Organization" options={orgOptions.map((o) => [o, o])} />}
+          </aside>
+        )}
 
         <div>
           <div className="results-bar">
             <span className="count"><b>{shown.length}</b> dataset{shown.length !== 1 ? "s" : ""}{" "}<span style={{ fontSize: 12 }}>· page {page}</span></span>
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              {isAuthenticated && (
+                <button className="btn btn-primary" onClick={() => navigate("/create-dataset")}>
+                  <Ic name="plus" size={15} />Publish a dataset
+                </button>
+              )}
               <div className="view-toggle" role="group" aria-label="View">
                 <button className={view === "list" ? "active" : ""} onClick={() => setView("list")} aria-label="List view"><Ic name="list" size={15} /></button>
                 <button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")} aria-label="Grid view"><Ic name="grid" size={15} /></button>
@@ -135,7 +137,7 @@ export default function Datasets() {
             </div>
           </div>
 
-          {chips.length > 0 && (
+          {!isAuthenticated && chips.length > 0 && (
             <div className="chips">
               {chips.map(([g, v, lbl]) => (
                 <span className="chip" key={g + v}>{lbl}<button onClick={() => toggle(g, v)} aria-label="Remove filter"><Ic name="close" size={12} /></button></span>

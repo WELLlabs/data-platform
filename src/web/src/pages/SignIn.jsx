@@ -2,6 +2,9 @@ import React, { useState, useRef, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { login_options_endpoint, signin_endpoint } from "../api/endpoints";
+import { BrandLockup } from "../branding";
+
+const BrandMark = () => <BrandLockup className="auth-brand" />;
 
 function SignIn() {
   const [email, setEmail] = useState("");
@@ -98,92 +101,88 @@ function SignIn() {
 
   if (authLoading) {
     return (
-      <div className="page">
-        <div className="wrap">
-          <div className="auth-wrap">
-            <div className="auth-card">
-              <div className="empty"><p>Checking session…</p></div>
-            </div>
-          </div>
+      <div className="page auth-screen">
+        <BrandMark />
+        <div className="auth-card">
+          <div className="empty" style={{ padding: "20px 0" }}><p>Checking session…</p></div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="page">
-      <div className="wrap">
-        <div className="auth-wrap">
-          <div className="auth-card">
-            <h1 className="display">Sign in</h1>
-            <p className="auth-sub">Access your workspace on the WELL Labs Data Portal.</p>
+    <div className="page auth-screen">
+      <BrandMark />
+      <div className="auth-card">
+        <h1 className="display">Sign in</h1>
+        <p className="auth-sub">Access your workspace on the Data Portal.</p>
 
-            {error && (
-              <div
-                className="auth-note"
-                role="alert"
-                style={{ background: "#faf3e4", borderColor: "#ecdcb8", color: "#9a6b12" }}
-              >
-                {error}
-              </div>
-            )}
-
-            <form ref={formRef} onSubmit={handleSubmit} method="post">
-              <div className="field">
-                <label htmlFor="email">Email</label>
-                <input
-                  id="email"
-                  name="email"
-                  type="email"
-                  placeholder="you@ifmr.ac.in"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  autoComplete="username"
-                  required
-                  disabled={loading}
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="password">Password</label>
-                <input
-                  id="password"
-                  name="password"
-                  type="password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="current-password"
-                  required
-                  disabled={loading}
-                />
-              </div>
-              <button
-                type="submit"
-                className="btn btn-primary"
-                style={{ width: "100%", marginTop: 4 }}
-                disabled={loading}
-              >
-                {loading ? "Signing In…" : "Sign in"}
-              </button>
-            </form>
-
-            {googleEnabled && (
-              <a
-                className="btn btn-ghost"
-                href="/api/auth/google"
-                style={{ width: "100%", marginTop: 12, textAlign: "center" }}
-              >
-                Sign in with Google
-              </a>
-            )}
-
-            <div className="auth-foot">
-              <Link to="/forgot-password">Forgot password?</Link>
-            </div>
-            <div className="auth-foot" style={{ marginTop: 6 }}>
-              New here? <Link to="/signup">Create an account</Link>
-            </div>
+        {error && (
+          <div
+            className="auth-note"
+            role="alert"
+            style={{ background: "#faf3e4", borderColor: "#ecdcb8", color: "#9a6b12" }}
+          >
+            {error}
           </div>
+        )}
+
+        <form ref={formRef} onSubmit={handleSubmit} method="post">
+          <div className="field">
+            <label htmlFor="email">Email</label>
+            <input
+              id="email"
+              name="email"
+              type="email"
+              placeholder="you@ifmr.ac.in"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="username"
+              required
+              disabled={loading}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="password">Password</label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              placeholder="••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+              disabled={loading}
+            />
+          </div>
+          <button
+            type="submit"
+            className="btn btn-primary"
+            style={{ width: "100%", marginTop: 4 }}
+            disabled={loading}
+          >
+            {loading ? "Signing in…" : "Sign in"}
+          </button>
+        </form>
+
+        {googleEnabled && (
+          <>
+            <div className="auth-or">or</div>
+            <a
+              className="gbtn"
+              href="/api/auth/google"
+            >
+              Sign in with Google
+            </a>
+          </>
+        )}
+
+        <div className="auth-foot">
+          <Link to="/forgot-password">Forgot password?</Link>
+        </div>
+        <div className="auth-foot" style={{ marginTop: 6 }}>
+          New here? <Link to="/signup">Create an account</Link>
         </div>
       </div>
     </div>

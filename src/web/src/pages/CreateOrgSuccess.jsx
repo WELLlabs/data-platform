@@ -77,8 +77,8 @@ function CreateOrgSuccess() {
                 <button className="btn btn-primary" onClick={() => navigate("/signup")}>
                   Sign up
                 </button>
-                <button className="btn btn-ghost" onClick={() => navigate("/createorg")}>
-                  Create organisation
+                <button className="btn btn-ghost" onClick={() => navigate("/")}>
+                  Go home
                 </button>
               </div>
             </div>

@@ -1,15 +1,10 @@
 import React from "react";
 import { Link } from "react-router-dom";
+import { BrandLockup, useBranding } from "../../branding";
 import Contour from "./Contour";
 
-const glyph = (
-  <svg className="glyph" viewBox="0 0 24 28" fill="none" aria-hidden="true">
-    <path d="M12 1C12 1 4 9.5 4 16.2C4 21 7.6 25 12 25C16.4 25 20 21 20 16.2C20 9.5 12 1 12 1Z" fill="#EAF4FA" stroke="#1769AA" strokeWidth="1.3"/>
-    <path d="M12 1C12 1 4 9.5 4 16.2C4 21 7.6 25 12 25V1Z" fill="#0B1F33"/>
-  </svg>
-);
-
 export default function Footer() {
+  const { hostName, productName } = useBranding();
   return (
     <footer className="footer">
       <div className="contourfield" aria-hidden="true">
@@ -21,10 +16,7 @@ export default function Footer() {
       </div>
       <div className="wrap foot-inner">
         <div className="foot-brand">
-          <Link className="brand" to="/">
-            {glyph}
-            <span><span className="bt">WELL DATA</span><span className="bs">by WELL Labs</span></span>
-          </Link>
+          <BrandLockup />
           <p>An elegant research library for water, land and environmental data.</p>
         </div>
         <div className="foot-col"><h5>Discover</h5>
@@ -37,14 +29,14 @@ export default function Footer() {
           <Link to="/faq">Guidelines</Link>
           <Link to="/faq">Metadata standard</Link>
         </div>
-        <div className="foot-col"><h5>WELL Labs</h5>
+        <div className="foot-col"><h5>{hostName || productName}</h5>
           <Link to="/faq">About</Link>
           <Link to="/faq">Research</Link>
           <Link to="/faq">Contact</Link>
         </div>
       </div>
       <div className="wrap"><div className="foot-base">
-        <span>© {new Date().getFullYear()} WELL Labs · IFMR</span>
+        <span>© {new Date().getFullYear()} {hostName || productName}</span>
         <span>An open research library for water, land and environmental data</span>
       </div></div>
     </footer>

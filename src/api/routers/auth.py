@@ -427,6 +427,12 @@ def _google_redirect_uri() -> str:
     return f"{settings.DOMAIN.rstrip('/')}/api/auth/google/callback"
 
 
+def _frontend_redirect(path: str) -> RedirectResponse:
+    """Stay on the browser's current scheme/host (CRA is HTTP; DOMAIN may be https://localhost)."""
+    dest = path if path.startswith("/") else f"/{path}"
+    return RedirectResponse(url=dest, status_code=status.HTTP_302_FOUND)
+
+
 @router.get("/google")
 async def google_oauth_start(
     auth_service: AuthService = Depends(get_auth_service),
@@ -469,10 +475,7 @@ async def google_oauth_callback(
         )
     error = request.query_params.get("error")
     if error:
-        return RedirectResponse(
-            url=f"{settings.DOMAIN.rstrip('/')}/signin?error=google",
-            status_code=status.HTTP_302_FOUND,
-        )
+        return _frontend_redirect("/signin?error=google")
     code = request.query_params.get("code")
     state = request.query_params.get("state")
     if not code or not state:
@@ -500,49 +503,31 @@ async def google_oauth_callback(
         )
         if token_resp.status_code != 200:
             logger.error("Google token exchange failed: %s", token_resp.status_code)
-            return RedirectResponse(
-                url=f"{settings.DOMAIN.rstrip('/')}/signin?error=google",
-                status_code=status.HTTP_302_FOUND,
-            )
+            return _frontend_redirect("/signin?error=google")
         access_token = token_resp.json().get("access_token")
         if not access_token:
-            return RedirectResponse(
-                url=f"{settings.DOMAIN.rstrip('/')}/signin?error=google",
-                status_code=status.HTTP_302_FOUND,
-            )
+            return _frontend_redirect("/signin?error=google")
         info_resp = await client.get(
             "https://openidconnect.googleapis.com/v1/userinfo",
             headers={"Authorization": f"Bearer {access_token}"},
         )
         if info_resp.status_code != 200:
-            return RedirectResponse(
-                url=f"{settings.DOMAIN.rstrip('/')}/signin?error=google",
-                status_code=status.HTTP_302_FOUND,
-            )
+            return _frontend_redirect("/signin?error=google")
         info = info_resp.json()
     email = (info.get("email") or "").strip().lower()
     if not email:
-        return RedirectResponse(
-            url=f"{settings.DOMAIN.rstrip('/')}/signin?error=google",
-            status_code=status.HTTP_302_FOUND,
-        )
+        return _frontend_redirect("/signin?error=google")
     try:
         user = await auth_service.get_or_create_google_user(
             email, info.get("name")
         )
     except HTTPException as exc:
         if exc.status_code == status.HTTP_400_BAD_REQUEST:
-            return RedirectResponse(
-                url=f"{settings.DOMAIN.rstrip('/')}/signin?error=domain",
-                status_code=status.HTTP_302_FOUND,
-            )
+            return _frontend_redirect("/signin?error=domain")
         raise
     cookie = await auth_service.issue_session_cookie(user)
     dest = "/complete-profile" if not is_profile_complete(user) else "/"
-    response = RedirectResponse(
-        url=f"{settings.DOMAIN.rstrip('/')}{dest}",
-        status_code=status.HTTP_302_FOUND,
-    )
+    response = _frontend_redirect(dest)
     response.set_cookie(**cookie)
     return response
 

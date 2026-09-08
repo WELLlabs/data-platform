@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
-import { list_organizations_endpoint } from "../api/endpoints";
+import React, { useState, useEffect, useMemo } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { homepage_stats_endpoint, list_organizations_endpoint } from "../api/endpoints";
 import Ic from "../components/wd/Icons";
 
 const initials = (name = "") =>
@@ -14,7 +14,10 @@ const initials = (name = "") =>
     .toUpperCase() || "OR";
 
 function OrgSearch() {
+  const [searchParams] = useSearchParams();
+  const sortTop = searchParams.get("sort") === "top";
   const [organizations, setOrganizations] = useState([]);
+  const [rankById, setRankById] = useState({});
   const [query, setQuery] = useState("");
 
   useEffect(() => {
@@ -37,22 +40,53 @@ function OrgSearch() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!sortTop) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(homepage_stats_endpoint, { credentials: "include" });
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        const ranked = [...(data.top_organizations || [])].sort(
+          (a, b) => (b.contributions || 0) - (a.contributions || 0)
+        );
+        const map = {};
+        ranked.forEach((o, i) => {
+          map[String(o.organization_id)] = { rank: i + 1, contributions: o.contributions };
+        });
+        if (!cancelled) setRankById(map);
+      } catch {
+        if (!cancelled) setRankById({});
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [sortTop]);
+
   const q = query.trim().toLowerCase();
-  const shown = q
-    ? organizations.filter((o) => {
-        const hay = [
-          o.name,
-          o.description,
-          o.org_type,
-          ...(Array.isArray(o.focus) ? o.focus : []),
-          ...(Array.isArray(o.roi_states) ? o.roi_states : []),
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        return hay.includes(q);
-      })
-    : organizations;
+  const shown = useMemo(() => {
+    const filtered = q
+      ? organizations.filter((o) => {
+          const hay = [
+            o.name,
+            o.description,
+            o.org_type,
+            ...(Array.isArray(o.focus) ? o.focus : []),
+            ...(Array.isArray(o.roi_states) ? o.roi_states : []),
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+          return hay.includes(q);
+        })
+      : organizations;
+    if (!sortTop) return filtered;
+    return [...filtered].sort((a, b) => {
+      const ra = rankById[String(a.id)]?.contributions ?? -1;
+      const rb = rankById[String(b.id)]?.contributions ?? -1;
+      return rb - ra;
+    });
+  }, [organizations, q, sortTop, rankById]);
 
   return (
     <div className="page">
@@ -68,11 +102,12 @@ function OrgSearch() {
             margin: "10px 0 8px",
           }}
         >
-          Organizations
+          {sortTop ? "Top organizations" : "Organizations"}
         </h1>
         <p className="muted" style={{ maxWidth: "56ch", marginBottom: "var(--s6)" }}>
-          Research institutions and public bodies that collect, curate and share
-          environmental data on the platform.
+          {sortTop
+            ? "Organizations ranked from highest to lowest by contributions."
+            : "Research institutions and public bodies that collect, curate and share environmental data on the platform."}
         </p>
 
         <div className="hero-search" style={{ marginTop: 0, marginBottom: "var(--s6)" }}>
@@ -98,7 +133,8 @@ function OrgSearch() {
               const since = o.created_at
                 ? new Date(o.created_at).getFullYear()
                 : null;
-              const datasetCount = o.datasets_count ?? o.contributions;
+              const ranked = rankById[String(o.id)];
+              const datasetCount = o.datasets_count ?? o.contributions ?? ranked?.contributions;
               return (
                 <Link
                   className="orgcard"
@@ -109,6 +145,7 @@ function OrgSearch() {
                   <div className="oi" style={{ width: 46, height: 46, fontSize: 17 }}>
                     {initials(o.name)}
                   </div>
+                  {ranked?.rank != null && <span className="rank-chip">#{ranked.rank}</span>}
                   <b
                     style={{
                       fontSize: 17,
@@ -141,7 +178,7 @@ function OrgSearch() {
                   )}
                   {(datasetCount != null || since) && (
                     <div className="muted" style={{ fontSize: 12.5, marginTop: 14 }}>
-                      {datasetCount != null && `${datasetCount} datasets`}
+                      {datasetCount != null && `${datasetCount} ${ranked ? "contributions" : "datasets"}`}
                       {datasetCount != null && since && " · "}
                       {since && `since ${since}`}
                     </div>

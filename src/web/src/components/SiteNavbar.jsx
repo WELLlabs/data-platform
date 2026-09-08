@@ -1,16 +1,9 @@
 import React, { useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { BrandLockup } from "../branding";
 import { useCmdk } from "./wd/CommandPalette";
 import Ic from "./wd/Icons";
-
-const glyph = (
-  <svg className="glyph" viewBox="0 0 24 28" fill="none" aria-hidden="true">
-    <path d="M12 1C12 1 4 9.5 4 16.2C4 21 7.6 25 12 25C16.4 25 20 21 20 16.2C20 9.5 12 1 12 1Z" fill="#EAF4FA" stroke="#1769AA" strokeWidth="1.3"/>
-    <path d="M12 1C12 1 4 9.5 4 16.2C4 21 7.6 25 12 25V1Z" fill="#0B1F33"/>
-    <path d="M12 1C12 1 4 9.5 4 16.2C4 21 7.6 25 12 25" stroke="#1769AA" strokeWidth="1.3"/>
-  </svg>
-);
 
 function initials(name) {
   if (!name) return "U";
@@ -64,10 +57,7 @@ export default function SiteNavbar() {
       )}
       <header className={"nav" + (open ? " open" : "")}>
         <div className="wrap nav-inner">
-          <Link className="brand" to="/" aria-label="WELL DATA home" onClick={() => setOpen(false)}>
-            {glyph}
-            <span><span className="bt">WELL DATA</span><span className="bs">by WELL Labs</span></span>
-          </Link>
+          <BrandLockup onClick={() => setOpen(false)} />
           <nav className="nav-links" aria-label="Primary">
             {links.map((l) => (
               <Link key={l.label} to={l.to} className={isActive(l.match) ? "active" : ""} onClick={() => setOpen(false)}>

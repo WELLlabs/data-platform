@@ -436,7 +436,7 @@ class UserController:
             )
             role_type = _role_type_label_for_email(assigned_role)
             acceptance_message = (
-                "Sign in to access the WELL Labs data portal with "
+                "Sign in to access the data platform with "
                 f"{role_type} role permissions."
             )
             send_user_approval_response.apply_async(

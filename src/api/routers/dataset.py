@@ -575,6 +575,9 @@ class DatasetController:
                 {
                     "file_id": str(f.file_id),
                     "file_title": f.file_title,
+                    "file_name": (
+                        f.file_key.rsplit("/", 1)[-1] if f.file_key else None
+                    ),
                     "file_size": f.file_size,
                     "file_description": f.file_description,
                     "file_format": f.file_format,
@@ -595,6 +598,9 @@ class DatasetController:
                     "geography": f.geography,
                     "created_at": f.created_at.isoformat()
                     if f.created_at
+                    else None,
+                    "modified_at": f.modified_at.isoformat()
+                    if getattr(f, "modified_at", None)
                     else None,
                 }
                 for f in files
@@ -664,6 +670,9 @@ class DatasetController:
             download_totals = await self.dataset_service.get_download_totals_for_datasets(
                 [ds.dataset_id for ds in datasets]
             )
+            org_names = await self.dataset_service.get_organization_names(
+                [ds.organization for ds in datasets]
+            )
 
             datasets_arr = [
                 {
@@ -672,6 +681,7 @@ class DatasetController:
                     "creator": str(ds.creator),
                     "created_at": ds.created_at.isoformat() if ds.created_at else None,
                     "organization": ds.organization,
+                    "organization_name": org_names.get(str(ds.organization)),
                     "availability": ds.availability,
                     "downloads": download_totals.get(ds.dataset_id, 0),
                     "dataset_description": ds.dataset_description,
@@ -735,6 +745,9 @@ class DatasetController:
             download_totals = await self.dataset_service.get_download_totals_for_datasets(
                 [ds.dataset_id for ds in datasets]
             )
+            org_names = await self.dataset_service.get_organization_names(
+                [ds.organization for ds in datasets]
+            )
 
             datasets_arr = [
                 {
@@ -743,6 +756,7 @@ class DatasetController:
                     "creator": str(ds.creator),
                     "created_at": ds.created_at.isoformat() if ds.created_at else None,
                     "organization": ds.organization,
+                    "organization_name": org_names.get(str(ds.organization)),
                     "availability": ds.availability,
                     "downloads": download_totals.get(ds.dataset_id, 0),
                     "dataset_description": ds.dataset_description,

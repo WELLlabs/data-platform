@@ -18,6 +18,11 @@ class TopOrganizationItem(BaseModel):
 
 
 class HomepageStatsResponse(BaseModel):
-    total_open_datasets: int = Field(ge=0)
+    total_open_datasets: int = Field(
+        ge=0, description="Total dataset count (all datasets)"
+    )
+    total_file_size: int = Field(
+        ge=0, description="Sum of all file sizes in bytes"
+    )
     top_contributors: list[TopContributorItem]
     top_organizations: list[TopOrganizationItem]

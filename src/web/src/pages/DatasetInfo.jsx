@@ -4,6 +4,7 @@ import { useAuth } from "../contexts/AuthContext";
 import Ic from "../components/wd/Icons";
 import Contour from "../components/wd/Contour";
 import { useToast } from "../components/wd/Toast";
+import { useBranding } from "../branding";
 import { dsLink } from "../components/wd/DatasetItems";
 import {
   approve_dataset_endpoint,
@@ -113,6 +114,7 @@ function DatasetInfo() {
   const [searchParams] = useSearchParams();
   const { user } = useAuth();
   const toast = useToast();
+  const { productName } = useBranding();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [dataset, setDataset] = useState(null);
@@ -140,6 +142,7 @@ function DatasetInfo() {
   const [approvingDataset, setApprovingDataset] = useState(false);
   const [deletingFileId, setDeletingFileId] = useState(null);
   const [deleteError, setDeleteError] = useState("");
+  const [orgPrivate, setOrgPrivate] = useState(false);
 
   // Presentational-only UI state (accordions, read-more, copy feedback)
   const [openFiles, setOpenFiles] = useState({});
@@ -203,6 +206,24 @@ function DatasetInfo() {
       const data = await response.json();
       setDataset(data.dataset);
       setFiles(data.files || []);
+      const orgId = data.dataset?.organization;
+      if (orgId) {
+        try {
+          const orgResp = await fetch(organization_by_id_endpoint(orgId), {
+            credentials: "include",
+          });
+          if (orgResp.ok) {
+            const orgData = await orgResp.json();
+            setOrgPrivate(Boolean(orgData.private));
+          } else {
+            setOrgPrivate(false);
+          }
+        } catch {
+          setOrgPrivate(false);
+        }
+      } else {
+        setOrgPrivate(false);
+      }
       setPrivileges(
         data.privileges ?? {
           edit: false,
@@ -832,7 +853,7 @@ function DatasetInfo() {
         dataset_id: dataset.dataset_id,
         dataset_title: titleTrimmed,
         dataset_description: datasetEdit.description.trim() || null,
-        availability: datasetEdit.availability,
+        availability: orgPrivate ? datasetEdit.availability : AVAILABILITY_PUBLIC,
         tags: tagsArray,
       };
       const response = await fetch(edit_dataset_endpoint, {
@@ -1004,7 +1025,6 @@ function DatasetInfo() {
   const orgName = dataset.organization_name || dataset.organization || "";
   const availabilityText = availabilityLabel(dataset.availability);
   const isPublic = parseAvailability(dataset.availability) === AVAILABILITY_PUBLIC;
-  const formatsList = [...new Set(files.map((f) => f.file_format).filter(Boolean))];
   const geoVal = files.map((f) => f.geography).find(Boolean) || "";
   const licenseVal = files.map((f) => f.permissions).find(Boolean) || "";
   const timeVal = formatDateShort(dataset.created_at);
@@ -1017,7 +1037,7 @@ function DatasetInfo() {
     files.map((f) => f.cite_as).find(Boolean) ||
     `${orgName || "Unknown source"} (${
       dataset.created_at ? new Date(dataset.created_at).getFullYear() : new Date().getFullYear()
-    }). ${dataset.dataset_title || "Untitled dataset"} [Dataset]. WELL DATA.${
+    }). ${dataset.dataset_title || "Untitled dataset"} [Dataset]. ${productName}.${
       licenseVal ? " " + licenseVal + "." : ""
     }`;
 
@@ -1044,20 +1064,6 @@ function DatasetInfo() {
 
   const datasetId = searchParams.get("dataset_id");
 
-  const glanceItems = [
-    geoVal && { icn: "loc", label: "Location", value: geoVal, mono: false },
-    timeVal && { icn: "cal", label: "Time", value: timeVal, mono: false },
-    { icn: "file", label: "Files", value: String(files.length), mono: true },
-    formatsList.length && {
-      icn: "fmt",
-      label: "Formats",
-      value: formatsList.join(" · "),
-      mono: true,
-    },
-    licenseVal && { icn: "lic", label: "License", value: licenseVal, mono: true },
-    orgName && { icn: "org", label: "Source", value: orgName, mono: false },
-  ].filter(Boolean);
-
   return (
     <div className="page">
       <section className="detail-hero" style={{ position: "relative" }}>
@@ -1069,10 +1075,6 @@ function DatasetInfo() {
           </Link>
           <div className="dh-grid">
             <div>
-              <div className="dh-cat">
-                <span className="cat">Dataset</span>
-                <span className="rule"></span>
-              </div>
               <h1 className="dh-title">{dataset.dataset_title || "Untitled dataset"}</h1>
               {description && <p className="dh-desc">{description}</p>}
               <div className="dh-facts">
@@ -1112,6 +1114,15 @@ function DatasetInfo() {
                   <span className="badge pending">Pending</span>
                 )}
               </div>
+              {tagsList.length > 0 && (
+                <div className="dh-tags">
+                  {tagsList.map((t) => (
+                    <span className="tag" key={t}>
+                      {t}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="dh-actions">
               <button className="btn btn-primary" onClick={() => scrollToSec("files")}>
@@ -1150,7 +1161,7 @@ function DatasetInfo() {
                   onClick={() => setShowDatasetDeleteModal(true)}
                   disabled={deletingDataset}
                 >
-                  Delete
+                  Delete dataset
                 </button>
               )}
               <div className="meta-mini">
@@ -1159,57 +1170,8 @@ function DatasetInfo() {
               </div>
             </div>
           </div>
-          {tagsList.length > 0 && (
-            <div className="dh-tags">
-              {tagsList.map((t) => (
-                <span className="tag" key={t}>
-                  {t}
-                </span>
-              ))}
-            </div>
-          )}
-          {glanceItems.length > 0 && (
-            <div className="glance">
-              {glanceItems.map((g) => (
-                <div className="g-item" key={g.label}>
-                  <div className="gl">
-                    <Ic name={g.icn} size={15} sw={2} />
-                    {g.label}
-                  </div>
-                  <div className={"gv" + (g.mono ? " mono" : "")}>{g.value}</div>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       </section>
-
-      <nav className="secnav" aria-label="Sections">
-        <div className="wrap secnav-inner">
-          <a data-sec="overview" onClick={() => scrollToSec("overview")}>
-            Overview
-          </a>
-          <a data-sec="files" onClick={() => scrollToSec("files")}>
-            Files
-          </a>
-          {hasProvenance && (
-            <a data-sec="provenance" onClick={() => scrollToSec("provenance")}>
-              Provenance
-            </a>
-          )}
-          <a data-sec="usage" onClick={() => scrollToSec("usage")}>
-            Usage
-          </a>
-          <a
-            className="dl"
-            onClick={() => scrollToSec("files")}
-            style={{ cursor: "pointer", color: "var(--blue)" }}
-          >
-            <Ic name="dl" size={16} sw={2} />
-            <span style={{ marginLeft: "2px" }}>Download</span>
-          </a>
-        </div>
-      </nav>
 
       {(deleteError || downloadError) && (
         <div className="wrap" style={{ paddingTop: "16px" }}>
@@ -1400,9 +1362,11 @@ function DatasetInfo() {
                           {fileLabel(file.file_format)}
                         </span>
                         <div className="file-main">
-                          <div className="fn">{file.file_title || "Untitled file"}</div>
-                          <div className="fdesc">
-                            {file.file_description || "No description"}
+                          <div className="ftitle">
+                            {file.file_title || "Untitled file"}
+                          </div>
+                          <div className="ffile" title={file.file_name || ""}>
+                            {file.file_name || file.file_description || "—"}
                           </div>
                         </div>
                         <div className="file-specs">
@@ -1418,16 +1382,73 @@ function DatasetInfo() {
                       <div className="file-body">
                         <div className="file-body-inner">
                           <div className="file-body-pad">
+                            {file.file_description && (
+                              <p
+                                className="muted"
+                                style={{
+                                  fontSize: "14px",
+                                  lineHeight: 1.55,
+                                  marginBottom: "18px",
+                                  maxWidth: "60ch",
+                                }}
+                              >
+                                {file.file_description}
+                              </p>
+                            )}
                             <div className="mgroups">
+                              {file.file_name && (
+                                <div className="mgroup">
+                                  <div className="mgl">File name</div>
+                                  <div className="mgv">
+                                    <span className="mono" style={{ fontSize: "13px" }}>
+                                      {file.file_name}
+                                    </span>
+                                  </div>
+                                </div>
+                              )}
+                              <div className="mgroup">
+                                <div className="mgl">Format</div>
+                                <div className="mgv">
+                                  <span className="mono" style={{ fontSize: "13px" }}>
+                                    {(file.file_format || "N/A").toString().toUpperCase()}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="mgroup">
+                                <div className="mgl">Size</div>
+                                <div className="mgv">{formatFileSize(file.file_size)}</div>
+                              </div>
+                              <div className="mgroup">
+                                <div className="mgl">Created</div>
+                                <div className="mgv">
+                                  {formatDateShort(file.created_at) || "N/A"}
+                                </div>
+                              </div>
+                              <div className="mgroup">
+                                <div className="mgl">Updated</div>
+                                <div className="mgv">
+                                  {formatDateShort(file.modified_at) ||
+                                    formatDateShort(file.created_at) ||
+                                    "N/A"}
+                                </div>
+                              </div>
                               {coverage && (
                                 <div className="mgroup">
                                   <div className="mgl">Coverage</div>
                                   <div className="mgv">{coverage}</div>
                                 </div>
                               )}
+                              <div className="mgroup">
+                                <div className="mgl">License</div>
+                                <div className="mgv">
+                                  <span className="mono" style={{ fontSize: "13px" }}>
+                                    {file.permissions || "N/A"}
+                                  </span>
+                                </div>
+                              </div>
                               {origin && (
                                 <div className="mgroup">
-                                  <div className="mgl">Origin</div>
+                                  <div className="mgl">Source</div>
                                   <div className="mgv">{origin}</div>
                                 </div>
                               )}
@@ -1443,22 +1464,14 @@ function DatasetInfo() {
                                 </div>
                               )}
                               <div className="mgroup">
-                                <div className="mgl">Rights</div>
-                                <div className="mgv">
-                                  <span className="mono" style={{ fontSize: "13px" }}>
-                                    {file.permissions || "N/A"}
-                                  </span>
-                                </div>
-                              </div>
-                              <div className="mgroup">
                                 <div className="mgl">Usage</div>
                                 <div className="mgv">
-                                  {file.downloads ?? 0} downloads · added{" "}
-                                  {formatDateShort(file.created_at) || "N/A"}
+                                  {(file.downloads ?? 0).toLocaleString("en-IN")}{" "}
+                                  {(file.downloads ?? 0) === 1 ? "download" : "downloads"}
                                 </div>
                               </div>
                               {file.cite_as && (
-                                <div className="mgroup">
+                                <div className="mgroup" style={{ gridColumn: "1 / -1" }}>
                                   <div className="mgl">Citation</div>
                                   <div className="mgv">
                                     <span style={{ fontStyle: "italic" }}>
@@ -1513,7 +1526,7 @@ function DatasetInfo() {
                                   disabled={deletingFileId === file.file_id}
                                   aria-label="Delete file"
                                 >
-                                  Delete
+                                  Delete file
                                 </button>
                               )}
                             </div>
@@ -1838,7 +1851,7 @@ function DatasetInfo() {
                 <div className="field">
                   <label>Availability</label>
                   <select
-                    value={datasetEdit.availability}
+                    value={String(datasetEdit.availability)}
                     onChange={(e) =>
                       dispatchDatasetEdit({
                         type: "SET_FIELD",
@@ -1846,14 +1859,21 @@ function DatasetInfo() {
                         value: Number(e.target.value),
                       })
                     }
+                    disabled={!orgPrivate}
                     style={{ width: "100%" }}
                   >
                     {AVAILABILITY_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
+                      <option key={opt.value} value={String(opt.value)}>
                         {opt.label}
                       </option>
                     ))}
                   </select>
+                  {!orgPrivate && (
+                    <span className="hint">
+                      Availability is locked to Public because this organization
+                      does not have private data enabled.
+                    </span>
+                  )}
                 </div>
                 <div className="field">
                   <label>

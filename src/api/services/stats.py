@@ -10,6 +10,7 @@ from core.config import settings
 from db.session import get_session
 from fastapi import Depends
 from models.dataset import Dataset
+from models.file import File
 from models.organization import Organization
 from models.user import User
 from models.user_contribution import UserContribution
@@ -21,7 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-CACHE_KEY_TOTAL = "stats:total_open_datasets"
+CACHE_KEY_TOTAL = "stats:total_datasets"
+CACHE_KEY_FILE_SIZE = "stats:total_file_size"
 CACHE_KEY_CONTRIBUTORS = "stats:top_contributors"
 CACHE_KEY_ORGANIZATIONS = "stats:top_organizations"
 
@@ -73,7 +75,7 @@ class StatsService:
         return deserialize(fresh)
 
     async def get_total_open_datasets(self) -> int:
-        """Count public approved datasets; cached under CACHE_KEY_TOTAL."""
+        """Count all datasets; cached under CACHE_KEY_TOTAL."""
 
         def deserialize(raw: Any) -> int:
             if isinstance(raw, bool):
@@ -81,19 +83,31 @@ class StatsService:
             return int(raw)
 
         async def compute() -> int:
-            stmt = (
-                select(func.count())
-                .select_from(Dataset)
-                .where(
-                    Dataset.availability == 0,
-                    Dataset.approved.is_(True),
-                )
-            )
+            stmt = select(func.count()).select_from(Dataset)
             result = await self.session.execute(stmt)
             return int(result.scalar_one())
 
         return await self._cached_or_compute(
             CACHE_KEY_TOTAL,
+            compute,
+            deserialize,
+        )
+
+    async def get_total_file_size(self) -> int:
+        """Sum of all file sizes in bytes; cached under CACHE_KEY_FILE_SIZE."""
+
+        def deserialize(raw: Any) -> int:
+            if isinstance(raw, bool):
+                raise ValueError("unexpected bool")
+            return int(raw)
+
+        async def compute() -> int:
+            stmt = select(func.coalesce(func.sum(File.file_size), 0))
+            result = await self.session.execute(stmt)
+            return int(result.scalar_one())
+
+        return await self._cached_or_compute(
+            CACHE_KEY_FILE_SIZE,
             compute,
             deserialize,
         )
@@ -181,10 +195,12 @@ class StatsService:
     async def get_homepage_stats(self) -> HomepageStatsResponse:
         """Full homepage payload; each subsection uses its own Redis key when possible."""
         total = await self.get_total_open_datasets()
+        file_size = await self.get_total_file_size()
         contributors = await self.get_top_contributors()
         organizations = await self.get_top_organizations()
         return HomepageStatsResponse(
             total_open_datasets=total,
+            total_file_size=file_size,
             top_contributors=contributors,
             top_organizations=organizations,
         )

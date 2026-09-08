@@ -1,10 +1,59 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import Ic from "./Icons";
+import { list_organizations_endpoint, organization_by_id_endpoint } from "../../api/endpoints";
 import { availabilityLabel, isRestrictedAvailability, parseAvailability } from "../../constants/availability";
 
 export const dsLink = (id) => `/dataset-info?dataset_id=${encodeURIComponent(id)}`;
 export const fmtCount = (v) => (typeof v === "number" ? v.toLocaleString() : v == null ? null : v);
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+let orgNameCache = null;
+let orgNameInflight = null;
+
+export function useOrganizationNames() {
+  const [names, setNames] = useState(orgNameCache || {});
+
+  useEffect(() => {
+    if (orgNameCache) {
+      setNames(orgNameCache);
+      return undefined;
+    }
+    if (!orgNameInflight) {
+      orgNameInflight = fetch(list_organizations_endpoint, { credentials: "include" })
+        .then((res) => (res.ok ? res.json() : { items: [] }))
+        .then((data) => {
+          const map = {};
+          (data.items || []).forEach((o) => {
+            if (o?.id && o?.name) map[String(o.id)] = o.name;
+          });
+          orgNameCache = map;
+          return map;
+        })
+        .catch(() => ({}));
+    }
+    let active = true;
+    orgNameInflight.then((map) => {
+      if (active) setNames(map);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  return names;
+}
+
+export function orgDisplayName(d, names = {}) {
+  const named = d.organization_name || d.org_name;
+  if (named && !UUID_RE.test(String(named))) return named;
+  const id = d.organization != null ? String(d.organization) : "";
+  if (id && names[id]) return names[id];
+  if (d.organization && !UUID_RE.test(String(d.organization))) return String(d.organization);
+  return "";
+}
 
 export function AvailBadge({ availability }) {
   const restricted = isRestrictedAvailability(availability);
@@ -15,12 +64,12 @@ export function AvailBadge({ availability }) {
 }
 
 // Normalize the various API row shapes into one view model.
-export function normalize(d) {
+export function normalize(d, names = {}) {
   return {
     id: d.dataset_id ?? d.id ?? d.datasetId,
     title: d.dataset_title || d.title || "Untitled dataset",
     desc: d.dataset_description || d.context || d.description || "",
-    org: d.organization || d.organization_name || "",
+    org: orgDisplayName(d, names),
     downloads: d.downloads,
     files: d.file_count,
     availability: parseAvailability(d.availability ?? d.private),
@@ -28,14 +77,42 @@ export function normalize(d) {
   };
 }
 
+function useDatasetOrgNames(dataset) {
+  const names = useOrganizationNames();
+  const [extra, setExtra] = useState({});
+  const merged = { ...names, ...extra };
+  const id = dataset?.organization != null ? String(dataset.organization) : "";
+  const resolved = orgDisplayName(dataset, merged);
+
+  useEffect(() => {
+    if (!id || resolved) return undefined;
+    let active = true;
+    fetch(organization_by_id_endpoint(id), { credentials: "include" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((org) => {
+        if (!active || !org?.name) return;
+        orgNameCache = { ...(orgNameCache || {}), ...names, [id]: org.name };
+        setExtra({ [id]: org.name });
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [id, resolved, names]);
+
+  return merged;
+}
+
 export function DatasetRow({ dataset }) {
-  const d = normalize(dataset);
+  const names = useDatasetOrgNames(dataset);
+  const d = normalize(dataset, names);
+
   const specs = [];
   if (d.files != null) specs.push(`${d.files} files`);
   if (d.downloads != null) specs.push(`${fmtCount(d.downloads)} downloads`);
   return (
     <Link className="drow" to={dsLink(d.id)}>
-      <div className="rt"><span className="cat">Dataset</span><h3>{d.title}</h3></div>
+      <div className="rt"><h3>{d.title}</h3></div>
       {d.desc && <p className="rd">{d.desc}</p>}
       <div className="rm">
         {d.org && <span>{d.org}</span>}
@@ -48,10 +125,11 @@ export function DatasetRow({ dataset }) {
 }
 
 export function DatasetCard({ dataset }) {
-  const d = normalize(dataset);
+  const names = useDatasetOrgNames(dataset);
+  const d = normalize(dataset, names);
   return (
     <Link className="dcard" to={dsLink(d.id)}>
-      <div className="top"><span className="cat">Dataset</span><AvailBadge availability={d.availability} /></div>
+      <div className="top"><AvailBadge availability={d.availability} /></div>
       <h3>{d.title}</h3>
       <p className="desc">{d.desc || "No description provided."}</p>
       {d.org && <div className="prov">{d.org}</div>}

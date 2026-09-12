@@ -9,6 +9,7 @@ import {
   reject_user_endpoint,
   change_user_role_endpoint,
   delete_user_endpoint,
+  organization_add_member_endpoint,
 } from '../api/endpoints';
 
 const ROLE_OPTIONS = [
@@ -58,6 +59,8 @@ const Organization = () => {
   const [roleDraft, setRoleDraft] = useState(0);
   const [membersActionLoading, setMembersActionLoading] = useState(false);
   const [membersModalError, setMembersModalError] = useState(null);
+  const [addMemberEmail, setAddMemberEmail] = useState('');
+  const [addMemberError, setAddMemberError] = useState(null);
 
   const orgIdFromQuery = searchParams.get('id');
 
@@ -156,8 +159,40 @@ const Organization = () => {
   const isOrgAdmin =
     isAuthenticated &&
     user &&
-    Number(user.role) === 1 &&
-    String(user.organization) === String(organization?.id);
+    (Boolean(user.is_superuser) ||
+      (Number(user.role) === 1 &&
+        String(user.organization) === String(organization?.id)));
+
+  const handleAddMember = async (e) => {
+    e.preventDefault();
+    if (!organization?.id || !addMemberEmail.trim()) return;
+    try {
+      setMembersActionLoading(true);
+      setAddMemberError(null);
+      const response = await fetch(
+        organization_add_member_endpoint(organization.id),
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: addMemberEmail.trim(),
+            role: 0,
+            approve_now: Boolean(user?.is_superuser),
+          }),
+        }
+      );
+      if (!response.ok) {
+        throw new Error(await parseApiError(response, 'Failed to add member.'));
+      }
+      setAddMemberEmail('');
+      await fetchOrganization();
+    } catch (err) {
+      setAddMemberError(err.message || 'Failed to add member.');
+    } finally {
+      setMembersActionLoading(false);
+    }
+  };
 
   const handleApproveMember = async () => {
     if (!selectedMember) return;
@@ -416,6 +451,37 @@ const Organization = () => {
               </button>
             )}
           </div>
+          {isOrgAdmin && (
+            <form
+              onSubmit={handleAddMember}
+              style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16, alignItems: 'flex-end' }}
+            >
+              <div className="field" style={{ flex: '1 1 240px', marginBottom: 0 }}>
+                <label htmlFor="add-org-member-email">Add member by email</label>
+                <input
+                  id="add-org-member-email"
+                  type="email"
+                  value={addMemberEmail}
+                  onChange={(e) => setAddMemberEmail(e.target.value)}
+                  placeholder="member@example.com"
+                  disabled={membersActionLoading}
+                  required
+                />
+              </div>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={membersActionLoading || !addMemberEmail.trim()}
+              >
+                Add member
+              </button>
+            </form>
+          )}
+          {addMemberError && (
+            <p className="muted" style={{ color: 'var(--danger, #c0392b)', marginBottom: 12 }}>
+              {addMemberError}
+            </p>
+          )}
           {(() => {
             const members = organization.members || [];
             const topId =

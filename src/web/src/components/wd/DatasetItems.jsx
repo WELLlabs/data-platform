@@ -13,6 +13,11 @@ const UUID_RE =
 let orgNameCache = null;
 let orgNameInflight = null;
 
+export function clearOrganizationNamesCache() {
+  orgNameCache = null;
+  orgNameInflight = null;
+}
+
 export function useOrganizationNames() {
   const [names, setNames] = useState(orgNameCache || {});
 

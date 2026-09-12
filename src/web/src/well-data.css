@@ -694,3 +694,130 @@ a.stat:hover b{color:var(--blue-deep)}
 .rank-row.rank-1::after{background:linear-gradient(115deg,transparent 34%,rgba(184,134,11,.14) 50%,transparent 66%)}
 .rank-row.rank-2::after{background:linear-gradient(115deg,transparent 34%,rgba(120,131,143,.14) 50%,transparent 66%)}
 .rank-row.rank-3::after{background:linear-gradient(115deg,transparent 34%,rgba(176,106,52,.14) 50%,transparent 66%)}
+
+/* ============================================================
+   DATASET-AS-FOLDER REDESIGN — folder identity, file cards,
+   per-file metadata grid, and per-file actions.
+   Additive; existing rules above are untouched.
+   ============================================================ */
+
+/* Folder identity in the dataset hero */
+.folder-id{display:flex;align-items:center;gap:14px;margin-bottom:18px}
+.folder-glyph{width:52px;height:52px;border-radius:14px;background:linear-gradient(150deg,#0B1F33,#1769AA);color:#fff;display:flex;align-items:center;justify-content:center;flex:none;box-shadow:0 10px 26px -14px rgba(11,31,51,.6)}
+.folder-id-text{display:flex;flex-direction:column;gap:2px}
+.folder-eyebrow{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--blue);font-weight:600}
+.folder-count{font-size:13px;color:var(--muted);font-family:var(--mono)}
+
+/* Files section header */
+.files-head-right{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.files-hint{font-size:13px}
+
+/* File cards */
+.fcards{display:flex;flex-direction:column;gap:12px}
+.fcard{border:1px solid var(--line);border-radius:var(--radius);background:var(--paper);transition:var(--t);overflow:hidden;box-shadow:var(--shadow-sm)}
+.fcard:hover{border-color:var(--line-strong);box-shadow:var(--shadow)}
+.fcard.open{border-color:var(--blue-line);box-shadow:var(--shadow)}
+.fcard-head{display:flex;align-items:center;gap:10px;padding:12px 14px}
+.fcard-toggle{flex:1;min-width:0;display:flex;align-items:center;gap:16px;background:none;border:none;text-align:left;padding:4px}
+.fcard-ic{width:44px;height:44px;border-radius:11px;display:flex;align-items:center;justify-content:center;flex:none;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.02em;background:var(--bg-tint);color:var(--navy-70);border:1px solid var(--line)}
+.fcard-ic.csv{background:var(--green-soft);color:var(--green);border-color:var(--green-line)}
+.fcard-ic.geojson{background:var(--blue-soft);color:var(--blue);border-color:var(--blue-line)}
+.fcard-ic.pdf{background:#f6efe8;color:#8a5a2b;border-color:#ecdcb8}
+.fcard-ic.image{background:#efeafa;color:#5b4b9a;border-color:#dcd3f0}
+.fcard-ic.excel{background:#e9f4ec;color:#1e7a45;border-color:#c8e4d2}
+.fcard-ic.geo{background:#eaf1f6;color:#2a6a8a;border-color:#cfe0ec}
+.fcard-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.fcard-title{font-size:15px;font-weight:600;color:var(--navy);letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fcard.open .fcard-title{color:var(--blue-deep)}
+.fcard-sub{font-family:var(--mono);font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fcard-specs{display:flex;align-items:center;gap:8px;flex:none}
+.fcard-specs .fmt-chip{font-family:var(--mono);font-size:10.5px;color:var(--navy-70);background:var(--bg-tint);border:1px solid var(--line-strong);border-radius:5px;padding:2px 7px;white-space:nowrap}
+.fcard-specs .fcard-size{font-size:12.5px;color:var(--muted);white-space:nowrap}
+.fcard-chev{color:var(--faint);transition:var(--t);flex:none;display:flex}
+.fcard.open .fcard-chev{transform:rotate(180deg);color:var(--blue)}
+.fcard-quick{display:flex;align-items:center;gap:6px;flex:none;padding-left:6px;border-left:1px solid var(--line-soft)}
+
+/* Small per-file action buttons */
+.fbtn{width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line-strong);background:var(--paper);color:var(--navy-70);transition:var(--t);flex:none}
+.fbtn:hover{border-color:var(--muted);color:var(--navy);background:var(--bg-tint)}
+.fbtn.primary{background:var(--navy);border-color:var(--navy);color:#fff}
+.fbtn.primary:hover{background:#153a5c}
+.fbtn.danger:hover{color:#b3402f;border-color:#e6c9c2;background:#fbf1ef}
+.fbtn:disabled{opacity:.5;cursor:default}
+
+/* Expanding body */
+.fcard-body{display:grid;grid-template-rows:0fr;transition:grid-template-rows .32s cubic-bezier(.4,0,.2,1)}
+.fcard.open .fcard-body{grid-template-rows:1fr}
+.fcard-body-inner{overflow:hidden}
+.fcard-body-pad{padding:16px 18px 20px;border-top:1px solid var(--line-soft);margin-top:2px}
+.fcard-desc{font-size:14px;color:var(--ink-soft);line-height:1.6;max-width:70ch;margin-bottom:18px}
+
+/* Per-file metadata grid */
+.fmeta{display:grid;grid-template-columns:repeat(3,1fr);gap:16px 28px}
+.fmeta .fm{min-width:0}
+.fmeta .fm.wide{grid-column:1 / -1}
+.fmeta .fml{display:flex;align-items:center;gap:6px;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);font-weight:600;margin-bottom:6px}
+.fmeta .fml svg{opacity:.7;flex:none}
+.fmeta .fmv{font-size:14px;color:var(--ink-soft);line-height:1.5;word-break:break-word}
+.fmeta .fmv.mono{font-family:var(--mono);font-size:12.5px}
+.fmeta .fmv.cite{font-style:italic;color:var(--navy-70);background:var(--bg-tint);border:1px solid var(--line);border-radius:var(--radius-sm);padding:10px 12px;font-size:13px}
+
+/* Groundtruthed pill (shared: view page + specs) */
+.gt-pill{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:500;padding:3px 9px;border-radius:20px;border:1px solid var(--line-strong);color:var(--muted);background:var(--bg-tint)}
+.gt-pill svg{width:13px;height:13px;flex:none}
+.gt-pill.on{color:var(--green);border-color:var(--green-line);background:var(--green-soft)}
+
+/* Per-file action row inside the expanded body */
+.fcard-actions{display:flex;gap:10px;margin-top:20px;flex-wrap:wrap}
+.fcard-actions .btn{padding:8px 15px}
+.btn.danger{color:#b3402f;border-color:#e6c9c2}
+.btn.danger:hover{color:#8f2e20;border-color:#d8a89d;background:#fbf1ef}
+
+@media(max-width:720px){
+  .fmeta{grid-template-columns:repeat(2,1fr)}
+}
+@media(max-width:560px){
+  .fcard-specs .fmt-chip,.fcard-specs .gt-pill{display:none}
+  .fmeta{grid-template-columns:1fr}
+}
+
+/* ============================================================
+   PUBLISH WIZARD — horizontal stepper, auto-grow textarea,
+   groundtruthed toggle.
+   ============================================================ */
+.ds-form{max-width:860px}
+
+/* Horizontal stepper */
+.stepper{display:flex;align-items:stretch;gap:6px;margin-top:22px;padding:6px;background:var(--paper);border:1px solid var(--line);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);overflow-x:auto}
+.stp{display:flex;align-items:center;gap:11px;flex:1;min-width:150px;padding:12px 14px;border:none;background:none;border-radius:var(--radius);text-align:left;transition:var(--t);position:relative}
+.stp:hover{background:var(--bg-tint)}
+.stp-num{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;font-family:var(--mono);font-size:13px;font-weight:600;border:1.5px solid var(--line-strong);color:var(--muted);background:var(--paper);transition:var(--t)}
+.stp-text{display:flex;flex-direction:column;gap:1px;min-width:0}
+.stp-title{font-size:14px;font-weight:600;color:var(--navy-70);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stp-sub{font-size:11.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stp.active{background:var(--blue-soft)}
+.stp.active .stp-num{background:var(--blue);border-color:var(--blue);color:#fff;box-shadow:0 0 0 4px rgba(23,105,170,.14)}
+.stp.active .stp-title{color:var(--navy)}
+.stp.done .stp-num{background:var(--green);border-color:var(--green);color:#fff}
+.stp.done .stp-title{color:var(--navy)}
+.stp-line{flex:1;min-width:14px;height:2px;align-self:center;background:var(--line-strong);border-radius:2px;transition:var(--t)}
+.stp-line.done{background:var(--green)}
+.step-panel{animation:fade .3s cubic-bezier(.2,.6,.2,1)}
+
+/* Auto-growing textarea */
+textarea.autogrow{width:100%;resize:none;overflow:hidden;min-height:42px;line-height:1.55}
+
+/* Groundtruthed toggle (publish page) */
+.gt-toggle{display:grid;grid-template-columns:1fr 1fr;gap:10px;max-width:440px}
+.gt-opt{display:flex;align-items:center;gap:11px;padding:12px 14px;border:1.5px solid var(--line-strong);border-radius:var(--radius);background:var(--paper);text-align:left;transition:var(--t)}
+.gt-opt:hover{border-color:var(--muted)}
+.gt-opt .gt-mark{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;border:1.5px solid var(--line-strong);color:var(--muted);background:var(--bg-tint);transition:var(--t)}
+.gt-opt .gt-label{display:flex;flex-direction:column;line-height:1.2}
+.gt-opt .gt-label b{font-size:14px;font-weight:600;color:var(--navy-70)}
+.gt-opt .gt-label small{font-size:11.5px;color:var(--faint)}
+.gt-opt.on{border-color:var(--blue);background:var(--blue-soft);box-shadow:0 0 0 3px rgba(23,105,170,.1)}
+.gt-opt.on .gt-mark{border-color:var(--blue);background:var(--blue);color:#fff}
+.gt-opt.on .gt-label b{color:var(--navy)}
+@media(max-width:480px){
+  .gt-toggle{grid-template-columns:1fr}
+}

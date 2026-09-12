@@ -37,7 +37,7 @@ export default function SiteNavbar() {
     ? [
         { label: "Explore", to: "/datasets", match: ["/datasets", "/search"] },
         { label: "Dashboard", to: `/dashboard${user?.id ? `?userId=${user.id}` : ""}`, match: ["/dashboard"] },
-        { label: "Organisation", to: "/organisation", match: ["/organisation", "/orgsearch"] },
+        { label: "Organisation", to: "/orgsearch", match: ["/organisation", "/orgsearch"] },
         ...(Number(user?.role) > 0 ? [{ label: "Approvals", to: "/approvals", match: ["/approvals"] }] : []),
         { label: "About", to: "/faq", match: ["/faq", "/terms"] },
       ]

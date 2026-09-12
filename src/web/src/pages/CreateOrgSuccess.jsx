@@ -108,14 +108,17 @@ function CreateOrgSuccess() {
               </div>
             </div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 22 }}>
-              <button className="btn btn-primary" onClick={() => navigate("/signup")}>
-                Sign up<Ic name="arrow" size={16} />
+              <button
+                className="btn btn-primary"
+                onClick={() => navigate(`/organisation?id=${encodeURIComponent(orgId)}`)}
+              >
+                View organization<Ic name="arrow" size={16} />
+              </button>
+              <button className="btn btn-ghost" onClick={() => navigate("/orgsearch")}>
+                All organizations
               </button>
               <button className="btn btn-ghost" onClick={() => navigate("/createorg")}>
-                Create another organization
-              </button>
-              <button className="btn btn-ghost" onClick={() => navigate("/")}>
-                Go home
+                Create another
               </button>
             </div>
           </div>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import { homepage_stats_endpoint, list_organizations_endpoint } from "../api/endpoints";
+import { useAuth } from "../contexts/AuthContext";
 import Ic from "../components/wd/Icons";
 
 const initials = (name = "") =>
@@ -15,6 +16,8 @@ const initials = (name = "") =>
 
 function OrgSearch() {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const { isAuthenticated, user } = useAuth();
   const sortTop = searchParams.get("sort") === "top";
   const [organizations, setOrganizations] = useState([]);
   const [rankById, setRankById] = useState({});
@@ -109,6 +112,25 @@ function OrgSearch() {
             ? "Organizations ranked from highest to lowest by contributions."
             : "Research institutions and public bodies that collect, curate and share environmental data on the platform."}
         </p>
+
+        {(isAuthenticated && user?.organization) || user?.is_superuser ? (
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: "var(--s5)" }}>
+            {isAuthenticated && user?.organization && (
+              <Link
+                className="btn btn-ghost"
+                to={`/organisation?id=${encodeURIComponent(user.organization)}`}
+              >
+                Your organization
+              </Link>
+            )}
+            {user?.is_superuser && (
+              <button className="btn btn-primary" onClick={() => navigate("/createorg")}>
+                <Ic name="plus" size={15} sw={2} />
+                Create organization
+              </button>
+            )}
+          </div>
+        ) : null}
 
         <div className="hero-search" style={{ marginTop: 0, marginBottom: "var(--s6)" }}>
           <span className="sic">

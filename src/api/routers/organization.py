@@ -26,9 +26,17 @@ from services.user import UserService, get_user_service
 
 from core.config import settings
 
-ORGANIZATION_LIST_CACHE_KEY = "organization:list:v2"
+ORGANIZATION_LIST_CACHE_KEY = "organization:list:v3"
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+async def invalidate_organization_list_cache(redis: Redis) -> None:
+    try:
+        await redis.delete(ORGANIZATION_LIST_CACHE_KEY)
+    except Exception as e:
+        logger.warning("Failed to invalidate organization list cache: %s", e)
 
 
 class OrganizationController:
@@ -41,12 +49,17 @@ class OrganizationController:
         self.user_service = user_service
         self.logger = logging.getLogger(__name__)
 
-    async def create_organization(self, org_data: OrganizationCreate) -> JSONResponse:
+    async def create_organization(
+        self,
+        org_data: OrganizationCreate,
+        creator_id: Optional[UUID] = None,
+    ) -> JSONResponse:
         """
         Create a new organization.
 
         Args:
             org_data: Organization creation data
+            creator_id: Superuser who created the organization
 
         Returns:
             JSONResponse with created organization data
@@ -57,7 +70,9 @@ class OrganizationController:
         try:
             self.logger.info("Creating organization: %s", org_data.name)
 
-            organization = await self.org_service.create_organization(org_data)
+            organization = await self.org_service.create_organization(
+                org_data, creator_id=creator_id
+            )
 
             # Convert to OrganizationRead schema
             org_read = OrganizationRead.from_orm(organization)
@@ -114,6 +129,7 @@ class OrganizationController:
             if current_user is not None:
                 if current_user.is_superuser:
                     create_privilege = True
+                    edit_privilege = True
                 is_admin = await self.user_service.check_if_admin_by_id(
                     org_id, current_user.id
                 )
@@ -123,6 +139,7 @@ class OrganizationController:
                 user_data = await self.user_service.get_user_by_apikey(apikey)
                 if user_data and user_data.get("is_superuser"):
                     create_privilege = True
+                    edit_privilege = True
                     self.logger.info("User has create privilege (superuser)")
                 is_admin = await self.user_service.check_if_admin_by_key(org_id, apikey)
                 if is_admin:
@@ -398,20 +415,23 @@ async def get_organization_controller(
 @router.post("/", response_model=OrganizationRead, include_in_schema=False)
 async def create_organization(
     org_data: OrganizationCreate,
+    current_user: User = Depends(get_current_active_user),
     controller: OrganizationController = Depends(get_organization_controller),
     redis: Redis = Depends(get_redis),
 ):
     """
     Create a new organization.
     """
-    response = await controller.create_organization(org_data)
+    if not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only superusers can create organizations",
+        )
+    response = await controller.create_organization(
+        org_data, creator_id=current_user.id
+    )
     if response.status_code == status.HTTP_201_CREATED:
-        try:
-            await redis.delete(ORGANIZATION_LIST_CACHE_KEY)
-        except Exception as e:
-            logging.getLogger(__name__).warning(
-                "Failed to invalidate organization list cache: %s", e
-            )
+        await invalidate_organization_list_cache(redis)
     return response
 
 
@@ -476,12 +496,7 @@ async def update_organization(
     """
     response = await controller.update_organization(org_id, org_data)
     if response.status_code == status.HTTP_200_OK:
-        try:
-            await redis.delete(ORGANIZATION_LIST_CACHE_KEY)
-        except Exception as e:
-            logging.getLogger(__name__).warning(
-                "Failed to invalidate organization list cache: %s", e
-            )
+        await invalidate_organization_list_cache(redis)
     return response
 
 
@@ -513,12 +528,7 @@ async def delete_organization(
     """
     response = await controller.delete_organization(org_id)
     if response.status_code == status.HTTP_200_OK:
-        try:
-            await redis.delete(ORGANIZATION_LIST_CACHE_KEY)
-        except Exception as e:
-            logging.getLogger(__name__).warning(
-                "Failed to invalidate organization list cache: %s", e
-            )
+        await invalidate_organization_list_cache(redis)
     return response
 
 

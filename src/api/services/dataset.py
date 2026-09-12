@@ -508,7 +508,10 @@ class DatasetService:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
             )
-        if target_user.organization != dataset.organization:
+        if (
+            not actor.is_superuser
+            and target_user.organization != dataset.organization
+        ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Owner must belong to the dataset organization",

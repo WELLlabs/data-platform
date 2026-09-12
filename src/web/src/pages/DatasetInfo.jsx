@@ -16,6 +16,7 @@ import {
   edit_file_endpoint,
   organization_by_id_endpoint,
   dataset_owners_endpoint,
+  list_organizations_endpoint,
 } from "../api/endpoints";
 import {
   AVAILABILITY_OPTIONS,
@@ -129,6 +130,8 @@ function DatasetInfo() {
   });
   const [showOwnersModal, setShowOwnersModal] = useState(false);
   const [ownerMembers, setOwnerMembers] = useState([]);
+  const [ownerOrgs, setOwnerOrgs] = useState([]);
+  const [ownerSelectedOrgId, setOwnerSelectedOrgId] = useState("");
   const [ownerSelectedUserId, setOwnerSelectedUserId] = useState("");
   const [ownerFetchError, setOwnerFetchError] = useState("");
   const [ownerLoadingOrg, setOwnerLoadingOrg] = useState(false);
@@ -296,19 +299,50 @@ function DatasetInfo() {
 
   const fileType = (fmt) => {
     const s = (fmt || "").toLowerCase();
-    if (s.includes("csv")) return "csv";
-    if (s.includes("geojson") || s.includes("json")) return "geojson";
-    if (s.includes("pdf")) return "pdf";
-    if (s.includes("tif") || s.includes("tiff")) return "pdf";
+    if (s.includes("csv") || s.includes("tsv")) return "csv";
+    if (s.includes("xls") || s.includes("excel") || s.includes("sheet")) return "excel";
+    if (s.includes("geojson")) return "geojson";
+    if (s.includes("json")) return "geojson";
+    if (s.includes("pdf") || s.includes("doc")) return "pdf";
+    if (
+      s.includes("png") ||
+      s.includes("jpg") ||
+      s.includes("jpeg") ||
+      s.includes("gif") ||
+      s.includes("webp") ||
+      s.includes("svg") ||
+      s.includes("tif") ||
+      s.includes("tiff")
+    )
+      return "image";
+    if (
+      s.includes("gpkg") ||
+      s.includes("shp") ||
+      s.includes("kml") ||
+      s.includes("zip") ||
+      s.includes("geo")
+    )
+      return "geo";
     return "";
   };
 
   const fileLabel = (fmt) => {
-    const t = fileType(fmt);
-    if (t === "csv") return "CSV";
-    if (t === "geojson") return "GEO";
-    if (t === "pdf") return "DOC";
-    return (fmt || "DAT").toString().replace(/[^a-z0-9]/gi, "").slice(0, 3).toUpperCase() || "DAT";
+    const s = (fmt || "").toString().toLowerCase();
+    if (s.includes("geojson")) return "GEO";
+    if (s.includes("json")) return "JSON";
+    if (s.includes("csv")) return "CSV";
+    if (s.includes("tsv")) return "TSV";
+    if (s.includes("xlsx") || s.includes("xls") || s.includes("excel") || s.includes("sheet"))
+      return "XLS";
+    if (s.includes("pdf")) return "PDF";
+    if (s.includes("png")) return "PNG";
+    if (s.includes("jpg") || s.includes("jpeg")) return "JPG";
+    if (s.includes("tif")) return "TIF";
+    if (s.includes("gpkg")) return "GPKG";
+    if (s.includes("shp")) return "SHP";
+    return (
+      (fmt || "DAT").toString().replace(/[^a-z0-9]/gi, "").slice(0, 4).toUpperCase() || "DAT"
+    );
   };
 
   const scrollToSec = (id) => {
@@ -546,6 +580,24 @@ function DatasetInfo() {
     return "Member";
   };
 
+  const loadOwnerMembersForOrg = async (orgId) => {
+    const response = await fetch(organization_by_id_endpoint(orgId), {
+      credentials: "include",
+    });
+    if (!response.ok) {
+      let msg = "Failed to load organization members.";
+      try {
+        const errBody = await response.json();
+        if (errBody?.detail) msg = errBody.detail;
+      } catch {
+        msg = response.statusText || msg;
+      }
+      throw new Error(msg);
+    }
+    const orgData = await response.json();
+    return Array.isArray(orgData.members) ? orgData.members : [];
+  };
+
   const handleOpenOwnersModal = async () => {
     if (!dataset?.organization) {
       setDeleteError("Missing organization for this dataset.");
@@ -553,26 +605,22 @@ function DatasetInfo() {
     }
     setShowOwnersModal(true);
     setOwnerMembers([]);
+    setOwnerOrgs([]);
     setOwnerSelectedUserId("");
     setOwnerFetchError("");
+    setOwnerSelectedOrgId(String(dataset.organization));
     setOwnerLoadingOrg(true);
     try {
-      const response = await fetch(organization_by_id_endpoint(dataset.organization), {
-        credentials: "include",
-      });
-      if (!response.ok) {
-        let msg = "Failed to load organization members.";
-        try {
-          const errBody = await response.json();
-          if (errBody?.detail) msg = errBody.detail;
-        } catch {
-          msg = response.statusText || msg;
+      if (user?.is_superuser) {
+        const listResp = await fetch(list_organizations_endpoint, {
+          credentials: "include",
+        });
+        if (listResp.ok) {
+          const listData = await listResp.json();
+          setOwnerOrgs(Array.isArray(listData?.items) ? listData.items : []);
         }
-        setOwnerFetchError(msg);
-        return;
       }
-      const orgData = await response.json();
-      const members = Array.isArray(orgData.members) ? orgData.members : [];
+      const members = await loadOwnerMembersForOrg(dataset.organization);
       setOwnerMembers(members);
     } catch (err) {
       console.error("Error loading organization:", err);
@@ -582,9 +630,31 @@ function DatasetInfo() {
     }
   };
 
+  const handleOwnerOrgChange = async (orgId) => {
+    setOwnerSelectedOrgId(orgId);
+    setOwnerSelectedUserId("");
+    setOwnerFetchError("");
+    if (!orgId) {
+      setOwnerMembers([]);
+      return;
+    }
+    setOwnerLoadingOrg(true);
+    try {
+      const members = await loadOwnerMembersForOrg(orgId);
+      setOwnerMembers(members);
+    } catch (err) {
+      setOwnerMembers([]);
+      setOwnerFetchError(err.message || "Failed to load organization members.");
+    } finally {
+      setOwnerLoadingOrg(false);
+    }
+  };
+
   const handleCloseOwnersModal = useCallback(() => {
     setShowOwnersModal(false);
     setOwnerMembers([]);
+    setOwnerOrgs([]);
+    setOwnerSelectedOrgId("");
     setOwnerSelectedUserId("");
     setOwnerFetchError("");
   }, []);
@@ -1075,8 +1145,19 @@ function DatasetInfo() {
           </Link>
           <div className="dh-grid">
             <div>
+              {/* <div className="folder-id">
+                <span className="folder-glyph">
+                  <Ic name="folder" size={26} sw={1.7} />
+                </span>
+                <div className="folder-id-text">
+                  <span className="folder-eyebrow">Dataset folder</span>
+                  <span className="folder-count">
+                    {files.length} {files.length === 1 ? "file" : "files"} inside
+                  </span>
+                </div>
+              </div> */}
               <h1 className="dh-title">{dataset.dataset_title || "Untitled dataset"}</h1>
-              {description && <p className="dh-desc">{description}</p>}
+              {/* {description && <p className="dh-desc">{description}</p>} */}
               <div className="dh-facts">
                 {orgName && (
                   <>
@@ -1115,7 +1196,7 @@ function DatasetInfo() {
                 )}
               </div>
               {tagsList.length > 0 && (
-                <div className="dh-tags">
+                <div className="dh-tags mb-4">
                   {tagsList.map((t) => (
                     <span className="tag" key={t}>
                       {t}
@@ -1293,6 +1374,7 @@ function DatasetInfo() {
             </section>
 
             <section className="sec" id="sec-files">
+              <div className="sec-label">Inside this folder</div>
               <div className="files-head">
                 <h2
                   className="display"
@@ -1305,14 +1387,15 @@ function DatasetInfo() {
                 >
                   Files
                 </h2>
-                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                  <span className="muted" style={{ fontSize: "13.5px" }}>
-                    {files.length} files · click to expand metadata
+                <div className="files-head-right">
+                  <span className="muted files-hint">
+                    {files.length} {files.length === 1 ? "file" : "files"} · click a file
+                    to open its full details
                   </span>
                   {privileges.add_file && (
                     <button
                       className="btn btn-ghost"
-                      style={{ padding: "6px 12px" }}
+                      style={{ padding: "7px 13px" }}
                       onClick={() => {
                         if (datasetId) {
                           navigate(`/add-file?dataset_id=${datasetId}`);
@@ -1327,219 +1410,298 @@ function DatasetInfo() {
               </div>
 
               {files.length === 0 ? (
-                <div className="empty" style={{ padding: "40px 0" }}>
-                  <p>No files associated with this dataset.</p>
+                <div className="empty" style={{ padding: "48px 0" }}>
+                  <div className="eic">
+                    <Ic name="folder" size={26} sw={1.6} />
+                  </div>
+                  <h3 className="display">This folder is empty</h3>
+                  <p>No files have been added to this dataset yet.</p>
+                  {privileges.add_file && (
+                    <button
+                      className="btn btn-primary"
+                      onClick={() =>
+                        datasetId && navigate(`/add-file?dataset_id=${datasetId}`)
+                      }
+                    >
+                      <Ic name="plus" size={15} sw={2} />
+                      Add the first file
+                    </button>
+                  )}
                 </div>
               ) : (
-                files.map((file) => {
-                  const t = fileType(file.file_format);
-                  const isOpen = !!openFiles[file.file_id];
-                  const coverage = [
-                    file.geography,
-                    file.temporal_from || file.temporal_to
-                      ? `${file.temporal_from ? formatDateShort(file.temporal_from) : "…"} – ${
-                          file.temporal_to ? formatDateShort(file.temporal_to) : "…"
-                        }`
-                      : "",
-                    file.duration ? `${file.duration} yr` : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" · ");
-                  const origin = [file.source, file.provenance]
-                    .filter(Boolean)
-                    .join(" · ");
-                  return (
-                    <div
-                      key={file.file_id}
-                      className={"file" + (isOpen ? " open" : "")}
-                    >
-                      <button
-                        className="file-head"
-                        onClick={() => toggleFile(file.file_id)}
-                        aria-expanded={isOpen}
+                <div className="fcards">
+                  {files.map((file) => {
+                    const t = fileType(file.file_format);
+                    const isOpen = !!openFiles[file.file_id];
+                    const temporal =
+                      file.temporal_from || file.temporal_to
+                        ? `${
+                            file.temporal_from
+                              ? formatDateShort(file.temporal_from)
+                              : "…"
+                          } – ${
+                            file.temporal_to
+                              ? formatDateShort(file.temporal_to)
+                              : "…"
+                          }`
+                        : "";
+                    const gt = Boolean(file.groundtruthed);
+                    return (
+                      <div
+                        key={file.file_id}
+                        className={"fcard" + (isOpen ? " open" : "")}
                       >
-                        <span className={"file-ic" + (t ? " " + t : "")}>
-                          {fileLabel(file.file_format)}
-                        </span>
-                        <div className="file-main">
-                          <div className="ftitle">
-                            {file.file_title || "Untitled file"}
-                          </div>
-                          <div className="ffile" title={file.file_name || ""}>
-                            {file.file_name || file.file_description || "—"}
-                          </div>
-                        </div>
-                        <div className="file-specs">
-                          <span className="fmt">
-                            {(file.file_format || "DATA").toString().toUpperCase()}
-                          </span>
-                          <span>{formatFileSize(file.file_size)}</span>
-                          <span className="file-chev">
-                            <Ic name="chev" size={16} sw={2} />
-                          </span>
-                        </div>
-                      </button>
-                      <div className="file-body">
-                        <div className="file-body-inner">
-                          <div className="file-body-pad">
-                            {file.file_description && (
-                              <p
-                                className="muted"
-                                style={{
-                                  fontSize: "14px",
-                                  lineHeight: 1.55,
-                                  marginBottom: "18px",
-                                  maxWidth: "60ch",
-                                }}
+                        <div className="fcard-head">
+                          <button
+                            className="fcard-toggle"
+                            onClick={() => toggleFile(file.file_id)}
+                            aria-expanded={isOpen}
+                          >
+                            <span className={"fcard-ic" + (t ? " " + t : "")}>
+                              {fileLabel(file.file_format)}
+                            </span>
+                            <span className="fcard-main">
+                              <span className="fcard-title">
+                                {file.file_title || "Untitled file"}
+                              </span>
+                              <span
+                                className="fcard-sub"
+                                title={file.file_name || ""}
                               >
-                                {file.file_description}
-                              </p>
+                                {file.file_name || "—"}
+                              </span>
+                            </span>
+                            <span className="fcard-specs">
+                              <span className="fmt-chip">
+                                {(file.file_format || "DATA")
+                                  .toString()
+                                  .toUpperCase()}
+                              </span>
+                              <span className="fcard-size">
+                                {formatFileSize(file.file_size)}
+                              </span>
+                              {gt && (
+                                <span className="gt-pill on" title="Groundtruthed">
+                                  <Ic name="verified" size={13} sw={2} />
+                                  Groundtruthed
+                                </span>
+                              )}
+                            </span>
+                            <span className="fcard-chev">
+                              <Ic name="chev" size={18} sw={2} />
+                            </span>
+                          </button>
+                          <div className="fcard-quick">
+                            <button
+                              className="fbtn primary"
+                              onClick={() => handleDownload(file)}
+                              disabled={downloadingFileId === file.file_id}
+                              title="Download file"
+                              aria-label="Download file"
+                            >
+                              <Ic name="dl" size={16} sw={2} />
+                            </button>
+                            {privileges.edit && (
+                              <button
+                                className="fbtn"
+                                onClick={() => openFileEditModal(file)}
+                                title="Edit file"
+                                aria-label="Edit file"
+                              >
+                                <Ic name="edit" size={15} sw={2} />
+                              </button>
                             )}
-                            <div className="mgroups">
-                              {file.file_name && (
-                                <div className="mgroup">
-                                  <div className="mgl">File name</div>
-                                  <div className="mgv">
-                                    <span className="mono" style={{ fontSize: "13px" }}>
-                                      {file.file_name}
+                            {privileges.delete_file && (
+                              <button
+                                className="fbtn danger"
+                                onClick={() => openFileDeleteModal(file)}
+                                disabled={deletingFileId === file.file_id}
+                                title="Delete file"
+                                aria-label="Delete file"
+                              >
+                                <Ic name="trash" size={15} sw={2} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        <div className="fcard-body">
+                          <div className="fcard-body-inner">
+                            <div className="fcard-body-pad">
+                              {file.file_description && (
+                                <p className="fcard-desc">
+                                  {file.file_description}
+                                </p>
+                              )}
+                              <div className="fmeta">
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="file" size={12} sw={2} />
+                                    File name
+                                  </div>
+                                  <div className="fmv mono">
+                                    {file.file_name || "—"}
+                                  </div>
+                                </div>
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="fmt" size={12} sw={2} />
+                                    Format
+                                  </div>
+                                  <div className="fmv mono">
+                                    {(file.file_format || "N/A")
+                                      .toString()
+                                      .toUpperCase()}
+                                  </div>
+                                </div>
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="dl" size={12} sw={2} />
+                                    Size
+                                  </div>
+                                  <div className="fmv">
+                                    {formatFileSize(file.file_size)}
+                                  </div>
+                                </div>
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="org" size={12} sw={2} />
+                                    Provenance
+                                  </div>
+                                  <div className="fmv">{file.provenance || "—"}</div>
+                                </div>
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="link" size={12} sw={2} />
+                                    Source
+                                  </div>
+                                  <div className="fmv">{file.source || "—"}</div>
+                                </div>
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="lic" size={12} sw={2} />
+                                    Permissions
+                                  </div>
+                                  <div className="fmv">
+                                    {file.permissions || "—"}
+                                  </div>
+                                </div>
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="verified" size={12} sw={2} />
+                                    Groundtruthed
+                                  </div>
+                                  <div className="fmv">
+                                    <span
+                                      className={"gt-pill" + (gt ? " on" : "")}
+                                    >
+                                      <Ic
+                                        name={gt ? "verified" : "close"}
+                                        size={13}
+                                        sw={2}
+                                      />
+                                      {gt ? "Yes" : "No"}
                                     </span>
                                   </div>
                                 </div>
-                              )}
-                              <div className="mgroup">
-                                <div className="mgl">Format</div>
-                                <div className="mgv">
-                                  <span className="mono" style={{ fontSize: "13px" }}>
-                                    {(file.file_format || "N/A").toString().toUpperCase()}
-                                  </span>
-                                </div>
-                              </div>
-                              <div className="mgroup">
-                                <div className="mgl">Size</div>
-                                <div className="mgv">{formatFileSize(file.file_size)}</div>
-                              </div>
-                              <div className="mgroup">
-                                <div className="mgl">Created</div>
-                                <div className="mgv">
-                                  {formatDateShort(file.created_at) || "N/A"}
-                                </div>
-                              </div>
-                              <div className="mgroup">
-                                <div className="mgl">Updated</div>
-                                <div className="mgv">
-                                  {formatDateShort(file.modified_at) ||
-                                    formatDateShort(file.created_at) ||
-                                    "N/A"}
-                                </div>
-                              </div>
-                              {coverage && (
-                                <div className="mgroup">
-                                  <div className="mgl">Coverage</div>
-                                  <div className="mgv">{coverage}</div>
-                                </div>
-                              )}
-                              <div className="mgroup">
-                                <div className="mgl">License</div>
-                                <div className="mgv">
-                                  <span className="mono" style={{ fontSize: "13px" }}>
-                                    {file.permissions || "N/A"}
-                                  </span>
-                                </div>
-                              </div>
-                              {origin && (
-                                <div className="mgroup">
-                                  <div className="mgl">Source</div>
-                                  <div className="mgv">{origin}</div>
-                                </div>
-                              )}
-                              {file.groundtruthed != null && (
-                                <div className="mgroup">
-                                  <div className="mgl">Quality</div>
-                                  <div className="mgv">
-                                    <span className="verified">
-                                      <Ic name="verified" size={14} sw={2} />
-                                      Groundtruthed — {file.groundtruthed ? "Yes" : "No"}
-                                    </span>
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="clock" size={12} sw={2} />
+                                    Duration
+                                  </div>
+                                  <div className="fmv">
+                                    {file.duration
+                                      ? `${file.duration} ${
+                                          Number(file.duration) === 1
+                                            ? "year"
+                                            : "years"
+                                        }`
+                                      : "—"}
                                   </div>
                                 </div>
-                              )}
-                              <div className="mgroup">
-                                <div className="mgl">Usage</div>
-                                <div className="mgv">
-                                  {(file.downloads ?? 0).toLocaleString("en-IN")}{" "}
-                                  {(file.downloads ?? 0) === 1 ? "download" : "downloads"}
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="cal" size={12} sw={2} />
+                                    Temporal coverage
+                                  </div>
+                                  <div className="fmv">{temporal || "—"}</div>
                                 </div>
-                              </div>
-                              {file.cite_as && (
-                                <div className="mgroup" style={{ gridColumn: "1 / -1" }}>
-                                  <div className="mgl">Citation</div>
-                                  <div className="mgv">
-                                    <span style={{ fontStyle: "italic" }}>
-                                      {file.cite_as}
-                                    </span>
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="loc" size={12} sw={2} />
+                                    Geographical extent
+                                  </div>
+                                  <div className="fmv">{file.geography || "—"}</div>
+                                </div>
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="cal" size={12} sw={2} />
+                                    Added
+                                  </div>
+                                  <div className="fmv">
+                                    {formatDateShort(file.created_at) || "N/A"}
                                   </div>
                                 </div>
-                              )}
-                            </div>
-                            <div className="file-dl-row">
-                              {(t === "geojson" || t === "pdf") && (
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="dl" size={12} sw={2} />
+                                    Downloads
+                                  </div>
+                                  <div className="fmv">
+                                    {(file.downloads ?? 0).toLocaleString("en-IN")}
+                                  </div>
+                                </div>
+                                {file.cite_as && (
+                                  <div className="fm wide">
+                                    <div className="fml">
+                                      <Ic name="cite" size={12} sw={2} />
+                                      Cite as
+                                    </div>
+                                    <div className="fmv cite">{file.cite_as}</div>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="fcard-actions">
                                 <button
-                                  className="btn btn-ghost"
-                                  style={{ padding: "7px 14px" }}
+                                  className="btn btn-primary"
                                   onClick={() => handleDownload(file)}
                                   disabled={downloadingFileId === file.file_id}
                                 >
-                                  <Ic name="link" size={16} sw={2} />
-                                  Access
+                                  <Ic name="dl" size={16} sw={2} />
+                                  {downloadingFileId === file.file_id
+                                    ? "Downloading…"
+                                    : "Download file"}
                                 </button>
-                              )}
-                              <button
-                                className="btn btn-ghost"
-                                style={{ padding: "7px 14px" }}
-                                onClick={() => handleDownload(file)}
-                                disabled={downloadingFileId === file.file_id}
-                              >
-                                <Ic name="dl" size={16} sw={2} />
-                                {downloadingFileId === file.file_id
-                                  ? "Downloading…"
-                                  : "Download file"}
-                              </button>
-                              {privileges.edit && (
-                                <button
-                                  className="btn btn-ghost"
-                                  style={{ padding: "7px 14px" }}
-                                  onClick={() => openFileEditModal(file)}
-                                  aria-label="Edit file"
-                                >
-                                  Edit
-                                </button>
-                              )}
-                              {privileges.delete_file && (
-                                <button
-                                  className="btn btn-ghost"
-                                  style={{
-                                    padding: "7px 14px",
-                                    color: "#b3402f",
-                                    borderColor: "#e6c9c2",
-                                  }}
-                                  onClick={() => openFileDeleteModal(file)}
-                                  disabled={deletingFileId === file.file_id}
-                                  aria-label="Delete file"
-                                >
-                                  Delete file
-                                </button>
-                              )}
+                                {privileges.edit && (
+                                  <button
+                                    className="btn btn-ghost"
+                                    onClick={() => openFileEditModal(file)}
+                                  >
+                                    <Ic name="edit" size={15} sw={2} />
+                                    Edit
+                                  </button>
+                                )}
+                                {privileges.delete_file && (
+                                  <button
+                                    className="btn btn-ghost danger"
+                                    onClick={() => openFileDeleteModal(file)}
+                                    disabled={deletingFileId === file.file_id}
+                                  >
+                                    <Ic name="trash" size={15} sw={2} />
+                                    Delete
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })
+                    );
+                  })}
+                </div>
               )}
             </section>
 
-            {hasProvenance && (
+            {/* {hasProvenance && (
               <section className="sec" id="sec-provenance">
                 <div className="sec-label">How it was produced</div>
                 <h2 className="display">Provenance</h2>
@@ -1616,7 +1778,7 @@ function DatasetInfo() {
                   <span>{citeCopied ? "Copied" : "Copy citation"}</span>
                 </button>
               </div>
-            </section>
+            </section> */}
           </div>
 
           <aside>
@@ -1640,7 +1802,11 @@ function DatasetInfo() {
                 <div className="rrow">
                   <span className="k">Owners</span>
                   <span className="v">
-                    {dataset.creator_name || dataset.creator || "N/A"}
+                    {Array.isArray(dataset.owners) && dataset.owners.length > 0
+                      ? dataset.owners
+                          .map((o) => o.full_name || o.user_id)
+                          .join(", ")
+                      : dataset.creator_name || dataset.creator || "N/A"}
                   </span>
                 </div>
                 <div className="rrow">
@@ -1651,10 +1817,10 @@ function DatasetInfo() {
                   <span className="k">Status</span>
                   <span className="v">{dataset.approved ? "Approved" : "Pending"}</span>
                 </div>
-                <div className="rrow">
+                {/* <div className="rrow">
                   <span className="k">License</span>
                   <span className="v mono">{licenseVal || "N/A"}</span>
-                </div>
+                </div> */}
                 <div className="rrow">
                   <span className="k">Files</span>
                   <span className="v mono">{files.length}</span>
@@ -1740,6 +1906,23 @@ function DatasetInfo() {
                   );
                 })}
               </div>
+              {!ownerLoadingOrg && user?.is_superuser && ownerOrgs.length > 0 && (
+                <div className="field">
+                  <label htmlFor="owner-org-select">Organization</label>
+                  <select
+                    id="owner-org-select"
+                    value={ownerSelectedOrgId}
+                    onChange={(e) => handleOwnerOrgChange(e.target.value)}
+                    style={{ width: "100%" }}
+                  >
+                    {ownerOrgs.map((org) => (
+                      <option key={org.id} value={org.id}>
+                        {org.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               {!ownerLoadingOrg && ownerMembers.length > 0 && (
                 <>
                   <div className="field">
@@ -1768,6 +1951,18 @@ function DatasetInfo() {
                   </div>
                 </>
               )}
+              {!ownerLoadingOrg &&
+                ownerMembers.filter(
+                  (m) =>
+                    !(dataset.owners || []).some(
+                      (o) => String(o.user_id) === String(m.id)
+                    )
+                ).length === 0 && (
+                  <p className="muted">
+                    No members in this organization to add as owners. Add people
+                    to the organization first.
+                  </p>
+                )}
             </div>
             <div className="modal-foot">
               <button className="btn btn-ghost" onClick={handleCloseOwnersModal}>

@@ -207,12 +207,17 @@ class OrganizationService:
                 detail="Error fetching organization details",
             )
 
-    async def create_organization(self, org_data: OrganizationCreate) -> Organization:
+    async def create_organization(
+        self,
+        org_data: OrganizationCreate,
+        creator_id: Optional[UUID] = None,
+    ) -> Organization:
         """
         Create a new organization.
 
         Args:
             org_data: Organization creation data
+            creator_id: Optional user id recorded as organization creator
 
         Returns:
             Created organization object
@@ -234,6 +239,7 @@ class OrganizationService:
                 private=org_data.private,
                 focus=org_data.focus,
                 roi_states=org_data.roi_states,
+                creator=creator_id,
             )
 
             self.session.add(organization)
@@ -445,10 +451,31 @@ class OrganizationService:
         """
         try:
             self.logger.info("Listing organization ids and names")
-            query = select(Organization.id, Organization.name)
+            query = select(
+                Organization.id,
+                Organization.name,
+                Organization.description,
+                Organization.org_type,
+                Organization.private,
+                Organization.focus,
+                Organization.roi_states,
+                Organization.created_at,
+            )
             result = await self.session.execute(query)
             rows = result.all()
-            items = [{"id": row.id, "name": row.name} for row in rows]
+            items = [
+                {
+                    "id": row.id,
+                    "name": row.name,
+                    "description": row.description,
+                    "org_type": row.org_type,
+                    "private": bool(row.private),
+                    "focus": row.focus,
+                    "roi_states": row.roi_states,
+                    "created_at": row.created_at,
+                }
+                for row in rows
+            ]
             self.logger.info("Found %d organizations for list", len(items))
             return items
         except Exception as e:

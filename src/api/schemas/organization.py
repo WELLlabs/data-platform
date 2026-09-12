@@ -121,10 +121,16 @@ class OrganizationUpdate(BaseModel):
 
 
 class OrganizationListItem(BaseModel):
-    """Schema for a single item in the organization list (id and name only)."""
+    """Schema for a single item in the organization list."""
 
     id: UUID = Field(..., description="Organization UUID")
     name: str = Field(..., description="Organization name")
+    description: Optional[str] = None
+    org_type: Optional[str] = None
+    private: bool = False
+    focus: Optional[List[str]] = None
+    roi_states: Optional[List[str]] = None
+    created_at: Optional[datetime] = None
 
 
 class OrganizationListResponse(BaseModel):

@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import Select from "react-select";
 import { me_endpoint, organizations_endpoint } from "../api/endpoints";
+import { clearOrganizationNamesCache } from "../components/wd/DatasetItems";
 import Contour from "../components/wd/Contour";
 
 function CreateOrg() {
@@ -197,7 +198,7 @@ function CreateOrg() {
       });
 
       if (response.status === 201) {
-        // Navigate to success page with query parameters
+        clearOrganizationNamesCache();
         const orgName = encodeURIComponent(response.data.name);
         const createdAt = encodeURIComponent(response.data.created_at);
         const orgId = encodeURIComponent(response.data.id);

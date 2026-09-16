@@ -29,10 +29,10 @@ from schemas.dataset import DatasetCreate
 from services.organization import OrganizationService, get_organization_service
 from services.upload import UploadService, get_upload_service
 from services.user import UserService, get_user_service
-from sqlalchemy import delete, desc, func, select, update
+from sqlalchemy import delete, desc, exists, func, select, update
 from tasks.email import send_dataset_transfer
 from utils.security import mask_apikey
-from services.typesense_index import safe_index_dataset
+from services.typesense_index import DEFAULT_TAG_TOPIC, safe_index_dataset, safe_upsert_tag
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -119,6 +119,23 @@ class DatasetService:
             result.append(normalized_tag)
         return list(dict.fromkeys(result))
 
+    async def _get_or_create_tag(self, normalized_tag: str) -> Tag:
+        """Return existing tag by name, or create one with topic=NA."""
+        tag_result = await self.session.execute(
+            select(Tag).where(func.lower(Tag.tag_name) == normalized_tag)
+        )
+        existing_tag = tag_result.scalar_one_or_none()
+        if existing_tag:
+            return existing_tag
+        new_tag = Tag(
+            tag_id=uuid4(),
+            tag_name=normalized_tag,
+            topic=DEFAULT_TAG_TOPIC,
+        )
+        self.session.add(new_tag)
+        await safe_upsert_tag(new_tag.tag_id, new_tag.tag_name, new_tag.topic)
+        return new_tag
+
     async def attach_tags_to_dataset(
         self, dataset_id: UUID, tags: Optional[List[str]]
     ) -> None:
@@ -137,17 +154,9 @@ class DatasetService:
             )
             normalized_tags = self._normalize_tags(tags)
             for normalized_tag in normalized_tags:
-                tag_result = await self.session.execute(
-                    select(Tag).where(func.lower(Tag.tag_name) == normalized_tag)
-                )
-                existing_tag = tag_result.scalar_one_or_none()
-                if existing_tag:
-                    tag_id = existing_tag.tag_id
-                else:
-                    tag_id = uuid4()
-                    self.session.add(Tag(tag_id=tag_id, tag_name=normalized_tag))
+                tag = await self._get_or_create_tag(normalized_tag)
                 self.session.add(
-                    TagDataset(dataset_id=dataset_id, tag_id=tag_id),
+                    TagDataset(dataset_id=dataset_id, tag_id=tag.tag_id),
                 )
         except HTTPException:
             raise
@@ -182,6 +191,65 @@ class DatasetService:
             )
         )
         return {str(row[0]): row[1] for row in result.all()}
+
+    async def get_user_names(self, user_ids: List[Any]) -> Dict[str, str]:
+        """Map user UUIDs to display names."""
+        unique_ids = []
+        seen = set()
+        for user_id in user_ids:
+            if user_id is None:
+                continue
+            key = str(user_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_ids.append(user_id)
+        if not unique_ids:
+            return {}
+        result = await self.session.execute(
+            select(User.id, User.full_name).where(User.id.in_(unique_ids))
+        )
+        return {str(row[0]): row[1] for row in result.all()}
+
+    async def list_item_payloads(self, datasets: List[Dataset]) -> List[Dict[str, Any]]:
+        """Shared list/card fields for dataset rows (creator, org, tags, downloads)."""
+        if not datasets:
+            return []
+        dataset_ids = [ds.dataset_id for ds in datasets]
+        download_totals = await self.get_download_totals_for_datasets(dataset_ids)
+        file_counts: Dict[UUID, int] = {did: 0 for did in dataset_ids}
+        count_result = await self.session.execute(
+            select(File.dataset_id, func.count(File.file_id))
+            .where(File.dataset_id.in_(dataset_ids))
+            .group_by(File.dataset_id)
+        )
+        for row in count_result.all():
+            file_counts[row[0]] = int(row[1])
+        org_names = await self.get_organization_names(
+            [ds.organization for ds in datasets]
+        )
+        creator_names = await self.get_user_names([ds.creator for ds in datasets])
+        payloads = []
+        for ds in datasets:
+            payloads.append(
+                {
+                    "dataset_id": str(ds.dataset_id),
+                    "dataset_title": ds.dataset_title,
+                    "creator": str(ds.creator),
+                    "creator_name": creator_names.get(str(ds.creator)),
+                    "created_at": ds.created_at.isoformat() if ds.created_at else None,
+                    "organization": ds.organization,
+                    "organization_name": org_names.get(str(ds.organization)),
+                    "availability": ds.availability,
+                    "downloads": download_totals.get(ds.dataset_id, 0),
+                    "file_count": file_counts.get(ds.dataset_id, 0),
+                    "dataset_description": ds.dataset_description,
+                    "tags": [tag.tag_name for tag in (ds.tags or [])],
+                    "approved": ds.approved,
+                    "approved_by": str(ds.approved_by) if ds.approved_by else None,
+                }
+            )
+        return payloads
 
     async def get_organization_with_private_status(self, org_id: str) -> Organization:
         """
@@ -702,27 +770,10 @@ class DatasetService:
             # Now that dataset is in the session, tag processing can safely reference it
             normalized_tags = self._normalize_tags(dataset_data.tags)
             for normalized_tag in normalized_tags:
-                # Check if tag exists (case-insensitive)
-                tag_result = await self.session.execute(
-                    select(Tag).where(func.lower(Tag.tag_name) == normalized_tag)
-                )
-                existing_tag = tag_result.scalar_one_or_none()
-
-                if existing_tag:
-                    tag_id = existing_tag.tag_id
-                else:
-                    # Create new tag
-                    tag_id = uuid4()
-                    new_tag = Tag(
-                        tag_id=tag_id,
-                        tag_name=normalized_tag,
-                    )
-                    self.session.add(new_tag)
-
-                # Create TagDataset association
+                tag = await self._get_or_create_tag(normalized_tag)
                 tag_dataset = TagDataset(
                     dataset_id=dataset_id,
-                    tag_id=tag_id,
+                    tag_id=tag.tag_id,
                 )
                 self.session.add(tag_dataset)
 
@@ -892,17 +943,8 @@ class DatasetService:
 
             tag_ids: List[UUID] = []
             for normalized_tag in normalized_tags:
-                tag_result = await self.session.execute(
-                    select(Tag).where(func.lower(Tag.tag_name) == normalized_tag)
-                )
-                existing_tag = tag_result.scalar_one_or_none()
-                if existing_tag:
-                    tag_ids.append(existing_tag.tag_id)
-                else:
-                    tag_id = uuid4()
-                    new_tag = Tag(tag_id=tag_id, tag_name=normalized_tag)
-                    self.session.add(new_tag)
-                    tag_ids.append(tag_id)
+                tag = await self._get_or_create_tag(normalized_tag)
+                tag_ids.append(tag.tag_id)
 
             await self.session.execute(
                 delete(TagDataset).where(TagDataset.dataset_id == dataset_id)
@@ -1125,6 +1167,7 @@ class DatasetService:
         apikey: Optional[str] = None,
         limit: int = 10,
         offset: int = 0,
+        topic: Optional[str] = None,
     ) -> List[Dataset]:
         """
         Get approved datasets with session-first auth precedence and pagination.
@@ -1191,6 +1234,18 @@ class DatasetService:
             else:
                 query = query.where(
                     approved_dataset_visibility_clause(resolved_user)
+                )
+
+            topic_filter = (topic or "").strip()
+            if topic_filter:
+                query = query.where(
+                    exists(
+                        select(1)
+                        .select_from(TagDataset)
+                        .join(Tag, Tag.tag_id == TagDataset.tag_id)
+                        .where(TagDataset.dataset_id == Dataset.dataset_id)
+                        .where(func.lower(Tag.topic) == topic_filter.lower())
+                    )
                 )
 
             # Apply pagination

@@ -1,15 +1,24 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import { list_organizations_endpoint, search_endpoint } from "../api/endpoints";
+import {
+  list_organizations_endpoint,
+  search_endpoint,
+  tags_list_endpoint,
+  topics_endpoint,
+} from "../api/endpoints";
 import Contour from "../components/wd/Contour";
 import Ic from "../components/wd/Icons";
+import { DatasetRow } from "../components/wd/DatasetItems";
 
 const LIMIT = 10;
 
+function toggleValue(cur, value) {
+  return cur.includes(value) ? cur.filter((t) => t !== value) : [...cur, value];
+}
+
 export default function Search() {
-  const navigate = useNavigate();
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, loading: authLoading } = useAuth();
   const [params] = useSearchParams();
 
   const [query, setQuery] = useState(params.get("q") || "");
@@ -25,58 +34,138 @@ export default function Search() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [hasSearched, setHasSearched] = useState(false);
-  const [selectedTags, setSelectedTags] = useState([]);
+  const [defaultsApplied, setDefaultsApplied] = useState(false);
+  const [selectedTags, setSelectedTags] = useState(
+    () => (params.get("tags") || "").split(",").map((t) => t.trim()).filter(Boolean)
+  );
+  const [selectedTopics, setSelectedTopics] = useState(
+    () => (params.get("topics") || "").split(",").map((t) => t.trim()).filter(Boolean)
+  );
   const [tagFacets, setTagFacets] = useState([]);
+  const [topicFacets, setTopicFacets] = useState([]);
+  const [topics, setTopics] = useState([]);
+  const [tags, setTags] = useState([]);
+  const [tagQuery, setTagQuery] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const resp = await fetch(list_organizations_endpoint, { credentials: "include" });
-        if (!resp.ok || cancelled) return;
-        const data = await resp.json();
-        const items = data?.items ?? [];
-        if (!cancelled) setOrganizations(Array.isArray(items) ? items : []);
-      } catch { if (!cancelled) setOrganizations([]); }
+        const [orgsResp, topicsResp] = await Promise.all([
+          fetch(list_organizations_endpoint, { credentials: "include" }),
+          fetch(topics_endpoint, { credentials: "include" }),
+        ]);
+        if (cancelled) return;
+        if (orgsResp.ok) {
+          const data = await orgsResp.json();
+          const items = data?.items ?? [];
+          setOrganizations(Array.isArray(items) ? items : []);
+        }
+        if (topicsResp.ok) {
+          const data = await topicsResp.json();
+          setTopics(Array.isArray(data?.topics) ? data.topics : []);
+        }
+      } catch {
+        if (!cancelled) {
+          setOrganizations([]);
+          setTopics([]);
+        }
+      }
     })();
     return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
-    if (isAuthenticated && user?.organization) setOrgId((p) => (p === "" ? user.organization : p));
-  }, [isAuthenticated, user?.organization]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const p = new URLSearchParams({ limit: "300" });
+        if (selectedTopics.length) p.set("topic", selectedTopics.join(","));
+        const resp = await fetch(`${tags_list_endpoint}?${p}`, { credentials: "include" });
+        if (!resp.ok || cancelled) return;
+        const data = await resp.json();
+        if (!cancelled) setTags(Array.isArray(data?.tags) ? data.tags : []);
+      } catch {
+        if (!cancelled) setTags([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedTopics]);
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (isAuthenticated && user?.organization) {
+      setSearchWithinOrg(true);
+      setOrgId((p) => (p === "" ? user.organization : p));
+    }
+    setDefaultsApplied(true);
+  }, [authLoading, isAuthenticated, user?.organization]);
 
   const runSearch = useCallback(async (page = 1) => {
     const q = query?.trim() ?? "";
-    if (!q) { setResult([]); setTotal(0); setError(""); setHasSearched(true); return; }
     setLoading(true); setError("");
     const offset = (page - 1) * LIMIT;
     const p = new URLSearchParams();
-    p.set("query", q); p.set("limit", String(LIMIT)); p.set("offset", String(offset));
+    p.set("query", q || "*");
+    p.set("limit", String(LIMIT));
+    p.set("offset", String(offset));
     if (searchWithinOrg && orgId?.trim()) p.set("organization_id", orgId.trim());
     if (startDate?.trim()) p.set("start_date", startDate.trim() + "T00:00:00");
     if (endDate?.trim()) p.set("end_date", endDate.trim() + "T23:59:59");
     if (selectedTags.length) p.set("tags", selectedTags.join(","));
+    if (selectedTopics.length) p.set("topics", selectedTopics.join(","));
     try {
       const res = await fetch(`${search_endpoint}?${p.toString()}`, { credentials: "include" });
       if (!res.ok) throw new Error(`Search failed: ${res.statusText}`);
       const data = await res.json();
       setResult(data.result ?? []); setTotal(data.total ?? 0); setCurrentPage(page); setHasSearched(true);
       setTagFacets(Array.isArray(data.tag_facets) ? data.tag_facets : []);
+      setTopicFacets(Array.isArray(data.topic_facets) ? data.topic_facets : []);
     } catch (err) {
       setError(err.message || "Search failed. Please try again."); setResult([]); setTotal(0);
     } finally { setLoading(false); }
-  }, [query, searchWithinOrg, orgId, startDate, endDate, selectedTags, isAuthenticated]);
+  }, [query, searchWithinOrg, orgId, startDate, endDate, selectedTags, selectedTopics]);
 
-  useEffect(() => { if (params.get("q")) runSearch(1); /* eslint-disable-next-line */ }, []);
+  const urlQ = params.get("q") || "";
+  const urlTags = params.get("tags") || "";
+  const urlTopics = params.get("topics") || "";
 
   useEffect(() => {
-    if (hasSearched) runSearch(1);
+    setQuery(urlQ);
+    setSelectedTags(urlTags.split(",").map((t) => t.trim()).filter(Boolean));
+    setSelectedTopics(urlTopics.split(",").map((t) => t.trim()).filter(Boolean));
+  }, [urlQ, urlTags, urlTopics]);
+
+  useEffect(() => {
+    if (!defaultsApplied) return;
+    if (searchWithinOrg && !orgId?.trim()) return;
+    runSearch(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTags]);
+  }, [defaultsApplied, searchWithinOrg, orgId, selectedTags, selectedTopics, urlQ]);
+
+  const tagCountByValue = useMemo(() => {
+    const m = {};
+    tagFacets.forEach((f) => { m[f.value] = f.count; });
+    return m;
+  }, [tagFacets]);
+  const topicCountByValue = useMemo(() => {
+    const m = {};
+    topicFacets.forEach((f) => { m[f.value] = f.count; });
+    return m;
+  }, [topicFacets]);
+
+  const shownTags = useMemo(() => {
+    const needle = tagQuery.trim().toLowerCase();
+    return tags.filter((t) => {
+      if (!needle) return true;
+      return (
+        String(t.tag || "").toLowerCase().includes(needle) ||
+        String(t.label || "").toLowerCase().includes(needle)
+      );
+    });
+  }, [tags, tagQuery]);
 
   const hasMore = currentPage * LIMIT < total;
-  const openItem = (item) => { if (item?.dataset_id) navigate(`/dataset-info?dataset_id=${encodeURIComponent(item.dataset_id)}`); };
 
   return (
     <div className="page">
@@ -89,7 +178,7 @@ export default function Search() {
             <span className="sic"><Ic name="search" size={20} sw={2} style={{ color: "#667085" }} /></span>
             <input value={query} onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); runSearch(1); } }}
-              placeholder="Search datasets, places, topics and organizations…" aria-label="Search query" />
+              placeholder="Search by title, description, tag, topic or file…" aria-label="Search query" />
             <button className="btn btn-primary" style={{ borderRadius: 10 }} onClick={() => runSearch(1)} disabled={loading}>Search</button>
           </div>
         </div>
@@ -112,28 +201,57 @@ export default function Search() {
             </div>
           </div>
           <div className="fgroup">
+            <h4>Topics</h4>
+            <div className="fbody filter-scroll">
+              {topics.map((item) => {
+                const name = item.topic;
+                const count = topicCountByValue[name] ?? item.dataset_count;
+                return (
+                  <label className="check" key={name}>
+                    <input
+                      type="checkbox"
+                      checked={selectedTopics.includes(name)}
+                      onChange={() => setSelectedTopics((cur) => toggleValue(cur, name))}
+                    />
+                    {name}{count != null ? ` (${count})` : ""}
+                  </label>
+                );
+              })}
+              {topics.length === 0 && (
+                <p className="muted" style={{ fontSize: 13 }}>No topics yet</p>
+              )}
+            </div>
+          </div>
+          <div className="fgroup">
             <h4>Tags</h4>
             <div className="fbody">
-              {tagFacets.map((facet) => (
-                <label className="check" key={facet.value}>
-                  <input
-                    type="checkbox"
-                    checked={selectedTags.includes(facet.value)}
-                    onChange={() => {
-                      setSelectedTags((cur) => {
-                        const next = cur.includes(facet.value)
-                          ? cur.filter((t) => t !== facet.value)
-                          : [...cur, facet.value];
-                        return next;
-                      });
-                    }}
-                  />
-                  {facet.value}{facet.count != null ? ` (${facet.count})` : ""}
-                </label>
-              ))}
-              {hasSearched && tagFacets.length === 0 && (
-                <p className="muted" style={{ fontSize: 13 }}>No tag facets</p>
-              )}
+              <input
+                type="search"
+                className="filter-search"
+                placeholder="Filter tags…"
+                value={tagQuery}
+                onChange={(e) => setTagQuery(e.target.value)}
+                aria-label="Filter tags"
+              />
+              <div className="filter-scroll">
+                {shownTags.map((item) => {
+                  const name = item.tag;
+                  const count = tagCountByValue[name] ?? item.dataset_count;
+                  return (
+                    <label className="check" key={name}>
+                      <input
+                        type="checkbox"
+                        checked={selectedTags.includes(name)}
+                        onChange={() => setSelectedTags((cur) => toggleValue(cur, name))}
+                      />
+                      {item.label || name}{count != null ? ` (${count})` : ""}
+                    </label>
+                  );
+                })}
+                {shownTags.length === 0 && (
+                  <p className="muted" style={{ fontSize: 13 }}>No tags</p>
+                )}
+              </div>
             </div>
           </div>
           <div className="fgroup">
@@ -163,25 +281,39 @@ export default function Search() {
           ) : hasSearched && result.length === 0 ? (
             <div className="empty">
               <div className="eic"><Ic name="search" size={24} sw={1.6} /></div>
-              <h3 className="display">{query.trim() ? "No results found" : "Start searching"}</h3>
-              <p>{query.trim() ? "Try different terms, a place, topic or organization." : "Enter search terms above and press Enter."}</p>
+              <h3 className="display">No results found</h3>
+              <p>Try different terms, a place, topic or organization.</p>
             </div>
           ) : (
             <>
               <div className="rows">
                 {result.map((item, i) => (
-                  <div className="drow" key={item.dataset_id ? `${item.dataset_id}-${item.file_id ?? i}` : i}
-                    style={{ cursor: item.dataset_id ? "pointer" : "default" }} onClick={() => openItem(item)}>
-                    <div className="rt"><span className="cat">Result</span><h3>{item.title || "Untitled"}</h3></div>
-                    <p className="rd">{item.context || "No context"}</p>
-                    {item.dataset_id && <span className="arrow"><Ic name="arrow" size={16} /></span>}
-                  </div>
+                  <DatasetRow
+                    key={item.dataset_id || i}
+                    dataset={{
+                      ...item,
+                      dataset_id: item.dataset_id,
+                      dataset_title: item.title,
+                      dataset_description: item.context,
+                    }}
+                  />
                 ))}
               </div>
-              {total > 0 && (
+              {total > LIMIT && (
                 <div className="pagination">
                   <button onClick={() => currentPage > 1 && runSearch(currentPage - 1)} disabled={currentPage === 1 || loading} aria-label="Previous">‹</button>
-                  <button className="active">{currentPage}</button>
+                  {Array.from({ length: Math.ceil(total / LIMIT) }, (_, i) => i + 1)
+                    .filter((p) => p === 1 || p === Math.ceil(total / LIMIT) || Math.abs(p - currentPage) <= 2)
+                    .reduce((acc, p, idx, arr) => {
+                      if (idx > 0 && p - arr[idx - 1] > 1) acc.push("…");
+                      acc.push(p);
+                      return acc;
+                    }, [])
+                    .map((p, i) => (
+                      p === "…"
+                        ? <span key={`gap-${i}`} className="muted" style={{ padding: "0 4px" }}>…</span>
+                        : <button key={p} className={p === currentPage ? "active" : ""} onClick={() => runSearch(p)} disabled={loading}>{p}</button>
+                    ))}
                   <button onClick={() => hasMore && runSearch(currentPage + 1)} disabled={!hasMore || loading} aria-label="Next">›</button>
                 </div>
               )}

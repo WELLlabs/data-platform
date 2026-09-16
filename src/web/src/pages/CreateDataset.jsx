@@ -11,6 +11,7 @@ import {
 import { requestAndUploadFile } from "../api/s3Upload";
 import HelpTooltip from "../components/HelpTooltip";
 import Ic from "../components/wd/Icons";
+import TagMultiSelect from "../components/wd/TagMultiSelect";
 import {
     AVAILABILITY_OPTIONS,
     AVAILABILITY_PUBLIC,
@@ -62,7 +63,7 @@ function CreateDataset() {
     // Form state
     const [title, setTitle] = useState("");
     const [datasetDescription, setDatasetDescription] = useState("");
-    const [tags, setTags] = useState("");
+    const [tags, setTags] = useState([]);
     const [provenance, setProvenance] = useState("");
     const [source, setSource] = useState("");
     const [citeAs, setCiteAs] = useState("");
@@ -201,7 +202,7 @@ function CreateDataset() {
     const validateStep = (s) => {
         if (s === 1) {
             if (!title.trim()) return "Dataset title is required.";
-            if (!tags.trim()) return "At least one tag is required.";
+            if (!tags.length) return "At least one tag is required.";
         }
         if (s === 2) {
             if (!files.length)
@@ -319,13 +320,8 @@ function CreateDataset() {
             datasetForm.append("job_id", jobId);
 
             // Process tags: split by comma, strip whitespace, replace internal spaces with hyphens, send as array
-            if (tags && tags.trim()) {
-                const tagsArray = tags
-                    .split(",")
-                    .map((tag) => tag.trim())
-                    .filter((tag) => tag.length > 0)
-                    .map((tag) => tag.replace(/\s+/g, "-"));
-                tagsArray.forEach((tag) => {
+            if (tags.length) {
+                tags.forEach((tag) => {
                     datasetForm.append("tags", tag);
                 });
             }
@@ -622,22 +618,17 @@ function CreateDataset() {
                                 <label>
                                     Tags <span className="req">(required)</span>
                                     <HelpTooltip
-                                        text="Think keywords. Which search results should this dataset appear in?"
+                                        text="Search existing tags as you type. If none fit, add a custom tag (it will be grouped under topic NA)."
                                         id="tooltip-tags"
                                     />
                                 </label>
-                                <input
-                                    type="text"
-                                    placeholder="Separate keywords with commas, e.g. rainfall, karnataka, groundwater"
+                                <TagMultiSelect
                                     value={tags}
-                                    onChange={(e) =>
-                                        validateAndFilterSpecialChars(
-                                            e.target.value,
-                                            setTags,
-                                            setTagsError,
-                                            500
-                                        )
-                                    }
+                                    onChange={(next) => {
+                                        setTags(next);
+                                        setTagsError(false);
+                                    }}
+                                    disabled={submitting}
                                 />
                                 {tagsError && invalidCharsNote}
                             </div>

@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { datasets_endpoint, homepage_stats_endpoint } from "../api/endpoints";
+import { datasets_endpoint, homepage_stats_endpoint, topics_endpoint } from "../api/endpoints";
 import Contour from "../components/wd/Contour";
 import Ic from "../components/wd/Icons";
 import { useCmdk } from "../components/wd/CommandPalette";
 import { availabilityLabel, isRestrictedAvailability } from "../constants/availability";
-import { orgDisplayName, useOrganizationNames } from "../components/wd/DatasetItems";
+import { orgDisplayName, useOrganizationNames, DatasetMeta, normalize } from "../components/wd/DatasetItems";
 import { RankRow } from "../components/wd/RankList";
 import { useBranding } from "../branding";
 
@@ -25,14 +25,20 @@ function fmtBytes(n) {
   return `${shown} ${units[i]}`;
 }
 
-const TOPICS = [
-  { k: "Water", ic: "M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11Z" },
-  { k: "Agriculture", ic: "M12 21V9m0 0c-2.5-2.6-5.5-2-5.5-2s0 3.6 2.6 4.4S12 9 12 9Zm0 0c2.5-2.6 5.5-2 5.5-2s0 3.6-2.6 4.4S12 9 12 9Z" },
-  { k: "Climate", ic: "M7 16a4 4 0 0 1 .4-8 5 5 0 0 1 9.5-1A3.5 3.5 0 1 1 17.5 16H7Z" },
-  { k: "Land", ic: "M3 18l6-8 4 5 3-4 5 7H3Z" },
-  { k: "Governance", ic: "M4 21h16M6 21V10m4 11V10m4 11V10m4 11V10M12 3l8 5H4l8-5Z" },
-  { k: "Livelihoods", ic: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 8a7 7 0 0 1 14 0" },
-];
+const TOPIC_ICONS = {
+  Water: "M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11Z",
+  Agriculture: "M12 21V9m0 0c-2.5-2.6-5.5-2-5.5-2s0 3.6 2.6 4.4S12 9 12 9Zm0 0c2.5-2.6 5.5-2 5.5-2s0 3.6-2.6 4.4S12 9 12 9Z",
+  Climate: "M7 16a4 4 0 0 1 .4-8 5 5 0 0 1 9.5-1A3.5 3.5 0 1 1 17.5 16H7Z",
+  Land: "M3 18l6-8 4 5 3-4 5 7H3Z",
+  Governance: "M4 21h16M6 21V10m4 11V10m4 11V10m4 11V10M12 3l8 5H4l8-5Z",
+  Livelihoods: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 8a7 7 0 0 1 14 0",
+  "Socio-Economic": "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 8a7 7 0 0 1 14 0",
+};
+const DEFAULT_TOPIC_ICON = "M4 6h16M4 12h10M4 18h7";
+
+function topicIcon(name) {
+  return TOPIC_ICONS[name] || DEFAULT_TOPIC_ICON;
+}
 
 function StatusBadge({ d }) {
   const restricted = isRestrictedAvailability(d.availability);
@@ -45,6 +51,7 @@ function StatusBadge({ d }) {
 export default function Home() {
   const [stats, setStats] = useState(null);
   const [datasets, setDatasets] = useState([]);
+  const [topics, setTopics] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const cmdk = useCmdk();
@@ -56,14 +63,21 @@ export default function Home() {
     let active = true;
     (async () => {
       try {
-        const [s, d] = await Promise.all([
+        const [s, d, t] = await Promise.all([
           fetch(homepage_stats_endpoint, { credentials: "include" }),
           fetch(`${datasets_endpoint}?limit=5&offset=0`, { credentials: "include" }),
+          fetch(topics_endpoint, { credentials: "include" }),
         ]);
         if (!s.ok || !d.ok) throw new Error("load");
-        const [sd, dd] = await Promise.all([s.json(), d.json()]);
+        const [sd, dd, td] = await Promise.all([
+          s.json(),
+          d.json(),
+          t.ok ? t.json() : Promise.resolve({ topics: [] }),
+        ]);
         if (!active) return;
         setStats(sd);
+        const topicList = Array.isArray(td?.topics) ? td.topics : [];
+        setTopics(topicList.filter((item) => item?.topic && String(item.topic).toUpperCase() !== "NA"));
         const list = Array.isArray(dd) ? dd : [];
         const recent = [...list].sort((a, b) => {
           const ta = new Date(a.created_at || a.updated_at || 0).getTime();
@@ -142,9 +156,8 @@ export default function Home() {
               <div className="fmeta-top"><StatusBadge d={primary} /></div>
               <h3 className="display">{primary.dataset_title || "Untitled dataset"}</h3>
               <p className="fd">{primary.dataset_description || "No description provided."}</p>
-              <div className="fcoverage"><span><b>{orgOf(primary)}</b></span>{primary.downloads != null && <span>{fmt(primary.downloads)} downloads</span>}</div>
+              <DatasetMeta d={normalize(primary, orgNames)} hideAccess />
               <div className="frow">
-                <div className="fspecs">{primary.file_count != null && <span className="mono-token">{primary.file_count} files</span>}</div>
                 <span className="link-arrow">View dataset <Ic name="arrow" size={16} /></span>
               </div>
             </Link>
@@ -152,7 +165,9 @@ export default function Home() {
               {secondary.map((d) => (
                 <Link className="feat-item" key={d.dataset_id} to={dsLink(d)}>
                   <h4>{d.dataset_title || "Untitled dataset"}</h4>
-                  <div className="fi-meta">{orgOf(d)}</div>
+                  <div className="fi-meta">
+                    {[d.creator_name, orgOf(d)].filter(Boolean).join(" · ")}
+                  </div>
                 </Link>
               ))}
             </div>
@@ -165,10 +180,12 @@ export default function Home() {
       <section className="wrap" style={{ padding: "var(--s8) 0 0" }}>
         <div className="section-head"><h2 className="section-title">Explore by topic</h2></div>
         <div className="topic-grid">
-          {TOPICS.map((t) => (
-            <Link className="topic" key={t.k} to={`/search?q=${encodeURIComponent(t.k)}`}>
-              <span className="ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round"><path d={t.ic} /></svg></span>
-              <span><b>{t.k}</b><span>Browse datasets</span></span>
+          {topics.length === 0 ? (
+            <p className="lede" style={{ gridColumn: "1 / -1", margin: 0 }}>Topics will appear here once tags are published.</p>
+          ) : topics.map((t) => (
+            <Link className="topic" key={t.topic} to={`/datasets?topic=${encodeURIComponent(t.topic)}`}>
+              <span className="ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round"><path d={topicIcon(t.topic)} /></svg></span>
+              <span><b>{t.topic}</b><span>{t.dataset_count ? `${t.dataset_count} dataset${t.dataset_count === 1 ? "" : "s"}` : "Browse datasets"}</span></span>
               <span className="ch"><Ic name="arrow" size={16} /></span>
             </Link>
           ))}

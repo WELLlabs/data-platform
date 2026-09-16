@@ -20,6 +20,8 @@ export function makeDataset(index, overrides = {}) {
     file_count: overrides.file_count ?? 2,
     downloads: overrides.downloads ?? index,
     created_at: "2026-01-01T00:00:00Z",
+    creator_name: overrides.creator_name ?? "Ada Lovelace",
+    tags: overrides.tags ?? ["water", "open-data"],
     ...overrides,
   };
 }

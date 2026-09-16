@@ -77,7 +77,7 @@ Exact numeric roles are enforced in `UserController` in [`src/api/routers/user.p
 
 **Auth:** Session cookie.
 
-**Implementation:** `UserController.approve_user` → [`src/api/routers/user.py`](src/api/routers/user.py). Email: Celery task `email.send_user_approval_response` in [`src/api/tasks/email.py`](src/api/tasks/email.py), template id from **`USER_APPROVAL_RESPONSE_TEMPLATE_ID`** in [`src/api/core/config.py`](src/api/core/config.py).
+**Implementation:** `UserController.approve_user` → [`src/api/routers/user.py`](src/api/routers/user.py). Email: Celery task `email.send_user_approval_response` in [`src/api/tasks/email.py`](src/api/tasks/email.py), body from [`src/api/emails/user_approval_response.html`](src/api/emails/user_approval_response.html).
 
 ### Rules
 
@@ -235,7 +235,7 @@ Calls **`_invalidate_dataset_cache(dataset_id, redis, ...)`** from [`src/api/rou
 
 **Implementation:** [`src/api/routers/dataset.py`](src/api/routers/dataset.py) → [`DatasetService.add_owner` / `remove_owner`](src/api/services/dataset.py). Cache key **`dataset:{dataset_id}`** is invalidated after a successful change.
 
-**Email:** Adding an owner queues **`email.send_dataset_transfer`** (same Brevo template **`DATASET_TRANSFER_TEMPLATE_ID`**) to the new owner with **`title`**, **`new_creator`** (new owner name), **`admin_name`** (actor name).
+**Email:** Adding an owner queues **`email.send_dataset_transfer`** (HTML [`src/api/emails/dataset_transfer.html`](src/api/emails/dataset_transfer.html)) to the new owner with **`title`**, **`new_creator`** (new owner name), **`admin_name`** (actor name).
 
 ### Rules (service)
 

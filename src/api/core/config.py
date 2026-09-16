@@ -89,13 +89,6 @@ class Settings(BaseSettings):
     EMAIL_RESULT_BACKEND: str
     EMAIL_GATEWAY_KEY: str
     EMAIL_SENDER: str
-    FORGOT_PASSWORD_TEMPLATE_ID: int
-    VERIFY_EMAIL_TEMPLATE_ID: int
-    UPLOAD_APPROVAL_TEMPLATE_ID: int
-    UPLOAD_APPROVAL_RESPONSE_TEMPLATE_ID: int
-    USER_APPROVAL_REQUEST_TEMPLATE_ID: int
-    USER_APPROVAL_RESPONSE_TEMPLATE_ID: int
-    DATASET_TRANSFER_TEMPLATE_ID: int
 
     # Google OAuth (button enabled only when client id and secret are set)
     GOOGLE_CLIENT_ID: str = ""
@@ -132,6 +125,7 @@ class Settings(BaseSettings):
     TYPESENSE_PROTOCOL: str = "http"
     TYPESENSE_API_KEY: str = ""
     TYPESENSE_COLLECTION: str = "portal_search"
+    TYPESENSE_TAGS_COLLECTION: str = "tags"
     # Organization list cache (Redis) TTL in seconds; default 604800 (7 days) if not set
     ORGANIZATION_LIST_CACHE_AGE_SECONDS: int = 604800
     # Dataset info cache (Redis) TTL in seconds; default 300 (5 minutes) if not set

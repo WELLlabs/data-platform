@@ -116,21 +116,21 @@ def approved_dataset_visibility_clause(user: Optional[User]) -> ColumnElement:
 def search_visibility_sql(user: Optional[User]) -> tuple[str, dict]:
     """SQL fragment and bind params for global_search_index visibility."""
     if user is None:
-        return "availability = 0", {}
+        return "global_search_index.availability = 0", {}
     if user.is_superuser:
         return "true", {}
     sql = """
     (
-      availability = 0
+      global_search_index.availability = 0
       OR EXISTS (
         SELECT 1 FROM datasets d
         WHERE d.dataset_id = global_search_index.dataset_id
           AND d.creator = :viewer_id
       )
-      OR (availability = 2 AND organization_id = :viewer_org)
-      OR (availability = 3 AND organization_id = :viewer_org AND :viewer_role = 1)
+      OR (global_search_index.availability = 2 AND global_search_index.organization_id = :viewer_org)
+      OR (global_search_index.availability = 3 AND global_search_index.organization_id = :viewer_org AND :viewer_role = 1)
       OR (
-        availability IN (3, 4)
+        global_search_index.availability IN (3, 4)
         AND EXISTS (
           SELECT 1 FROM dataset_owners o
           WHERE o.dataset_id = global_search_index.dataset_id

@@ -42,6 +42,12 @@ class Tag(Base):
         nullable=False,
         index=True,
     )
+    topic: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default="NA",
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -57,5 +63,8 @@ class Tag(Base):
 
     def __repr__(self) -> str:
         """String representation of the Tag model."""
-        return f"<Tag(tag_id={self.tag_id}, tag_name={self.tag_name})>"
+        return (
+            f"<Tag(tag_id={self.tag_id}, tag_name={self.tag_name}, "
+            f"topic={self.topic})>"
+        )
 

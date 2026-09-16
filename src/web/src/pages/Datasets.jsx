@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { datasets_endpoint } from "../api/endpoints";
 import Contour from "../components/wd/Contour";
@@ -12,8 +12,10 @@ const LIMIT = 10;
 
 export default function Datasets() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const cmdk = useCmdk();
   const { isAuthenticated } = useAuth();
+  const topic = (searchParams.get("topic") || "").trim();
 
   const [datasets, setDatasets] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -26,12 +28,21 @@ export default function Datasets() {
   const orgNames = useOrganizationNames();
 
   useEffect(() => {
+    setPage(1);
+  }, [topic]);
+
+  useEffect(() => {
     let active = true;
     (async () => {
       setLoading(true);
       try {
         const offset = (page - 1) * LIMIT;
-        const res = await fetch(`${datasets_endpoint}?limit=${LIMIT}&offset=${offset}`, { credentials: "include" });
+        const params = new URLSearchParams({
+          limit: String(LIMIT),
+          offset: String(offset),
+        });
+        if (topic) params.set("topic", topic);
+        const res = await fetch(`${datasets_endpoint}?${params.toString()}`, { credentials: "include" });
         if (!res.ok) throw new Error("fetch");
         const data = await res.json();
         if (!active) return;
@@ -46,7 +57,7 @@ export default function Datasets() {
       }
     })();
     return () => { active = false; };
-  }, [page]);
+  }, [page, topic]);
 
   // client-side facets from the current page
   const orgOptions = useMemo(() => {
@@ -103,7 +114,7 @@ export default function Datasets() {
         <Contour op={0.4} />
         <div className="wrap inner">
           <span className="eyebrow">Discover</span>
-          <h1 className="display">Explore datasets</h1>
+          <h1 className="display">{topic ? `Explore ${topic}` : "Explore datasets"}</h1>
           <button className="hero-search" style={{ maxWidth: 640, margin: 0 }} onClick={() => cmdk.open()} aria-label="Open search">
             <span className="sic"><Ic name="search" size={20} sw={2} style={{ color: "#667085" }} /></span>
             <span style={{ flex: 1, textAlign: "left", color: "var(--muted)", fontSize: 16 }}>Search datasets, places, topics and organizations…</span>
@@ -136,6 +147,25 @@ export default function Datasets() {
               </div>
             </div>
           </div>
+
+          {topic && (
+            <div className="chips">
+              <span className="chip">
+                Topic: {topic}
+                <button
+                  onClick={() => {
+                    const next = new URLSearchParams(searchParams);
+                    next.delete("topic");
+                    setSearchParams(next);
+                    setPage(1);
+                  }}
+                  aria-label="Clear topic"
+                >
+                  <Ic name="close" size={12} />
+                </button>
+              </span>
+            </div>
+          )}
 
           {!isAuthenticated && chips.length > 0 && (
             <div className="chips">

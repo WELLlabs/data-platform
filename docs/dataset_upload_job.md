@@ -16,7 +16,6 @@ TTL for job keys is **`UPLOAD_JOB_CACHE_AGE_SECONDS`** (default 86400 unless ove
 |--------|---------|
 | `UPLOAD_JOBS_BACKEND` | Redis URL for keys `job:*` only |
 | `UPLOAD_JOB_CACHE_AGE_SECONDS` | Expiry (seconds) on `job:{id}`, `:events`, `:event:*`, and lock refresh |
-| `UPLOAD_APPROVAL_TEMPLATE_ID` | Brevo transactional template for `send_upload_approval` emails |
 
 ---
 
@@ -213,8 +212,8 @@ Async function in `src/api/services/upload_job.py`:
 
 Defined in `src/api/tasks/email.py` (`email.send_upload_approval`).
 
-- **Template:** `settings.UPLOAD_APPROVAL_TEMPLATE_ID`
-- **Args:** `email`, `title`, `name` (Brevo `params`: `title`, `name`).
+- **HTML:** `src/api/emails/upload_approval.html` (`title`, `name`)
+- **Args:** `email`, `title`, `name`.
 
 ---
 

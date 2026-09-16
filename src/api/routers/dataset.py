@@ -663,34 +663,10 @@ class DatasetController:
                 user_id, limit, offset, requesting_user
             )
 
-            # Eagerly load tags for all datasets
             for ds in datasets:
                 await self.dataset_service.session.refresh(ds, ["tags"])
 
-            download_totals = await self.dataset_service.get_download_totals_for_datasets(
-                [ds.dataset_id for ds in datasets]
-            )
-            org_names = await self.dataset_service.get_organization_names(
-                [ds.organization for ds in datasets]
-            )
-
-            datasets_arr = [
-                {
-                    "dataset_id": str(ds.dataset_id),
-                    "dataset_title": ds.dataset_title,
-                    "creator": str(ds.creator),
-                    "created_at": ds.created_at.isoformat() if ds.created_at else None,
-                    "organization": ds.organization,
-                    "organization_name": org_names.get(str(ds.organization)),
-                    "availability": ds.availability,
-                    "downloads": download_totals.get(ds.dataset_id, 0),
-                    "dataset_description": ds.dataset_description,
-                    "tags": [tag.tag_name for tag in ds.tags],
-                    "approved": ds.approved,
-                    "approved_by": str(ds.approved_by) if ds.approved_by else None,
-                }
-                for ds in datasets
-            ]
+            datasets_arr = await self.dataset_service.list_item_payloads(datasets)
 
             return JSONResponse(
                 content=jsonable_encoder(datasets_arr),
@@ -712,6 +688,7 @@ class DatasetController:
         apikey: Optional[str] = None,
         limit: int = 10,
         offset: int = 0,
+        topic: Optional[str] = None,
     ) -> JSONResponse:
         """
         Get datasets with optional API key filtering and pagination.
@@ -735,37 +712,17 @@ class DatasetController:
             )
 
             datasets = await self.dataset_service.get_datasets(
-                current_user=current_user, apikey=apikey, limit=limit, offset=offset
+                current_user=current_user,
+                apikey=apikey,
+                limit=limit,
+                offset=offset,
+                topic=topic,
             )
 
-            # Eagerly load tags for all datasets
             for ds in datasets:
                 await self.dataset_service.session.refresh(ds, ["tags"])
 
-            download_totals = await self.dataset_service.get_download_totals_for_datasets(
-                [ds.dataset_id for ds in datasets]
-            )
-            org_names = await self.dataset_service.get_organization_names(
-                [ds.organization for ds in datasets]
-            )
-
-            datasets_arr = [
-                {
-                    "dataset_id": str(ds.dataset_id),
-                    "dataset_title": ds.dataset_title,
-                    "creator": str(ds.creator),
-                    "created_at": ds.created_at.isoformat() if ds.created_at else None,
-                    "organization": ds.organization,
-                    "organization_name": org_names.get(str(ds.organization)),
-                    "availability": ds.availability,
-                    "downloads": download_totals.get(ds.dataset_id, 0),
-                    "dataset_description": ds.dataset_description,
-                    "tags": [tag.tag_name for tag in ds.tags],
-                    "approved": ds.approved,
-                    "approved_by": str(ds.approved_by) if ds.approved_by else None,
-                }
-                for ds in datasets
-            ]
+            datasets_arr = await self.dataset_service.list_item_payloads(datasets)
 
             self.logger.info(
                 "Successfully fetched %d datasets (auth_source=%s, apikey=%s, limit=%d, offset=%d)",
@@ -1417,6 +1374,10 @@ async def datasets(
     apikey: Optional[str] = Depends(optional_api_key),
     limit: int = Query(10, ge=1, le=50, description="Maximum number of results"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
+    topic: Optional[str] = Query(
+        None,
+        description="Filter to datasets that have at least one tag in this topic",
+    ),
     current_user: Optional[User] = Depends(get_current_active_user_optional),
     controller: DatasetController = Depends(get_dataset_controller),
 ):
@@ -1453,6 +1414,7 @@ async def datasets(
             apikey=apikey,
             limit=limit,
             offset=offset,
+            topic=topic,
         )
 
     except HTTPException:

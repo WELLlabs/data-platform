@@ -13,6 +13,7 @@ from routers.dataset import router as dataset_router
 from routers.organization import router as organization_router
 from routers.search import router as search_router
 from routers.stats import router as stats_router
+from routers.tag import router as tag_router
 from routers.upload import router as upload_router
 from routers.user import router as user_router
 from starlette.responses import JSONResponse
@@ -88,9 +89,10 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def _ensure_typesense() -> None:
-        from services.typesense_index import ensure_collection
+        from services.typesense_index import ensure_collection, ensure_tags_collection
 
         await ensure_collection()
+        await ensure_tags_collection()
 
     # Health route
     @app.get("/health")
@@ -121,6 +123,7 @@ def create_app() -> FastAPI:
     app.include_router(upload_router, prefix="", tags=["Files"])
     app.include_router(dataset_router, prefix="", tags=["Datasets"])
     app.include_router(search_router, prefix="", tags=["Search"])
+    app.include_router(tag_router, prefix="", tags=["Tags"])
     app.include_router(stats_router, prefix="")
     app.include_router(user_router, prefix="", tags=["Users"])
 

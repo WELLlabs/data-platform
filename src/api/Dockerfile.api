@@ -44,7 +44,11 @@ COPY --chown=appuser:appuser routers/ ./routers/
 COPY --chown=appuser:appuser schemas/ ./schemas/
 COPY --chown=appuser:appuser services/ ./services/
 COPY --chown=appuser:appuser tasks/ ./tasks/
+COPY --chown=appuser:appuser emails/ ./emails/
 COPY --chown=appuser:appuser utils/ ./utils/
+COPY --chown=appuser:appuser scripts/ ./scripts/
+COPY --chown=appuser:appuser migrations/ ./migrations/
+COPY --chown=appuser:appuser alembic.ini ./
 COPY --chown=appuser:appuser __init__.py ./
 COPY --chown=appuser:appuser main.py ./
 

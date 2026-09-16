@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import Ic from "../components/wd/Icons";
 import Contour from "../components/wd/Contour";
+import TagMultiSelect from "../components/wd/TagMultiSelect";
 import { useToast } from "../components/wd/Toast";
 import { useBranding } from "../branding";
 import { dsLink } from "../components/wd/DatasetItems";
@@ -30,7 +31,7 @@ const initialDatasetEdit = {
   title: "",
   description: "",
   availability: AVAILABILITY_PUBLIC,
-  tags: "",
+  tags: [],
   error: "",
   submitting: false,
 };
@@ -44,7 +45,7 @@ function datasetEditReducer(state, action) {
         title: action.payload.title ?? "",
         description: action.payload.description ?? "",
         availability: action.payload.availability ?? AVAILABILITY_PUBLIC,
-        tags: action.payload.tags ?? "",
+        tags: action.payload.tags ?? [],
         error: "",
       };
     case "CLOSE":
@@ -793,9 +794,7 @@ function DatasetInfo() {
         description: dataset.dataset_description || "",
         availability: parseAvailability(dataset.availability),
         tags:
-          dataset.tags && Array.isArray(dataset.tags)
-            ? dataset.tags.join(", ")
-            : "",
+          dataset.tags && Array.isArray(dataset.tags) ? dataset.tags : [],
       },
     });
   };
@@ -895,20 +894,13 @@ function DatasetInfo() {
     };
   }, [showOwnersModal, handleCloseOwnersModal]);
 
-  const processTagsForSubmit = (tagsText) => {
-    if (!tagsText || !String(tagsText).trim()) return [];
-    return tagsText
-      .split(",")
-      .map((tag) => tag.trim())
-      .filter((tag) => tag.length > 0)
-      .map((tag) => tag.replace(/\s+/g, "-"));
-  };
-
   const handleEditDatasetSubmit = async (e) => {
     e.preventDefault();
     dispatchDatasetEdit({ type: "SET_ERROR", error: "" });
     const titleTrimmed = datasetEdit.title.trim();
-    const tagsArray = processTagsForSubmit(datasetEdit.tags);
+    const tagsArray = (Array.isArray(datasetEdit.tags) ? datasetEdit.tags : [])
+      .map((tag) => String(tag).trim())
+      .filter((tag) => tag.length > 0);
     if (!titleTrimmed) {
       dispatchDatasetEdit({ type: "SET_ERROR", error: "Dataset title is required." });
       return;
@@ -2072,19 +2064,19 @@ function DatasetInfo() {
                 </div>
                 <div className="field">
                   <label>
-                    Tags (keywords separated by comma){" "}
+                    Tags{" "}
                     <span style={{ color: "#b3402f" }}>(required)</span>
                   </label>
-                  <input
-                    type="text"
-                    value={datasetEdit.tags}
-                    onChange={(e) =>
+                  <TagMultiSelect
+                    value={Array.isArray(datasetEdit.tags) ? datasetEdit.tags : []}
+                    onChange={(next) =>
                       dispatchDatasetEdit({
                         type: "SET_FIELD",
                         field: "tags",
-                        value: e.target.value,
+                        value: next,
                       })
                     }
+                    disabled={datasetEdit.submitting}
                   />
                 </div>
               </div>

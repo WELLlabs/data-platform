@@ -7,6 +7,13 @@ import { availabilityLabel, isRestrictedAvailability, parseAvailability } from "
 export const dsLink = (id) => `/dataset-info?dataset_id=${encodeURIComponent(id)}`;
 export const fmtCount = (v) => (typeof v === "number" ? v.toLocaleString() : v == null ? null : v);
 
+export function formatDatasetDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString();
+}
+
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -70,6 +77,9 @@ export function AvailBadge({ availability }) {
 
 // Normalize the various API row shapes into one view model.
 export function normalize(d, names = {}) {
+  const tags = Array.isArray(d.tags)
+    ? d.tags.map((t) => (typeof t === "string" ? t : t?.tag_name || t?.tag || "")).filter(Boolean)
+    : [];
   return {
     id: d.dataset_id ?? d.id ?? d.datasetId,
     title: d.dataset_title || d.title || "Untitled dataset",
@@ -79,7 +89,52 @@ export function normalize(d, names = {}) {
     files: d.file_count,
     availability: parseAvailability(d.availability ?? d.private),
     date: d.created_at || d.updated_at,
+    tags,
+    contributor: d.creator_name || d.contributor_name || "",
   };
+}
+
+export function formatDatasetDateShort(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+
+// Compact meta: a short row of tag chips plus a single line of icon facts.
+// Keeps the same props so every caller (rows, cards, featured panel) updates.
+export function DatasetMeta({ d, maxTags = 3 }) {
+  const created = formatDatasetDateShort(d.date);
+  const shownTags = d.tags.slice(0, maxTags);
+  const moreTags = d.tags.length - shownTags.length;
+  return (
+    <div className="dmeta">
+      {d.tags.length > 0 && (
+        <div className="dmeta-tags">
+          {shownTags.map((t) => (
+            <span className="chip" key={t}>{t}</span>
+          ))}
+          {moreTags > 0 && <span className="chip chip-more">+{moreTags}</span>}
+        </div>
+      )}
+      <div className="dmeta-facts">
+        {/* {!hideAccess && <AvailBadge availability={d.availability} />} */}
+        {d.files != null && (
+          <span className="fact"><Ic name="file" size={13} />{d.files} {d.files === 1 ? "file" : "files"}</span>
+        )}
+        {d.downloads != null && (
+          <span className="fact"><Ic name="dl" size={13} />{fmtCount(d.downloads)}</span>
+        )}
+        {created && (
+          <span className="fact"><Ic name="cal" size={13} />{created}</span>
+        )}
+        {d.org && (
+          <span className="fact"><Ic name="org" size={13} />{d.org}</span>
+        )}
+        {d.contributor && <span className="fact fact-by">{d.contributor}</span>}
+      </div>
+    </div>
+  );
 }
 
 function useDatasetOrgNames(dataset) {
@@ -112,18 +167,13 @@ export function DatasetRow({ dataset }) {
   const names = useDatasetOrgNames(dataset);
   const d = normalize(dataset, names);
 
-  const specs = [];
-  if (d.files != null) specs.push(`${d.files} files`);
-  if (d.downloads != null) specs.push(`${fmtCount(d.downloads)} downloads`);
   return (
     <Link className="drow" to={dsLink(d.id)}>
-      <div className="rt"><h3>{d.title}</h3></div>
-      {d.desc && <p className="rd">{d.desc}</p>}
-      <div className="rm">
-        {d.org && <span>{d.org}</span>}
-        {specs.length > 0 && <span className="spec">{specs.join(" · ")}</span>}
-        <AvailBadge availability={d.availability} />
+      <div className="rt"><h3>{d.title}</h3>
+      <AvailBadge availability={d.availability} />
       </div>
+      {d.desc && <p className="rd">{d.desc}</p>}
+      <DatasetMeta d={d} />
       <span className="arrow"><Ic name="arrow" size={16} /></span>
     </Link>
   );
@@ -137,11 +187,7 @@ export function DatasetCard({ dataset }) {
       <div className="top"><AvailBadge availability={d.availability} /></div>
       <h3>{d.title}</h3>
       <p className="desc">{d.desc || "No description provided."}</p>
-      {d.org && <div className="prov">{d.org}</div>}
-      <div className="specs">
-        {d.files != null && <span className="mono-token">{d.files} files</span>}
-        {d.downloads != null && <span className="mono-token">{fmtCount(d.downloads)} downloads</span>}
-      </div>
+      <DatasetMeta d={d} />
     </Link>
   );
 }

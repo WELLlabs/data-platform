@@ -637,40 +637,48 @@ class DatasetController:
         limit: int,
         offset: int,
         requesting_user: Optional[User] = None,
+        scope: str = "created",
     ) -> JSONResponse:
         """
-        Get datasets created by a specific user with pagination and privacy filtering.
-
-        Args:
-            user_id: UUID of the user (creator)
-            limit: Maximum number of results
-            offset: Number of results to skip
-            requesting_user: Optional requesting user resolved from session/apikey
-
-        Returns:
-            JSONResponse containing list of datasets
+        Get datasets created or owned by a specific user with pagination and privacy filtering.
         """
         try:
             self.logger.info(
-                "Fetching user datasets for user_id=%s, limit=%d, offset=%d, requesting_user=%s",
+                "Fetching user datasets for user_id=%s, limit=%d, offset=%d, requesting_user=%s, scope=%s",
                 user_id,
                 limit,
                 offset,
                 requesting_user.id if requesting_user else None,
+                scope,
             )
 
-            datasets = await self.dataset_service.get_user_datasets(
-                user_id, limit, offset, requesting_user
+            datasets, total = await self.dataset_service.get_user_datasets(
+                user_id, limit, offset, requesting_user, scope=scope
             )
 
             for ds in datasets:
                 await self.dataset_service.session.refresh(ds, ["tags"])
 
             datasets_arr = await self.dataset_service.list_item_payloads(datasets)
+            counts = None
+            if scope in {"published", "pending", "owned"}:
+                try:
+                    counts = await self.dataset_service.get_user_dataset_counts(
+                        user_id, requesting_user
+                    )
+                except Exception:
+                    self.logger.exception("Failed to compute user dataset counts")
+                    counts = None
 
+            payload = (
+                {"items": datasets_arr, "total": total, "counts": counts}
+                if counts is not None
+                else datasets_arr
+            )
             return JSONResponse(
-                content=jsonable_encoder(datasets_arr),
+                content=jsonable_encoder(payload),
                 status_code=status.HTTP_200_OK,
+                headers={"X-Total-Count": str(total)},
             )
 
         except HTTPException:
@@ -1300,35 +1308,21 @@ async def user_datasets(
     user_id: str = Query(..., description="User ID (UUID)"),
     limit: int = Query(10, ge=1, le=100, description="Maximum number of results"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
+    scope: str = Query(
+        "created",
+        description="created | published | pending | owned",
+    ),
     apikey: Optional[str] = Depends(optional_api_key),
     current_user: Optional[User] = Depends(get_current_active_user_optional),
     controller: DatasetController = Depends(get_dataset_controller),
     user_service: UserService = Depends(get_user_service),
 ):
     """
-    Get datasets created by a specific user with pagination and privacy filtering.
+    Get datasets created or owned by a specific user with pagination and privacy filtering.
 
-    Authentication precedence:
-    - If session cookie user is present, use it as requester context.
-    - Otherwise, use apikey requester context when a valid apikey is provided.
-    - Otherwise, treat request as anonymous.
-
-    Args:
-        user_id: User ID (UUID) - required query parameter (creator of datasets)
-        limit: Maximum number of results (default: 10, min: 1, max: 100)
-        offset: Number of results to skip for pagination (default: 0, min: 0)
-        apikey: Optional API key fallback for requester context
-        current_user: Optional authenticated user from session cookie
-        controller: Dataset controller (from dependency)
-        user_service: User service (from dependency)
-
-    Returns:
-        JSON response containing list of datasets ordered by created_at (latest first)
-
-    Raises:
-        HTTPException:
-            - 400: Invalid user_id UUID format
-            - 500: Internal server error
+    `scope=owned` and `scope=pending` are only returned for the logged-in user
+    requesting their own dashboard. Other callers only receive approved datasets
+    they are allowed to see.
     """
     try:
         try:
@@ -1349,14 +1343,13 @@ async def user_datasets(
         if requesting_user is None and sanitized_apikey:
             user_data = await user_service.get_user_by_apikey(sanitized_apikey)
             if user_data:
-                # Fetch User model instance from database using user ID
                 user_result = await controller.dataset_service.session.execute(
                     select(User).where(User.id == user_data["id"])
                 )
                 requesting_user = user_result.scalar_one_or_none()
 
         return await controller.get_user_datasets(
-            user_uuid, limit, offset, requesting_user
+            user_uuid, limit, offset, requesting_user, scope=scope
         )
 
     except HTTPException:
@@ -1366,6 +1359,51 @@ async def user_datasets(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error processing user datasets request",
+        )
+
+
+@router.get("/user_dataset_counts")
+async def user_dataset_counts(
+    user_id: str = Query(..., description="User ID (UUID)"),
+    apikey: Optional[str] = Depends(optional_api_key),
+    current_user: Optional[User] = Depends(get_current_active_user_optional),
+    controller: DatasetController = Depends(get_dataset_controller),
+    user_service: UserService = Depends(get_user_service),
+):
+    """Tab counts for a user's dashboard. Pending and owned are self-only."""
+    try:
+        try:
+            user_uuid = UUID(user_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid user_id UUID format",
+            )
+        requesting_user = current_user
+        sanitized_apikey_raw = sanitize_input(apikey) if apikey else None
+        sanitized_apikey = (
+            sanitized_apikey_raw.strip()
+            if sanitized_apikey_raw and sanitized_apikey_raw.strip()
+            else None
+        )
+        if requesting_user is None and sanitized_apikey:
+            user_data = await user_service.get_user_by_apikey(sanitized_apikey)
+            if user_data:
+                user_result = await controller.dataset_service.session.execute(
+                    select(User).where(User.id == user_data["id"])
+                )
+                requesting_user = user_result.scalar_one_or_none()
+        counts = await controller.dataset_service.get_user_dataset_counts(
+            user_uuid, requesting_user
+        )
+        return JSONResponse(content=counts, status_code=status.HTTP_200_OK)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unexpected error in /user_dataset_counts: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error processing user dataset counts",
         )
 
 

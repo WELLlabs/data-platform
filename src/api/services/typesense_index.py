@@ -19,6 +19,12 @@ from sqlalchemy.orm import selectinload
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_typesense_token(value: str) -> str:
+    """Strip characters that can break Typesense filter_by quoting."""
+    cleaned = "".join(ch for ch in str(value) if ch not in "`\\")
+    return cleaned.strip()[:120]
+
 COLLECTION_SCHEMA = {
     "name": "",
     "fields": [
@@ -522,15 +528,15 @@ async def typesense_search(
         extra_filters.append(
             f"(file_id:='' || temporal_from:<={int(end_date.timestamp())})"
         )
-    if extra_filters:
-        filter_by += " && " + " && ".join(extra_filters)
-    if tags:
-        tag_clause = " || ".join(f"tags:=`{t}`" for t in tags if t)
-        if tag_clause:
+        if extra_filters:
+            filter_by += " && " + " && ".join(extra_filters)
+        safe_tags = [_safe_typesense_token(t) for t in (tags or []) if _safe_typesense_token(t)]
+        safe_topics = [_safe_typesense_token(t) for t in (topics or []) if _safe_typesense_token(t)]
+        if safe_tags:
+            tag_clause = " || ".join(f"tags:=`{t}`" for t in safe_tags)
             filter_by += f" && ({tag_clause})"
-    if topics:
-        topic_clause = " || ".join(f"topics:=`{t}`" for t in topics if t)
-        if topic_clause:
+        if safe_topics:
+            topic_clause = " || ".join(f"topics:=`{t}`" for t in safe_topics)
             filter_by += f" && ({topic_clause})"
 
     keyword_by = "title,description,tags,topics,file_name"

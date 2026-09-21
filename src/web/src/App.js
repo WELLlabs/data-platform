@@ -26,6 +26,7 @@ import Organization from "./pages/Organization";
 import CreateDataset from "./pages/CreateDataset";
 import DatasetInfo from "./pages/DatasetInfo";
 import AddFile from "./pages/AddFile";
+import FilePreview from "./pages/FilePreview";
 import FAQ from "./pages/FAQ";
 import Terms from "./pages/Terms";
 import Datasets from "./pages/Datasets";
@@ -85,6 +86,7 @@ function AppShell() {
                   <Route path="/create-dataset" element={<CreateDataset />} />
                   <Route path="/dataset-info" element={<DatasetInfo />} />
                   <Route path="/add-file" element={<AddFile />} />
+                  <Route path="/file-preview" element={<FilePreview />} />
                   <Route path="/faq" element={<FAQ />} />
                   <Route path="/terms" element={<Terms />} />
                   <Route path="/api" element={<ApiDocs />} />

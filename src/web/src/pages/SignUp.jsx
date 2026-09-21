@@ -25,7 +25,7 @@ function SignUp() {
     const [error, setError] = useState("");
     const [success, setSuccess] = useState("");
     const [googleEnabled, setGoogleEnabled] = useState(false);
-    const [allowedDomain, setAllowedDomain] = useState(null);
+    const [allowedDomains, setAllowedDomains] = useState([]);
     const navigate = useNavigate();
 
     useEffect(() => {
@@ -67,7 +67,12 @@ function SignUp() {
             .then((data) => {
                 if (data) {
                     setGoogleEnabled(!!data.google_enabled);
-                    setAllowedDomain(data.allowed_email_domain || null);
+                    const domains = Array.isArray(data.allowed_email_domains)
+                        ? data.allowed_email_domains.filter(Boolean)
+                        : data.allowed_email_domain
+                        ? [data.allowed_email_domain]
+                        : [];
+                    setAllowedDomains(domains);
                 }
             })
             .catch(() => {});
@@ -208,8 +213,10 @@ function SignUp() {
                             name="email"
                             type="email"
                             placeholder={
-                                allowedDomain
-                                    ? `you@${allowedDomain}`
+                                allowedDomains.length === 1
+                                    ? `you@${allowedDomains[0]}`
+                                    : allowedDomains.length > 1
+                                    ? `you@${allowedDomains[0]}`
                                     : "you@ifmr.ac.in"
                             }
                             value={email}
@@ -220,6 +227,11 @@ function SignUp() {
                         {email && !emailValid && (
                             <span className="err">
                                 Please enter a valid email address
+                            </span>
+                        )}
+                        {allowedDomains.length > 0 && (
+                            <span className="muted" style={{ fontSize: 12, display: "block", marginTop: 6 }}>
+                                Sign-up is limited to {allowedDomains.join(", ")}
                             </span>
                         )}
                     </div>

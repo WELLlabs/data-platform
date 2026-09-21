@@ -1063,92 +1063,160 @@ class DatasetService:
                 detail="Error checking dataset",
             )
 
+    async def _user_datasets_query(
+        self,
+        user_id: UUID,
+        requesting_user: Optional[User],
+        scope: str,
+    ):
+        """Build a dataset listing query for a user. None means empty result."""
+        is_self = requesting_user is not None and requesting_user.id == user_id
+        normalized = (scope or "created").strip().lower()
+        if normalized not in {"created", "published", "pending", "owned"}:
+            normalized = "created"
+
+        if normalized == "owned":
+            if not is_self:
+                return None
+            return (
+                select(Dataset)
+                .options(selectinload(Dataset.tags))
+                .join(
+                    DatasetOwner,
+                    DatasetOwner.dataset_id == Dataset.dataset_id,
+                )
+                .where(DatasetOwner.user_id == user_id)
+                .order_by(desc(Dataset.created_at))
+            )
+
+        query = (
+            select(Dataset)
+            .options(selectinload(Dataset.tags))
+            .where(Dataset.creator == user_id)
+            .order_by(desc(Dataset.created_at))
+        )
+        if normalized == "published":
+            query = query.where(Dataset.approved.is_(True))
+        elif normalized == "pending":
+            if not is_self:
+                return None
+            query = query.where(Dataset.approved.is_(False))
+
+        if is_self:
+            return query
+
+        creator_user_result = await self.session.execute(
+            select(User).where(User.id == user_id)
+        )
+        creator_user: Optional[User] = creator_user_result.scalar_one_or_none()
+        if creator_user is None:
+            return None
+        return query.where(
+            Dataset.approved.is_(True),
+            approved_dataset_visibility_clause(requesting_user),
+        )
+
+    async def _count_user_datasets(
+        self,
+        user_id: UUID,
+        requesting_user: Optional[User],
+        scope: str,
+    ) -> int:
+        """Count rows for a dashboard scope without eager-loading entities."""
+        is_self = requesting_user is not None and requesting_user.id == user_id
+        normalized = (scope or "created").strip().lower()
+        if normalized not in {"created", "published", "pending", "owned"}:
+            normalized = "created"
+
+        if normalized == "owned":
+            if not is_self:
+                return 0
+            result = await self.session.scalar(
+                select(func.count())
+                .select_from(DatasetOwner)
+                .where(DatasetOwner.user_id == user_id)
+            )
+            return int(result or 0)
+
+        conditions = [Dataset.creator == user_id]
+        if normalized == "published":
+            conditions.append(Dataset.approved.is_(True))
+        elif normalized == "pending":
+            if not is_self:
+                return 0
+            conditions.append(Dataset.approved.is_(False))
+
+        query = select(func.count()).select_from(Dataset).where(*conditions)
+        if not is_self:
+            query = (
+                select(func.count())
+                .select_from(Dataset)
+                .where(
+                    Dataset.creator == user_id,
+                    Dataset.approved.is_(True),
+                    approved_dataset_visibility_clause(requesting_user),
+                )
+            )
+        result = await self.session.scalar(query)
+        return int(result or 0)
+
+    async def get_user_dataset_counts(
+        self,
+        user_id: UUID,
+        requesting_user: Optional[User] = None,
+    ) -> Dict[str, int]:
+        """Counts for the logged-in user's dashboard tabs. Other users only get published."""
+        is_self = requesting_user is not None and requesting_user.id == user_id
+        published = await self._count_user_datasets(
+            user_id, requesting_user, "published"
+        )
+        pending = (
+            await self._count_user_datasets(user_id, requesting_user, "pending")
+            if is_self
+            else 0
+        )
+        owned = (
+            await self._count_user_datasets(user_id, requesting_user, "owned")
+            if is_self
+            else 0
+        )
+        return {"published": published, "pending": pending, "owned": owned}
+
     async def get_user_datasets(
         self,
         user_id: UUID,
         limit: int = 10,
         offset: int = 0,
         requesting_user: Optional[User] = None,
-    ) -> List[Dataset]:
+        scope: str = "created",
+    ) -> Tuple[List[Dataset], int]:
         """
-        Get datasets created by a specific user with pagination and visibility filtering.
+        Get datasets created or owned by a user, with pagination and visibility filtering.
 
         Visibility rules:
-        - If requester is the same as user_id (creator): return all creator datasets.
-        - If requester is from same organization as creator: return creator datasets with approved=True.
-        - If requester is anonymous or from different organization:
-          return creator datasets the viewer may see (public plus matching
-          availability) with approved=True.
-
-        Args:
-            user_id: UUID of the user (creator)
-            limit: Maximum number of results (default: 10)
-            offset: Number of results to skip (default: 0)
-            requesting_user: Optional requesting user resolved from session/apikey
-
-        Returns:
-            List of Dataset objects ordered by created_at (latest first)
-
-        Raises:
-            HTTPException: If there's an error fetching datasets
+        - If requester is the same as user_id: return their created/owned datasets
+          according to scope (created, published, pending, owned).
+        - Otherwise: return only approved datasets the viewer may see. Pending and
+          owned scopes are empty for other users.
         """
         try:
             self.logger.info(
-                "Fetching datasets for user_id=%s, limit=%d, offset=%d, requesting_user=%s",
+                "Fetching datasets for user_id=%s, limit=%d, offset=%d, requesting_user=%s, scope=%s",
                 user_id,
                 limit,
                 offset,
                 requesting_user.id if requesting_user else None,
+                scope,
             )
+            query = await self._user_datasets_query(user_id, requesting_user, scope)
+            if query is None:
+                return [], 0
 
-            # Build base query with eager loading of tags
-            query = (
-                select(Dataset)
-                .options(selectinload(Dataset.tags))
-                .where(Dataset.creator == user_id)
-                .order_by(desc(Dataset.created_at))
-            )
-
-            # Requesting own datasets: no privacy or approval filtering.
-            if requesting_user is not None and requesting_user.id == user_id:
-                self.logger.debug(
-                    "Requester matches creator (%s), returning all datasets without visibility filters",
-                    user_id,
-                )
-            else:
-                # Fetch creator to evaluate organization relationship.
-                creator_user_result = await self.session.execute(
-                    select(User).where(User.id == user_id)
-                )
-                creator_user: Optional[User] = creator_user_result.scalar_one_or_none()
-
-                if creator_user is None:
-                    self.logger.warning("Creator user not found: %s", user_id)
-                    return []
-
-                if (
-                    requesting_user is not None
-                    and requesting_user.organization == creator_user.organization
-                ):
-                    query = query.where(
-                        Dataset.approved.is_(True),
-                        approved_dataset_visibility_clause(requesting_user),
-                    )
-                else:
-                    query = query.where(
-                        Dataset.approved.is_(True),
-                        approved_dataset_visibility_clause(requesting_user),
-                    )
-
-            # Apply pagination
-            query = query.limit(limit).offset(offset)
-
-            result = await self.session.execute(query)
+            total = await self._count_user_datasets(user_id, requesting_user, scope)
+            result = await self.session.execute(query.limit(limit).offset(offset))
             datasets: List[Dataset] = list(result.scalars().all())
-
             self.logger.info("Found %d datasets for user_id=%s", len(datasets), user_id)
-
-            return datasets
+            return datasets, total
 
         except HTTPException:
             raise

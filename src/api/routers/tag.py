@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query
+from models.user import User
+from routers.dataset import get_current_active_user_optional
 from services.tag import TagService, get_tag_service
 
 router = APIRouter()
@@ -15,8 +17,9 @@ async def suggest_tags(
     q: str = Query("", description="What the user has typed so far"),
     limit: int = Query(10, ge=1, le=50),
     tag_service: TagService = Depends(get_tag_service),
+    current_user: Optional[User] = Depends(get_current_active_user_optional),
 ) -> dict[str, Any]:
-    suggestions = await tag_service.suggest_tags(q, limit=limit)
+    suggestions = await tag_service.suggest_tags(q, limit=limit, viewer=current_user)
     return {"suggestions": suggestions}
 
 
@@ -27,14 +30,18 @@ async def list_tags(
     ),
     limit: int = Query(200, ge=1, le=500),
     tag_service: TagService = Depends(get_tag_service),
+    current_user: Optional[User] = Depends(get_current_active_user_optional),
 ) -> dict[str, Any]:
-    tags = await tag_service.list_tags(topic=topic, limit=limit)
+    tags = await tag_service.list_tags(
+        topic=topic, limit=limit, viewer=current_user
+    )
     return {"tags": tags}
 
 
 @router.get("/topics", tags=["Tags"])
 async def list_topics(
     tag_service: TagService = Depends(get_tag_service),
+    current_user: Optional[User] = Depends(get_current_active_user_optional),
 ) -> dict[str, Any]:
-    topics = await tag_service.list_topics()
+    topics = await tag_service.list_topics(viewer=current_user)
     return {"topics": topics}

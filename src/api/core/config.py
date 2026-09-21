@@ -94,7 +94,7 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_REDIRECT_URI: str = ""
-    ALLOWED_EMAIL_DOMAIN: str = ""
+    ALLOWED_EMAIL_DOMAIN: str = ""  # comma-separated, e.g. ifmr.ac.in,welllabs.org
 
     # Upload jobs (dedicated Redis DB — not session REDIS_URL)
     UPLOAD_JOBS_BACKEND: str = Field(

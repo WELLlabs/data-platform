@@ -52,7 +52,7 @@ class SearchService:
 
     def _cache_key(self, sanitized_query: str) -> str:
         """Key for ZSET of cached results: search:{sanitized_lowercase_query}."""
-        return f"search:{sanitized_query.lower().strip()}"
+        return f"search:anon:{sanitized_query.lower().strip()}"
 
     def _cache_total_key(self, sanitized_query: str) -> str:
         """Key for total count: search:{sanitized_lowercase_query}:total."""
@@ -67,8 +67,11 @@ class SearchService:
         viewer_org: Optional[str] = None,
         tags: Optional[str] = None,
         topics: Optional[str] = None,
+        current_user: Optional[User] = None,
     ) -> bool:
-        """Use cache only when no filters are applied."""
+        """Use cache only for anonymous, unfiltered public searches."""
+        if current_user is not None:
+            return False
         if organization_id is not None and str(organization_id).strip():
             return False
         if start_date is not None or end_date is not None:
@@ -208,7 +211,14 @@ class SearchService:
             query = "*"
 
         cacheable = self._is_cacheable(
-            organization_id, start_date, end_date, apikey, viewer_org, tags, topics
+            organization_id,
+            start_date,
+            end_date,
+            apikey,
+            viewer_org,
+            tags,
+            topics,
+            current_user=current_user,
         )
         extra = {
             "current_user": current_user,
@@ -344,6 +354,33 @@ class SearchService:
                 " OR global_search_index.temporal_from <= :end_date_val)"
             )
 
+        tag_filter = ""
+        topic_filter = ""
+        for i, name in enumerate(tag_list[:50]):
+            key = f"tag_name_{i}"
+            if i == 0:
+                tag_filter = (
+                    " AND EXISTS (SELECT 1 FROM tag_dataset td"
+                    " JOIN tags tg ON tg.tag_id = td.tag_id"
+                    " WHERE td.dataset_id = global_search_index.dataset_id"
+                    " AND ("
+                )
+            tag_filter += f"{' OR ' if i else ''}tg.tag_name = :{key}"
+        if tag_list:
+            tag_filter += "))"
+        for i, name in enumerate(topic_list[:50]):
+            key = f"topic_name_{i}"
+            if i == 0:
+                topic_filter = (
+                    " AND EXISTS (SELECT 1 FROM tag_dataset td"
+                    " JOIN tags tg ON tg.tag_id = td.tag_id"
+                    " WHERE td.dataset_id = global_search_index.dataset_id"
+                    " AND ("
+                )
+            topic_filter += f"{' OR ' if i else ''}tg.topic = :{key}"
+        if topic_list:
+            topic_filter += "))"
+
         params: dict = {
             "query": query.strip(),
             "organization_id": organization_id,
@@ -355,6 +392,10 @@ class SearchService:
             params["start_date_val"] = start_date
         if has_end:
             params["end_date_val"] = end_date
+        for i, name in enumerate(tag_list[:50]):
+            params[f"tag_name_{i}"] = name
+        for i, name in enumerate(topic_list[:50]):
+            params[f"topic_name_{i}"] = name
 
         if is_browse:
             match_clause = "TRUE"
@@ -377,6 +418,8 @@ class SearchService:
         AND {visibility_sql}
         {org_filter}
         {temporal_filter}
+        {tag_filter}
+        {topic_filter}
         """
         count_sql = text(
             "SELECT COUNT(DISTINCT global_search_index.dataset_id) AS total " + sql_from

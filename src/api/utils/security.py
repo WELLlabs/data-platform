@@ -2,15 +2,32 @@
 Security utilities for the application
 """
 
+import re
 import secrets
 import string
-from typing import Optional
+from typing import List, Optional
 
 import bleach
 from fastapi import Header
 from models.user import User
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+_DOMAIN_SPLIT = re.compile(r"[,;\s]+")
+
+
+def parse_allowed_email_domains(allowed_domain: Optional[str]) -> List[str]:
+    """Parse ALLOWED_EMAIL_DOMAIN as one or more domains (comma/semicolon/space)."""
+    if not allowed_domain or not str(allowed_domain).strip():
+        return []
+    seen: set[str] = set()
+    domains: List[str] = []
+    for part in _DOMAIN_SPLIT.split(str(allowed_domain).strip()):
+        cleaned = part.strip().lstrip("@").lower()
+        if cleaned and cleaned not in seen:
+            seen.add(cleaned)
+            domains.append(cleaned)
+    return domains
 
 
 def mask_apikey(apikey: Optional[str]) -> str:
@@ -35,13 +52,14 @@ def optional_api_key(
 
 
 def email_matches_allowed_domain(email: str, allowed_domain: Optional[str]) -> bool:
-    """If allowed_domain is set, require the email's domain to match (case-insensitive)."""
-    if not allowed_domain or not str(allowed_domain).strip():
+    """If allowed domains are set, require the email's domain to match one of them."""
+    allowed = parse_allowed_email_domains(allowed_domain)
+    if not allowed:
         return True
     if not email or "@" not in email:
         return False
     domain = email.rsplit("@", 1)[-1].strip().lower()
-    return domain == str(allowed_domain).strip().lower()
+    return domain in allowed
 
 
 def is_profile_complete(user: User) -> bool:

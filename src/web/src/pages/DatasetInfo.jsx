@@ -355,6 +355,22 @@ function DatasetInfo() {
     setOpenFiles((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
+  const handlePreview = (file) => {
+    if (!file || !file.file_id) return;
+    const params = new URLSearchParams({
+      file_id: file.file_id,
+      title: file.file_title || file.file_name || "File preview",
+      format: file.file_format || "",
+      name: file.file_name || "",
+    });
+    if (dataset?.dataset_id) params.set("dataset_id", dataset.dataset_id);
+    try {
+      window.open(`/file-preview?${params.toString()}`, "_blank", "noopener,noreferrer");
+    } catch (e) {
+      console.error("Preview open failed", e);
+    }
+  };
+
   const handleDownload = async (file) => {
     // Validate required file properties
     if (!file || !file.file_id) {
@@ -1190,9 +1206,14 @@ function DatasetInfo() {
               {tagsList.length > 0 && (
                 <div className="dh-tags mb-4">
                   {tagsList.map((t) => (
-                    <span className="tag" key={t}>
+                    <Link
+                      className="tag"
+                      key={t}
+                      to={`/search?tags=${encodeURIComponent(t)}`}
+                      title={`Explore datasets tagged “${t}”`}
+                    >
                       {t}
-                    </span>
+                    </Link>
                   ))}
                 </div>
               )}
@@ -1484,6 +1505,14 @@ function DatasetInfo() {
                             </span>
                           </button>
                           <div className="fcard-quick">
+                            <button
+                              className="fbtn"
+                              onClick={() => handlePreview(file)}
+                              title="Preview file"
+                              aria-label="Preview file"
+                            >
+                              <Ic name="eye" size={16} sw={2} />
+                            </button>
                             <button
                               className="fbtn primary"
                               onClick={() => handleDownload(file)}

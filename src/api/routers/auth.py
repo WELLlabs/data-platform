@@ -19,7 +19,11 @@ from services.auth import (
     get_auth_service,
     get_user_db,
 )
-from utils.security import is_profile_complete, sanitize_input
+from utils.security import (
+    is_profile_complete,
+    parse_allowed_email_domains,
+    sanitize_input,
+)
 
 # Security scheme for API key authentication
 security = HTTPBearer()
@@ -386,11 +390,12 @@ async def login_options():
     google_enabled = bool(
         settings.GOOGLE_CLIENT_ID.strip() and settings.GOOGLE_CLIENT_SECRET.strip()
     )
-    domain = settings.ALLOWED_EMAIL_DOMAIN.strip() or None
+    domains = parse_allowed_email_domains(settings.ALLOWED_EMAIL_DOMAIN)
     return JSONResponse(
         content={
             "google_enabled": google_enabled,
-            "allowed_email_domain": domain,
+            "allowed_email_domain": domains[0] if domains else None,
+            "allowed_email_domains": domains,
         }
     )
 

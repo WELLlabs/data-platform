@@ -155,11 +155,15 @@ export default function TagMultiSelect({
           {loading && suggestions.length === 0 && (
             <div className="tag-suggest-empty">Searching tags…</div>
           )}
+          {!loading && !query.trim() && suggestions.length > 0 && (
+            <div className="tag-suggest-empty">Recently and frequently used</div>
+          )}
           {suggestions.map((s) => (
             <button
               type="button"
               key={s.tag}
               role="option"
+              aria-selected="false"
               onClick={() => addTag(s.tag)}
             >
               <span>{s.label || s.tag}</span>

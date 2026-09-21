@@ -518,71 +518,65 @@ class UploadController:
             status_code=status.HTTP_200_OK,
         )
 
+    async def _accessible_file_for_read(
+        self,
+        file_id: UUID,
+        apikey: Optional[str],
+        user: Optional[User],
+    ) -> tuple[File, Dataset, str]:
+        apikey_sanitized = sanitize_input(apikey) if apikey else None
+        if apikey and (not apikey_sanitized or not apikey_sanitized.strip()):
+            self.logger.warning("Invalid apikey provided for file access")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid apikey",
+            )
+
+        result = await self.session.execute(
+            select(File, Dataset)
+            .join(Dataset, File.dataset_id == Dataset.dataset_id)
+            .where(File.file_id == file_id)
+        )
+        row = result.one_or_none()
+        if not row:
+            self.logger.warning("File record not found for file_id: %s", file_id)
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="File record not found",
+            )
+        file_record, dataset = row
+
+        if not await self.dataset_service.viewer_can_see(dataset, user):
+            self.logger.warning(
+                "File access denied: availability rules for file_id=%s",
+                file_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Download permission is not granted.",
+            )
+
+        file_key = file_record.file_key
+        file_status = await self.upload_service.check_file_status_by_key(file_key)
+        if not file_status.get("exists", False):
+            self.logger.warning("File does not exist in S3: %s", file_key)
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="File does not exist",
+            )
+        return file_record, dataset, file_key
+
     async def get_download_url(
         self,
         file_id: UUID,
         apikey: Optional[str],
         user: Optional[User],
     ) -> JSONResponse:
-        """
-        Get presigned download URL for a file by file_id.
-
-        Validates access for private datasets (session or apikey, same organization),
-        checks file exists in S3, increments file_download_counts, optionally logs to
-        file_download_logs when user is identified, then returns presigned URL.
-        """
+        """Presigned URL that counts as a download."""
         try:
-            # Sanitize inputs
-            apikey_sanitized = sanitize_input(apikey) if apikey else None
-            if apikey and (not apikey_sanitized or not apikey_sanitized.strip()):
-                self.logger.warning("Invalid apikey provided for download")
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid apikey",
-                )
-
-            self.logger.info(
-                "Processing download URL request for file_id: %s",
-                file_id,
+            file_record, _dataset, file_key = await self._accessible_file_for_read(
+                file_id, apikey, user
             )
-
-            # 1. Get file and dataset (private, organization)
-            result = await self.session.execute(
-                select(File, Dataset).join(
-                    Dataset, File.dataset_id == Dataset.dataset_id
-                ).where(File.file_id == file_id)
-            )
-            row = result.one_or_none()
-            if not row:
-                self.logger.warning("File record not found for file_id: %s", file_id)
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="File record not found",
-                )
-            file_record, dataset = row
-
-            # 2. Restricted dataset: apply availability rules
-            if not await self.dataset_service.viewer_can_see(dataset, user):
-                self.logger.warning(
-                    "Download denied: availability rules for file_id=%s",
-                    file_id,
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Download permission is not granted.",
-                )
-
-            # 3. Get file_key and check file exists in S3
-            file_key = file_record.file_key
-            file_status = await self.upload_service.check_file_status_by_key(file_key)
-            if not file_status.get("exists", False):
-                self.logger.warning("File does not exist in S3: %s", file_key)
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="File does not exist",
-                )
-
-            # 4. Increment file_download_counts (upsert to avoid TOCTOU race)
             try:
                 stmt = pg_insert(FileDownloadCount).values(
                     file_id=file_id,
@@ -600,9 +594,7 @@ class UploadController:
                     "Error incrementing FileDownloadCount for file_id %s",
                     file_id,
                 )
-                # Continue with URL generation
 
-            # 5. Log download when user is identified
             if user is not None:
                 try:
                     self.session.add(
@@ -620,22 +612,16 @@ class UploadController:
                         e,
                     )
 
-            # 6. Return presigned download URL
             presigned_data = await self.upload_service.get_presigned_download_url(
                 file_key
             )
             await _invalidate_dataset_cache(
                 file_record.dataset_id, self.auth_service, self.logger
             )
-            self.logger.info(
-                "Presigned download URL generated for file_id: %s",
-                file_id,
-            )
             return JSONResponse(
                 content=jsonable_encoder(presigned_data),
                 status_code=status.HTTP_200_OK,
             )
-
         except HTTPException:
             raise
         except Exception as e:
@@ -647,6 +633,37 @@ class UploadController:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Error generating download URL",
+            )
+
+    async def get_preview_url(
+        self,
+        file_id: UUID,
+        apikey: Optional[str],
+        user: Optional[User],
+    ) -> JSONResponse:
+        """Presigned URL for in-browser preview. Does not increment download counts."""
+        try:
+            _file_record, _dataset, file_key = await self._accessible_file_for_read(
+                file_id, apikey, user
+            )
+            presigned_data = await self.upload_service.get_presigned_download_url(
+                file_key
+            )
+            return JSONResponse(
+                content=jsonable_encoder(presigned_data),
+                status_code=status.HTTP_200_OK,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.exception(
+                "Unexpected error generating preview URL for file_id %s: %s",
+                file_id,
+                e,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error generating preview URL",
             )
 
     async def add_file(
@@ -1259,6 +1276,22 @@ async def get_download_url(
             - 500: Internal server error
     """
     return await controller.get_download_url(file_id, apikey, user)
+
+
+@router.get("/preview_url")
+async def get_preview_url(
+    file_id: UUID = Query(..., description="File ID (UUID) for the file to preview"),
+    apikey: Optional[str] = Depends(optional_api_key),
+    user: Optional[User] = Depends(get_current_user_optional_for_download),
+    controller: UploadController = Depends(get_upload_controller),
+):
+    """
+    Presigned URL for in-browser preview.
+
+    Uses the same visibility rules as /download_url but does not increment
+    download counts or write download logs.
+    """
+    return await controller.get_preview_url(file_id, apikey, user)
 
 
 @router.post("/add_file")

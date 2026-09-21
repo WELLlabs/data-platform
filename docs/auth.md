@@ -193,7 +193,7 @@ Successful responses return the fields in `UserRead`, for example: `id`, `email`
 
 ## Google sign-in
 
-When `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set, `GET /auth/google` starts OAuth and `GET /auth/google/callback` creates or logs in the user. The first user on the instance becomes `is_superuser`. Google users have `auth_provider=google`, `is_verified=True`, and a nullable organization until they finish `GET`/`PUT /auth/complete-profile`. `ALLOWED_EMAIL_DOMAIN` (optional) applies to password signup and Google.
+When `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set, `GET /auth/google` starts OAuth and `GET /auth/google/callback` creates or logs in the user. The first user on the instance becomes `is_superuser`. Google users have `auth_provider=google`, `is_verified=True`, and a nullable organization until they finish `GET`/`PUT /auth/complete-profile`. `ALLOWED_EMAIL_DOMAIN` (optional, comma-separated) applies to password signup and Google.
 
 ## Where to look next in the code
 

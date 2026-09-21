@@ -2,7 +2,6 @@ import React, { useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { BrandLockup } from "../branding";
-import { useCmdk } from "./wd/CommandPalette";
 import Ic from "./wd/Icons";
 
 function initials(name) {
@@ -17,7 +16,6 @@ export default function SiteNavbar() {
   const navigate = useNavigate();
   const location = useLocation();
   const { isAuthenticated, user, signOut } = useAuth();
-  const cmdk = useCmdk();
 
   const path = location.pathname;
   const isActive = (m) => m.some((p) => path === p || path.startsWith(p + "/"));
@@ -69,7 +67,7 @@ export default function SiteNavbar() {
             )}
           </nav>
           <div className="nav-right">
-            <button className="navk-icon" onClick={() => cmdk.open()} aria-label="Search (Command K)" title="Search  ⌘K">
+            <button className="navk-icon" onClick={() => navigate("/search")} aria-label="Search" title="Search">
               <Ic name="search" size={17} sw={2} />
             </button>
             {isAuthenticated ? (

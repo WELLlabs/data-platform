@@ -154,16 +154,27 @@ export default function Search() {
     return m;
   }, [topicFacets]);
 
+  const shownTopics = useMemo(() => {
+    return topics.filter((item) => {
+      const name = item.topic;
+      const count = topicCountByValue[name] ?? item.dataset_count ?? 0;
+      return selectedTopics.includes(name) || count > 0;
+    });
+  }, [topics, topicCountByValue, selectedTopics]);
+
   const shownTags = useMemo(() => {
     const needle = tagQuery.trim().toLowerCase();
     return tags.filter((t) => {
+      const name = t.tag;
+      const count = tagCountByValue[name] ?? t.dataset_count ?? 0;
+      if (!selectedTags.includes(name) && count <= 0) return false;
       if (!needle) return true;
       return (
         String(t.tag || "").toLowerCase().includes(needle) ||
         String(t.label || "").toLowerCase().includes(needle)
       );
     });
-  }, [tags, tagQuery]);
+  }, [tags, tagQuery, tagCountByValue, selectedTags]);
 
   const hasMore = currentPage * LIMIT < total;
 
@@ -203,7 +214,7 @@ export default function Search() {
           <div className="fgroup">
             <h4>Topics</h4>
             <div className="fbody filter-scroll">
-              {topics.map((item) => {
+              {shownTopics.map((item) => {
                 const name = item.topic;
                 const count = topicCountByValue[name] ?? item.dataset_count;
                 return (
@@ -217,7 +228,7 @@ export default function Search() {
                   </label>
                 );
               })}
-              {topics.length === 0 && (
+              {shownTopics.length === 0 && (
                 <p className="muted" style={{ fontSize: 13 }}>No topics yet</p>
               )}
             </div>

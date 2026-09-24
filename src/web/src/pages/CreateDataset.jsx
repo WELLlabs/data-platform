@@ -30,18 +30,6 @@ const PERMISSION_OPTIONS = [
     "CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives",
 ];
 
-// Attribution and coverage fields that "apply to all files" copies across.
-const SHARED_FILE_FIELDS = [
-    "provenance",
-    "source",
-    "permissions",
-    "citeAs",
-    "groundtruthed",
-    "temporalFrom",
-    "temporalTo",
-    "duration",
-    "geography",
-];
 
 // Textarea that grows to fit its content as the user types.
 function AutoTextarea({ value, minRows = 2, onChange, ...rest }) {
@@ -98,7 +86,6 @@ function CreateDataset() {
     const [submitting, setSubmitting] = useState(false);
     const [progress, setProgress] = useState(0);
     const [error, setError] = useState("");
-    const [notice, setNotice] = useState("");
     const [success, setSuccess] = useState(false);
 
     // Dataset-level state
@@ -109,13 +96,19 @@ function CreateDataset() {
 
     // Per-file state
     const [files, setFiles] = useState([]);
-    const [expanded, setExpanded] = useState({});
     const [dragging, setDragging] = useState(false);
+
+    // Accordion: key of the file whose attribution panel is expanded.
+    const [openKey, setOpenKey] = useState(null);
+
+    // Wizard step: 1 = dataset details, 2 = attribution, coverage & files.
+    const [step, setStep] = useState(1);
+    // Show validation messages inside the cards after a failed step/submit.
+    const [showErrors, setShowErrors] = useState(false);
 
     // Dataset-level validation flags
     const [titleError, setTitleError] = useState(false);
-    const [datasetDescriptionError, setDatasetDescriptionError] =
-        useState(false);
+    // Dataset description allows all characters (backend sanitises).
 
     // Ensure auth and populate query params with userId and organization
     useEffect(() => {
@@ -180,7 +173,7 @@ function CreateDataset() {
             source: "",
             permissions: "CC0: Public Domain",
             citeAs: "",
-            groundtruthed: false,
+            groundtruthed: "",
             temporalFrom: "",
             temporalTo: "",
             duration: 0,
@@ -191,19 +184,19 @@ function CreateDataset() {
 
     const addFiles = (picked) => {
         if (!picked.length) return;
-        const newlyExpanded = {};
+        let lastAdded = null;
         setFiles((prev) => {
             const next = [...prev];
             picked.forEach((f) => {
                 const entry = toFileEntry(f);
                 if (!next.some((x) => x.key === entry.key)) {
                     next.push(entry);
-                    newlyExpanded[entry.key] = true;
+                    lastAdded = entry.key;
                 }
             });
             return next;
         });
-        setExpanded((prev) => ({ ...prev, ...newlyExpanded }));
+        if (lastAdded) setOpenKey(lastAdded);
     };
 
     const handleFileChange = (e) => {
@@ -249,34 +242,12 @@ function CreateDataset() {
 
     const removeFileEntry = (key) => {
         setFiles((prev) => prev.filter((item) => item.key !== key));
-        setExpanded((prev) => {
-            const next = { ...prev };
-            delete next[key];
-            return next;
-        });
+        setOpenKey((k) => (k === key ? null : k));
     };
 
-    const toggleExpand = (key) => {
-        setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
-    };
-
-    // Copy this file's attribution and coverage fields onto every other file.
-    const applyToAll = (key) => {
-        setFiles((prev) => {
-            const src = prev.find((f) => f.key === key);
-            if (!src) return prev;
-            const shared = {};
-            SHARED_FILE_FIELDS.forEach((f) => {
-                shared[f] = src[f];
-            });
-            return prev.map((item) =>
-                item.key === key ? item : { ...item, ...shared }
-            );
-        });
-        setNotice(
-            "Attribution and coverage copied to all files. You can still edit each file individually."
-        );
-        setTimeout(() => setNotice(""), 4000);
+    // Accordion toggle: open the clicked file, or close it if already open.
+    const toggleOpen = (key) => {
+        setOpenKey((k) => (k === key ? null : key));
     };
 
     // Dataset-level special-character validation helper.
@@ -296,18 +267,59 @@ function CreateDataset() {
         }
     };
 
-    const validate = () => {
-        if (!title.trim()) return "Dataset title is required.";
-        if (!tags.length) return "At least one tag is required.";
-        if (!files.length)
-            return "Add at least one file to this dataset folder.";
-        const untitled = files.find((item) => !item.title.trim());
-        if (untitled) {
-            setExpanded((prev) => ({ ...prev, [untitled.key]: true }));
-            return "Each file needs a title.";
+    // Step 1 is complete once the folder has a title and at least one tag.
+    const step1Complete = () => Boolean(title.trim() && tags.length);
+
+    const goToStep2 = () => {
+        setError("");
+        if (!title.trim() || !tags.length) {
+            setShowErrors(true);
+            window.scrollTo({ top: 0, behavior: "smooth" });
+            return;
         }
-        return "";
+        setShowErrors(false);
+        setStep(2);
+        window.scrollTo({ top: 0, behavior: "smooth" });
     };
+
+    const goToStep = (target) => {
+        if (target === 2 && !step1Complete()) {
+            goToStep2();
+            return;
+        }
+        setError("");
+        setStep(target);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+    };
+
+    // Fields every file must carry before the dataset can be published.
+    const fileMissing = (item) => {
+        const missing = [];
+        if (!item.title.trim()) missing.push("File title");
+        if (item.groundtruthed !== "yes" && item.groundtruthed !== "no")
+            missing.push("Groundtruthed");
+        if (
+            item.duration === "" ||
+            item.duration === null ||
+            isNaN(Number(item.duration))
+        )
+            missing.push("Duration (years)");
+        if (!item.temporalFrom) missing.push("Temporal coverage from");
+        if (!item.temporalTo) missing.push("Temporal coverage to");
+        if (!String(item.geography || "").trim())
+            missing.push("Geographical extent");
+        return missing;
+    };
+
+    // Per-file validation summary (only files with something missing).
+    const getFileErrors = () =>
+        files
+            .map((item) => ({
+                key: item.key,
+                name: item.title.trim() || item.file.name,
+                missing: fileMissing(item),
+            }))
+            .filter((f) => f.missing.length > 0);
 
     const onSubmit = async (e) => {
         e.preventDefault();
@@ -317,9 +329,17 @@ function CreateDataset() {
             navigate("/signin");
             return;
         }
-        const msg = validate();
-        if (msg) {
-            setError(msg);
+        // Title and tags belong to step 1; send the user back if missing.
+        if (!title.trim() || !tags.length) {
+            setShowErrors(true);
+            setStep(1);
+            window.scrollTo({ top: 0, behavior: "smooth" });
+            return;
+        }
+        const fileErrs = getFileErrors();
+        if (!files.length || fileErrs.length) {
+            setShowErrors(true);
+            if (fileErrs.length) setOpenKey(fileErrs[0].key);
             window.scrollTo({ top: 0, behavior: "smooth" });
             return;
         }
@@ -409,7 +429,7 @@ function CreateDataset() {
                 );
                 addFileForm.append("file_format", constrained(item.format, 20));
                 addFileForm.append("dataset_id", datasetId);
-                if (item.groundtruthed)
+                if (item.groundtruthed === "yes")
                     addFileForm.append("groundtruthed", "true");
                 addFileForm.append("provenance", constrained(item.provenance, 125));
                 addFileForm.append("source", constrained(item.source, 1000));
@@ -564,16 +584,18 @@ function CreateDataset() {
         );
     }
 
+    const fileErrs = showErrors ? getFileErrors() : [];
+
     return (
         <div className="page">
             <div className="wrap ds-form" style={{ padding: "48px 0 88px" }}>
-                <span className="eyebrow">Datasets</span>
-                <div className="section-head" style={{ marginTop: 8 }}>
+                {/* <span className="eyebrow">Datasets</span> */}
+                <div className="section-head" style={{ marginTop: 4 }}>
                     <div>
                         <h2 className="section-title">Publish a dataset</h2>
                         <p
                             className="muted"
-                            style={{ marginTop: 8, maxWidth: "60ch" }}
+                            style={{ marginTop: 6, maxWidth: "100ch" }}
                         >
                             A dataset is a folder for any number of files. Set
                             the folder details, drag in your files, then record
@@ -583,693 +605,687 @@ function CreateDataset() {
                     </div>
                 </div>
 
-                {error && (
-                    <div
-                        className="attn-card warn"
-                        role="alert"
-                        style={{ margin: "20px 0" }}
-                    >
-                        <div className="aic">
-                            <Ic name="warn" size={18} sw={2} />
-                        </div>
-                        <div>
-                            <b>{error}</b>
-                        </div>
-                    </div>
-                )}
-
-                {notice && (
-                    <div
-                        className="attn-card info"
-                        role="status"
-                        style={{ margin: "20px 0" }}
-                    >
-                        <div className="aic">
-                            <Ic name="info" size={18} sw={2} />
-                        </div>
-                        <div>
-                            <b>{notice}</b>
-                        </div>
-                    </div>
-                )}
-
                 <form onSubmit={onSubmit} style={{ marginTop: 22 }}>
-                    {/* Dataset details */}
-                    <div className="form-section">
-                        <div className="fs-head">
-                            <div>
-                                <h3>Dataset details</h3>
-                                <p>
-                                    Folder metadata: title, description, tags,
-                                    and who can see it.
-                                </p>
-                            </div>
-                        </div>
-
-                        <div className="field">
-                            <label>
-                                Dataset title{" "}
-                                <span className="req">(required)</span>
-                                <HelpTooltip
-                                    text="Name of the dataset. For example: Bangalore Rainfall Data would be the dataset, and you can add several files by year under that title."
-                                    id="tooltip-dataset-title"
-                                />
-                            </label>
-                            <input
-                                type="text"
-                                value={title}
-                                onChange={(e) =>
-                                    validateAndFilterSpecialChars(
-                                        e.target.value,
-                                        setTitle,
-                                        setTitleError,
-                                        200
-                                    )
-                                }
-                                required
-                            />
-                            {titleError && invalidCharsNote}
-                        </div>
-
-                        <div className="field">
-                            <label>
-                                Dataset description
-                                <HelpTooltip
-                                    text="What does the dataset contain?"
-                                    id="tooltip-dataset-description"
-                                />
-                            </label>
-                            <AutoTextarea
-                                minRows={3}
-                                value={datasetDescription}
-                                onChange={(e) =>
-                                    validateAndFilterSpecialChars(
-                                        e.target.value,
-                                        setDatasetDescription,
-                                        setDatasetDescriptionError,
-                                        2000
-                                    )
-                                }
-                            />
-                            {datasetDescriptionError && invalidCharsNote}
-                        </div>
-
-                        <div className="field">
-                            <label>
-                                Tags <span className="req">(required)</span>
-                                <HelpTooltip
-                                    text="Search existing tags as you type. If none fit, add a custom tag (it will be grouped under topic NA)."
-                                    id="tooltip-tags"
-                                />
-                            </label>
-                            <TagMultiSelect
-                                value={tags}
-                                onChange={(next) => setTags(next)}
-                                disabled={submitting}
-                            />
-                        </div>
-
-                        <div className="field">
-                            <label>
-                                Availability
-                                <HelpTooltip
-                                    text="Who can view this dataset: Public, Private (creator only), Organization, Admins, or Owners. Restricted levels apply only when your organization is private."
-                                    id="tooltip-private"
-                                />
-                            </label>
-                            <select
-                                value={String(availability)}
-                                onChange={(e) =>
-                                    setAvailability(Number(e.target.value))
-                                }
-                                disabled={!orgPrivate}
-                                aria-disabled={!orgPrivate}
-                            >
-                                {AVAILABILITY_OPTIONS.map((opt) => (
-                                    <option
-                                        key={opt.value}
-                                        value={String(opt.value)}
-                                    >
-                                        {opt.label}
-                                    </option>
-                                ))}
-                            </select>
-                            {!orgPrivate && (
-                                <span className="hint">
-                                    Availability is locked to Public because
-                                    your organization does not have private data
-                                    enabled.
-                                </span>
-                            )}
-                        </div>
-                    </div>
-
-                    {/* Files */}
-                    <div className="form-section">
-                        <div className="fs-head">
-                            <div>
-                                <h3>Files in this folder</h3>
-                                <p>
-                                    Drag files in or browse. Open each file to
-                                    record its source, licence, and coverage.
-                                </p>
-                            </div>
-                        </div>
-
-                        <div
-                            className={"file-drop" + (dragging ? " drag" : "")}
-                            onDragOver={(e) => {
-                                e.preventDefault();
-                                setDragging(true);
-                            }}
-                            onDragLeave={(e) => {
-                                e.preventDefault();
-                                setDragging(false);
-                            }}
-                            onDrop={handleDrop}
+                    {/* Horizontal stepper */}
+                    {/* <div className="stepper" role="tablist">
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected={step === 1}
+                            className={
+                                "step-item" +
+                                (step === 1 ? " active" : "") +
+                                (step > 1 ? " done" : "")
+                            }
+                            onClick={() => goToStep(1)}
                         >
-                            <span className="fdic">
-                                <Ic name="dl" size={18} sw={2} />
+                            <span className="step-dot">
+                                {step > 1 ? (
+                                    <Ic name="check" size={14} sw={3} />
+                                ) : (
+                                    "1"
+                                )}
                             </span>
-                            <div className="fdmain">
-                                <b>
-                                    {dragging
-                                        ? "Drop files to add them"
-                                        : files.length
-                                        ? `${files.length} file${
-                                              files.length === 1 ? "" : "s"
-                                          } added`
-                                        : "Drag files here, or click to browse"}
-                                </b>
-                                <span>
-                                    Any format. You can add multiple files at
-                                    once.
-                                </span>
+                            <span className="step-text">
+                                <b>Dataset details</b>
+                                <small>Title, tags, visibility</small>
+                            </span>
+                        </button>
+                        <span className="step-bar" aria-hidden="true" />
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected={step === 2}
+                            className={
+                                "step-item" + (step === 2 ? " active" : "")
+                            }
+                            onClick={() => goToStep(2)}
+                        >
+                            <span className="step-dot">2</span>
+                            <span className="step-text">
+                                <b>Attribution &amp; coverage</b>
+                                <small>Shared metadata &amp; files</small>
+                            </span>
+                        </button>
+                    </div> */}
+
+                    {/* Step 1 — Dataset details */}
+                    {step === 1 && (
+                        <div className="form-section">
+                            <div className="fs-head">
+                                <div>
+                                    <h3>Dataset details</h3>
+                                    <p>
+                                        Folder title, description, tags, and who
+                                        can see it.
+                                    </p>
+                                </div>
                             </div>
-                            <input
-                                type="file"
-                                onChange={handleFileChange}
-                                accept="*/*"
-                                multiple
-                                aria-label="Add files"
-                            />
+
+                            {showErrors &&
+                                (!title.trim() || !tags.length) && (
+                                    <div className="form-note err">
+                                        {!title.trim() && (
+                                            <span>
+                                                Dataset title is required.
+                                            </span>
+                                        )}
+                                        {!tags.length && (
+                                            <span>
+                                                At least one tag is required.
+                                            </span>
+                                        )}
+                                    </div>
+                                )}
+
+                            <div className="field">
+                                <label>
+                                    Dataset title{" "}
+                                    <span className="req">(required)</span>
+                                    <HelpTooltip
+                                        text="Name of the dataset. For example: Bangalore Rainfall Data would be the dataset, and you can add several files by year under that title."
+                                        id="tooltip-dataset-title"
+                                    />
+                                </label>
+                                <input
+                                    type="text"
+                                    value={title}
+                                    onChange={(e) =>
+                                        validateAndFilterSpecialChars(
+                                            e.target.value,
+                                            setTitle,
+                                            setTitleError,
+                                            200
+                                        )
+                                    }
+                                    required
+                                />
+                                {titleError && invalidCharsNote}
+                            </div>
+
+                            <div className="field">
+                                <label>
+                                    Dataset description
+                                    <HelpTooltip
+                                        text="What does the dataset contain?"
+                                        id="tooltip-dataset-description"
+                                    />
+                                </label>
+                                <AutoTextarea
+                                    minRows={3}
+                                    value={datasetDescription}
+                                    onChange={(e) =>
+                                        setDatasetDescription(
+                                            e.target.value.slice(0, 2000)
+                                        )
+                                    }
+                                />
+                            </div>
+
+                            <div className="field-row">
+                                <div className="field">
+                                    <label>
+                                        Tags{" "}
+                                        <span className="req">(required)</span>
+                                        <HelpTooltip
+                                            text="Search existing tags as you type. If none fit, add a custom tag (it will be grouped under topic NA)."
+                                            id="tooltip-tags"
+                                        />
+                                    </label>
+                                    <TagMultiSelect
+                                        value={tags}
+                                        onChange={(next) => setTags(next)}
+                                        disabled={submitting}
+                                    />
+                                </div>
+
+                                <div className="field">
+                                    <label>
+                                        Availability
+                                        <HelpTooltip
+                                            text="Who can view this dataset: Public, Private (creator only), Organization, Admins, or Owners. Restricted levels apply only when your organization is private."
+                                            id="tooltip-private"
+                                        />
+                                    </label>
+                                    <select
+                                        value={String(availability)}
+                                        onChange={(e) =>
+                                            setAvailability(
+                                                Number(e.target.value)
+                                            )
+                                        }
+                                        disabled={!orgPrivate}
+                                        aria-disabled={!orgPrivate}
+                                    >
+                                        {AVAILABILITY_OPTIONS.map((opt) => (
+                                            <option
+                                                key={opt.value}
+                                                value={String(opt.value)}
+                                            >
+                                                {opt.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    {!orgPrivate && (
+                                        <span className="hint">
+                                            Locked to Public because your
+                                            organization does not have private
+                                            data enabled.
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
                         </div>
+                    )}
 
-                        {files.length > 0 && (
-                            <div className="fa-list">
-                                {files.map((item, idx) => {
-                                    const isOpen = !!expanded[item.key];
-                                    return (
-                                        <div
-                                            className={
-                                                "fa-card" +
-                                                (isOpen ? " open" : "")
-                                            }
-                                            key={item.key}
-                                        >
-                                            <div className="fa-head">
-                                                <button
-                                                    type="button"
-                                                    className="fa-toggle"
-                                                    onClick={() =>
-                                                        toggleExpand(item.key)
-                                                    }
-                                                    aria-expanded={isOpen}
-                                                >
-                                                    <span className="fa-chev">
-                                                        <Ic
-                                                            name="chev"
-                                                            size={16}
-                                                        />
-                                                    </span>
-                                                    <span className="fa-name">
-                                                        <b>{item.file.name}</b>
-                                                        <span className="muted">
-                                                            {fmtBytes(
-                                                                item.file.size
-                                                            )}
-                                                            {item.format
-                                                                ? ` · ${item.format.toUpperCase()}`
-                                                                : ""}
-                                                            {item.title.trim()
-                                                                ? ""
-                                                                : " · title needed"}
+                    {/* Step 2 — Attribution & coverage merged with Files */}
+                    {step === 2 && (
+                        <div className="form-section">
+                            <div className="fs-head">
+                                <div>
+                                    <h3>Files &amp; attribution</h3>
+                                    <p>
+                                        Add a file and record its attribution
+                                        and coverage. Once it has a title you
+                                        can add another. Every file keeps its
+                                        own attribution.
+                                    </p>
+                                </div>
+                            </div>
+
+                            {showErrors &&
+                                (error ||
+                                    files.length === 0 ||
+                                    fileErrs.length > 0) && (
+                                    <div className="form-note err">
+                                        {files.length === 0 && (
+                                            <span>
+                                                Add at least one file to this
+                                                dataset folder.
+                                            </span>
+                                        )}
+                                        {fileErrs.map((f) => (
+                                            <span key={f.key}>
+                                                <b>{f.name}</b>:{" "}
+                                                {f.missing.join(", ")} required.
+                                            </span>
+                                        ))}
+                                        {error && <span>{error}</span>}
+                                    </div>
+                                )}
+
+                            {files.length > 0 && (
+                                <div className="acc-list">
+                                    {files.map((item) => {
+                                        const isOpen = openKey === item.key;
+                                        const complete = !!item.title.trim();
+                                        return (
+                                            <div
+                                                className={
+                                                    "acc" +
+                                                    (isOpen ? " open" : "")
+                                                }
+                                                key={item.key}
+                                            >
+                                                <div className="acc-head">
+                                                    <button
+                                                        type="button"
+                                                        className="acc-toggle"
+                                                        onClick={() =>
+                                                            toggleOpen(item.key)
+                                                        }
+                                                        aria-expanded={isOpen}
+                                                    >
+                                                        <span className="acc-chev">
+                                                            <Ic
+                                                                name="chev"
+                                                                size={16}
+                                                            />
                                                         </span>
+                                                        <span className="fico">
+                                                            {item.format
+                                                                ? item.format
+                                                                      .slice(0, 4)
+                                                                      .toUpperCase()
+                                                                : "FILE"}
+                                                        </span>
+                                                        <span className="acc-name">
+                                                            <b>
+                                                                {item.title.trim() ||
+                                                                    item.file
+                                                                        .name}
+                                                            </b>
+                                                            <small>
+                                                                {item.file.name}
+                                                                {" · "}
+                                                                {fmtBytes(
+                                                                    item.file
+                                                                        .size
+                                                                )}
+                                                            </small>
+                                                        </span>
+                                                    </button>
+                                                    <span
+                                                        className={
+                                                            "chip " +
+                                                            (complete
+                                                                ? "ok"
+                                                                : "todo")
+                                                        }
+                                                    >
+                                                        {complete
+                                                            ? "Complete"
+                                                            : "Needs title"}
                                                     </span>
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    className="btn-quiet"
-                                                    onClick={() =>
-                                                        removeFileEntry(
-                                                            item.key
-                                                        )
-                                                    }
-                                                >
-                                                    Remove
-                                                </button>
-                                            </div>
-
-                                            {isOpen && (
-                                                <div className="fa-body">
-                                                    <div className="field">
-                                                        <label>
-                                                            File title{" "}
-                                                            <span className="req">
-                                                                (required)
-                                                            </span>
-                                                        </label>
-                                                        <input
-                                                            type="text"
-                                                            value={item.title}
-                                                            onChange={(e) =>
-                                                                updateFileEntry(
-                                                                    item.key,
-                                                                    "title",
-                                                                    e.target.value.slice(
-                                                                        0,
-                                                                        200
-                                                                    )
-                                                                )
-                                                            }
-                                                            required
+                                                    <button
+                                                        type="button"
+                                                        className="iconbtn"
+                                                        aria-label="Remove file"
+                                                        onClick={() =>
+                                                            removeFileEntry(
+                                                                item.key
+                                                            )
+                                                        }
+                                                    >
+                                                        <Ic
+                                                            name="close"
+                                                            size={16}
+                                                            sw={2}
                                                         />
-                                                    </div>
+                                                    </button>
+                                                </div>
 
-                                                    <div className="field">
-                                                        <label>
-                                                            File description
-                                                        </label>
-                                                        <AutoTextarea
-                                                            minRows={2}
-                                                            value={
-                                                                item.description
-                                                            }
-                                                            onChange={(e) =>
-                                                                updateFileEntry(
-                                                                    item.key,
-                                                                    "description",
-                                                                    e.target.value.slice(
-                                                                        0,
-                                                                        1000
-                                                                    )
-                                                                )
-                                                            }
-                                                        />
-                                                    </div>
-
-                                                    <div className="fa-sub">
-                                                        Attribution &amp;
-                                                        licensing
-                                                    </div>
-
-                                                    <div className="field-row">
-                                                        <div className="field">
-                                                            <label>
-                                                                Provenance
-                                                                <HelpTooltip
-                                                                    text="Who owns this file's data?"
-                                                                    id={`tooltip-provenance-${idx}`}
+                                                {isOpen && (
+                                                    <div className="acc-body">
+                                                        <div className="field-row">
+                                                            <div className="field">
+                                                                <label>
+                                                                    File title{" "}
+                                                                    <span className="req">
+                                                                        (required)
+                                                                    </span>
+                                                                </label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={
+                                                                        item.title
+                                                                    }
+                                                                    onChange={(
+                                                                        e
+                                                                    ) =>
+                                                                        updateFileText(
+                                                                            item.key,
+                                                                            "title",
+                                                                            e
+                                                                                .target
+                                                                                .value,
+                                                                            200
+                                                                        )
+                                                                    }
+                                                                    required
                                                                 />
-                                                            </label>
-                                                            <input
-                                                                type="text"
-                                                                value={
-                                                                    item.provenance
-                                                                }
-                                                                onChange={(e) =>
-                                                                    updateFileText(
-                                                                        item.key,
-                                                                        "provenance",
-                                                                        e.target
-                                                                            .value,
-                                                                        125
-                                                                    )
-                                                                }
-                                                            />
-                                                            {item.errors
-                                                                ?.provenance &&
-                                                                invalidCharsNote}
+                                                                {item.errors
+                                                                    ?.title &&
+                                                                    invalidCharsNote}
+                                                            </div>
+                                                            <div className="field">
+                                                                <label>
+                                                                    File
+                                                                    description
+                                                                </label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={
+                                                                        item.description
+                                                                    }
+                                                                    onChange={(
+                                                                        e
+                                                                    ) =>
+                                                                        updateFileEntry(
+                                                                            item.key,
+                                                                            "description",
+                                                                            e.target.value.slice(
+                                                                                0,
+                                                                                1000
+                                                                            )
+                                                                        )
+                                                                    }
+                                                                />
+                                                            </div>
                                                         </div>
 
-                                                        <div className="field">
-                                                            <label>
-                                                                Source
-                                                                <HelpTooltip
-                                                                    text="Who gave you this file?"
-                                                                    id={`tooltip-source-${idx}`}
+                                                        <div className="grid3">
+                                                            <div className="field">
+                                                                <label>
+                                                                    Provenance
+                                                                </label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={
+                                                                        item.provenance
+                                                                    }
+                                                                    onChange={(
+                                                                        e
+                                                                    ) =>
+                                                                        updateFileText(
+                                                                            item.key,
+                                                                            "provenance",
+                                                                            e
+                                                                                .target
+                                                                                .value,
+                                                                            125
+                                                                        )
+                                                                    }
                                                                 />
-                                                            </label>
-                                                            <AutoTextarea
-                                                                minRows={1}
-                                                                value={
-                                                                    item.source
-                                                                }
-                                                                onChange={(e) =>
-                                                                    updateFileText(
-                                                                        item.key,
-                                                                        "source",
-                                                                        e.target
-                                                                            .value,
-                                                                        1000
-                                                                    )
-                                                                }
-                                                            />
-                                                            {item.errors
-                                                                ?.source &&
-                                                                invalidCharsNote}
-                                                        </div>
-                                                    </div>
-
-                                                    <div className="field">
-                                                        <label>
-                                                            Permissions
-                                                            <HelpTooltip
-                                                                text={
-                                                                    <>
-                                                                        To learn
-                                                                        more
-                                                                        about
-                                                                        the
-                                                                        Creative
-                                                                        Commons
-                                                                        licenses,
-                                                                        visit{" "}
-                                                                        <a
-                                                                            href="https://creativecommons.org/share-your-work/cclicenses/"
-                                                                            target="_blank"
-                                                                            rel="noopener noreferrer"
-                                                                            onClick={(
-                                                                                e
-                                                                            ) =>
-                                                                                e.stopPropagation()
-                                                                            }
-                                                                        >
-                                                                            here
-                                                                        </a>
-                                                                        .
-                                                                    </>
-                                                                }
-                                                                id={`tooltip-permissions-${idx}`}
-                                                            />
-                                                        </label>
-                                                        <select
-                                                            value={
-                                                                item.permissions
-                                                            }
-                                                            onChange={(e) =>
-                                                                updateFileEntry(
-                                                                    item.key,
-                                                                    "permissions",
-                                                                    e.target
-                                                                        .value
-                                                                )
-                                                            }
-                                                        >
-                                                            {PERMISSION_OPTIONS.map(
-                                                                (opt) => (
-                                                                    <option
-                                                                        key={opt}
-                                                                        value={
-                                                                            opt
+                                                                {item.errors
+                                                                    ?.provenance &&
+                                                                    invalidCharsNote}
+                                                            </div>
+                                                            <div className="field">
+                                                                <label>
+                                                                    Source
+                                                                </label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={
+                                                                        item.source
+                                                                    }
+                                                                    onChange={(
+                                                                        e
+                                                                    ) =>
+                                                                        updateFileText(
+                                                                            item.key,
+                                                                            "source",
+                                                                            e
+                                                                                .target
+                                                                                .value,
+                                                                            1000
+                                                                        )
+                                                                    }
+                                                                />
+                                                                {item.errors
+                                                                    ?.source &&
+                                                                    invalidCharsNote}
+                                                            </div>
+                                                            <div className="field">
+                                                                <label>
+                                                                    Permissions /
+                                                                    licence
+                                                                </label>
+                                                                <select
+                                                                    value={
+                                                                        item.permissions
+                                                                    }
+                                                                    onChange={(
+                                                                        e
+                                                                    ) =>
+                                                                        updateFileEntry(
+                                                                            item.key,
+                                                                            "permissions",
+                                                                            e
+                                                                                .target
+                                                                                .value
+                                                                        )
+                                                                    }
+                                                                >
+                                                                    {PERMISSION_OPTIONS.map(
+                                                                        (opt) => (
+                                                                            <option
+                                                                                key={
+                                                                                    opt
+                                                                                }
+                                                                                value={
+                                                                                    opt
+                                                                                }
+                                                                            >
+                                                                                {
+                                                                                    opt
+                                                                                }
+                                                                            </option>
+                                                                        )
+                                                                    )}
+                                                                </select>
+                                                            </div>
+                                                            <div className="field">
+                                                                <label>
+                                                                    Cite as
+                                                                </label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={
+                                                                        item.citeAs
+                                                                    }
+                                                                    onChange={(
+                                                                        e
+                                                                    ) =>
+                                                                        updateFileEntry(
+                                                                            item.key,
+                                                                            "citeAs",
+                                                                            e.target.value.slice(
+                                                                                0,
+                                                                                1500
+                                                                            )
+                                                                        )
+                                                                    }
+                                                                />
+                                                            </div>
+                                                            <div className="field">
+                                                                <label>
+                                                                    Groundtruthed
+                                                                </label>
+                                                                <div className="seg">
+                                                                    <button
+                                                                        type="button"
+                                                                        className={
+                                                                            "seg-opt" +
+                                                                            (item.groundtruthed ===
+                                                                            "yes"
+                                                                                ? " on"
+                                                                                : "")
+                                                                        }
+                                                                        onClick={() =>
+                                                                            updateFileEntry(
+                                                                                item.key,
+                                                                                "groundtruthed",
+                                                                                "yes"
+                                                                            )
                                                                         }
                                                                     >
-                                                                        {opt}
-                                                                    </option>
-                                                                )
-                                                            )}
-                                                        </select>
-                                                    </div>
-
-                                                    <div className="field">
-                                                        <label>
-                                                            Cite as
-                                                            <HelpTooltip
-                                                                text="How should someone give credit for this file?"
-                                                                id={`tooltip-cite-as-${idx}`}
-                                                            />
-                                                        </label>
-                                                        <AutoTextarea
-                                                            minRows={2}
-                                                            value={item.citeAs}
-                                                            onChange={(e) =>
-                                                                updateFileText(
-                                                                    item.key,
-                                                                    "citeAs",
-                                                                    e.target
-                                                                        .value,
-                                                                    1500
-                                                                )
-                                                            }
-                                                        />
-                                                        {item.errors?.citeAs &&
-                                                            invalidCharsNote}
-                                                    </div>
-
-                                                    <div className="fa-sub">
-                                                        Coverage &amp; validity
-                                                    </div>
-
-                                                    <div className="field">
-                                                        <label>
-                                                            Groundtruthed
-                                                            <HelpTooltip
-                                                                text="Has this file's data been validated in the field?"
-                                                                id={`tooltip-groundtruthed-${idx}`}
-                                                            />
-                                                        </label>
-                                                        <div
-                                                            className="gt-toggle"
-                                                            role="radiogroup"
-                                                            aria-label="Groundtruthed"
-                                                        >
-                                                            <button
-                                                                type="button"
-                                                                className={
-                                                                    "gt-opt" +
-                                                                    (!item.groundtruthed
-                                                                        ? " on"
-                                                                        : "")
-                                                                }
-                                                                onClick={() =>
-                                                                    updateFileEntry(
-                                                                        item.key,
-                                                                        "groundtruthed",
-                                                                        false
-                                                                    )
-                                                                }
-                                                                aria-pressed={
-                                                                    !item.groundtruthed
-                                                                }
-                                                            >
-                                                                <span className="gt-mark">
-                                                                    <Ic
-                                                                        name="close"
-                                                                        size={
-                                                                            14
+                                                                        Yes
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        className={
+                                                                            "seg-opt" +
+                                                                            (item.groundtruthed ===
+                                                                            "no"
+                                                                                ? " on"
+                                                                                : "")
                                                                         }
-                                                                        sw={2.4}
-                                                                    />
-                                                                </span>
-                                                                <span className="gt-label">
-                                                                    <b>No</b>
-                                                                    <small>
-                                                                        Not
-                                                                        field-validated
-                                                                    </small>
-                                                                </span>
-                                                            </button>
-                                                            <button
-                                                                type="button"
-                                                                className={
-                                                                    "gt-opt" +
-                                                                    (item.groundtruthed
-                                                                        ? " on"
-                                                                        : "")
-                                                                }
-                                                                onClick={() =>
-                                                                    updateFileEntry(
-                                                                        item.key,
-                                                                        "groundtruthed",
-                                                                        true
-                                                                    )
-                                                                }
-                                                                aria-pressed={
-                                                                    item.groundtruthed
-                                                                }
-                                                            >
-                                                                <span className="gt-mark">
-                                                                    <Ic
-                                                                        name="verified"
-                                                                        size={
-                                                                            15
+                                                                        onClick={() =>
+                                                                            updateFileEntry(
+                                                                                item.key,
+                                                                                "groundtruthed",
+                                                                                "no"
+                                                                            )
                                                                         }
-                                                                        sw={2}
-                                                                    />
-                                                                </span>
-                                                                <span className="gt-label">
-                                                                    <b>Yes</b>
-                                                                    <small>
-                                                                        Validated
-                                                                        in the
-                                                                        field
-                                                                    </small>
-                                                                </span>
-                                                            </button>
-                                                        </div>
-                                                    </div>
-
-                                                    <div className="field-row">
-                                                        <div className="field">
-                                                            <label>
-                                                                Temporal
-                                                                coverage from
-                                                                <HelpTooltip
-                                                                    text="Start date of temporal coverage."
-                                                                    id={`tooltip-temporal-from-${idx}`}
-                                                                />
-                                                            </label>
-                                                            <input
-                                                                type="datetime-local"
-                                                                value={isoToLocal(
-                                                                    item.temporalFrom
-                                                                )}
-                                                                onChange={(e) =>
-                                                                    updateFileEntry(
-                                                                        item.key,
-                                                                        "temporalFrom",
-                                                                        localToIso(
-                                                                            e
-                                                                                .target
-                                                                                .value
+                                                                    >
+                                                                        No
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                            <div className="field">
+                                                                <label>
+                                                                    Duration
+                                                                    (years)
+                                                                </label>
+                                                                <input
+                                                                    type="number"
+                                                                    value={
+                                                                        item.duration
+                                                                    }
+                                                                    onChange={(
+                                                                        e
+                                                                    ) =>
+                                                                        updateFileEntry(
+                                                                            item.key,
+                                                                            "duration",
+                                                                            Math.max(
+                                                                                0,
+                                                                                parseInt(
+                                                                                    e
+                                                                                        .target
+                                                                                        .value
+                                                                                ) ||
+                                                                                    0
+                                                                            )
                                                                         )
-                                                                    )
-                                                                }
-                                                            />
-                                                        </div>
-
-                                                        <div className="field">
-                                                            <label>
-                                                                Temporal
-                                                                coverage to
-                                                                <HelpTooltip
-                                                                    text="End date of temporal coverage."
-                                                                    id={`tooltip-temporal-to-${idx}`}
+                                                                    }
+                                                                    min="0"
                                                                 />
-                                                            </label>
-                                                            <input
-                                                                type="datetime-local"
-                                                                value={isoToLocal(
-                                                                    item.temporalTo
-                                                                )}
-                                                                onChange={(e) =>
-                                                                    updateFileEntry(
-                                                                        item.key,
-                                                                        "temporalTo",
-                                                                        localToIso(
-                                                                            e
-                                                                                .target
-                                                                                .value
-                                                                        )
-                                                                    )
-                                                                }
-                                                            />
-                                                        </div>
-                                                    </div>
-
-                                                    <div className="field-row">
-                                                        <div className="field">
-                                                            <label>
-                                                                Duration (years)
-                                                                <HelpTooltip
-                                                                    text="How many years can this data be used for from the date of creation? 0 if not applicable."
-                                                                    id={`tooltip-duration-${idx}`}
-                                                                />
-                                                            </label>
-                                                            <input
-                                                                type="number"
-                                                                value={
-                                                                    item.duration
-                                                                }
-                                                                onChange={(e) =>
-                                                                    updateFileEntry(
-                                                                        item.key,
-                                                                        "duration",
-                                                                        Math.max(
-                                                                            0,
-                                                                            parseInt(
+                                                            </div>
+                                                            <div className="field">
+                                                                <label>
+                                                                    Temporal
+                                                                    coverage from
+                                                                </label>
+                                                                <input
+                                                                    type="datetime-local"
+                                                                    value={isoToLocal(
+                                                                        item.temporalFrom
+                                                                    )}
+                                                                    onChange={(
+                                                                        e
+                                                                    ) =>
+                                                                        updateFileEntry(
+                                                                            item.key,
+                                                                            "temporalFrom",
+                                                                            localToIso(
                                                                                 e
                                                                                     .target
                                                                                     .value
-                                                                            ) ||
-                                                                                0
+                                                                            )
                                                                         )
-                                                                    )
-                                                                }
-                                                                min="0"
-                                                            />
-                                                        </div>
-
-                                                        <div className="field">
-                                                            <label>
-                                                                Geographical
-                                                                extent
-                                                                <HelpTooltip
-                                                                    text="Geographic coverage or location information."
-                                                                    id={`tooltip-geography-${idx}`}
+                                                                    }
                                                                 />
-                                                            </label>
-                                                            <input
-                                                                type="text"
-                                                                value={
-                                                                    item.geography
-                                                                }
-                                                                onChange={(e) =>
-                                                                    updateFileEntry(
-                                                                        item.key,
-                                                                        "geography",
-                                                                        e.target
-                                                                            .value
-                                                                    )
-                                                                }
-                                                            />
+                                                            </div>
+                                                            <div className="field">
+                                                                <label>
+                                                                    Temporal
+                                                                    coverage to
+                                                                </label>
+                                                                <input
+                                                                    type="datetime-local"
+                                                                    value={isoToLocal(
+                                                                        item.temporalTo
+                                                                    )}
+                                                                    onChange={(
+                                                                        e
+                                                                    ) =>
+                                                                        updateFileEntry(
+                                                                            item.key,
+                                                                            "temporalTo",
+                                                                            localToIso(
+                                                                                e
+                                                                                    .target
+                                                                                    .value
+                                                                            )
+                                                                        )
+                                                                    }
+                                                                />
+                                                            </div>
+                                                            <div className="field">
+                                                                <label>
+                                                                    Geographical
+                                                                    extent
+                                                                </label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={
+                                                                        item.geography
+                                                                    }
+                                                                    onChange={(
+                                                                        e
+                                                                    ) =>
+                                                                        updateFileText(
+                                                                            item.key,
+                                                                            "geography",
+                                                                            e
+                                                                                .target
+                                                                                .value,
+                                                                            2000
+                                                                        )
+                                                                    }
+                                                                />
+                                                                {item.errors
+                                                                    ?.geography &&
+                                                                    invalidCharsNote}
+                                                            </div>
                                                         </div>
                                                     </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
 
-                                                    {files.length > 1 && (
-                                                        <div className="fa-apply">
-                                                            <button
-                                                                type="button"
-                                                                className="btn btn-ghost btn-sm"
-                                                                onClick={() =>
-                                                                    applyToAll(
-                                                                        item.key
-                                                                    )
-                                                                }
-                                                            >
-                                                                <Ic
-                                                                    name="copy"
-                                                                    size={14}
-                                                                    sw={2}
-                                                                />
-                                                                Apply this
-                                                                file&rsquo;s
-                                                                attribution
-                                                                &amp; coverage
-                                                                to all files
-                                                            </button>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            )}
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        )}
-                    </div>
+                            {files.length === 0 ||
+                            files[files.length - 1].title.trim() ? (
+                                <div
+                                    className={
+                                        "file-drop" +
+                                        (dragging ? " drag" : "") +
+                                        (files.length ? " compact" : "")
+                                    }
+                                    onDragOver={(e) => {
+                                        e.preventDefault();
+                                        setDragging(true);
+                                    }}
+                                    onDragLeave={(e) => {
+                                        e.preventDefault();
+                                        setDragging(false);
+                                    }}
+                                    onDrop={handleDrop}
+                                >
+                                    <span className="fdic">
+                                        <Ic name="dl" size={18} sw={2} />
+                                    </span>
+                                    <div className="fdmain">
+                                        <b>
+                                            {dragging
+                                                ? "Drop files to add them"
+                                                : files.length
+                                                ? "Add another file"
+                                                : "Drag files here, or click to browse"}
+                                        </b>
+                                        <span>
+                                            {files.length
+                                                ? "Its attribution starts from blank."
+                                                : "Any format. You can add multiple files at once."}
+                                        </span>
+                                    </div>
+                                    <input
+                                        type="file"
+                                        onChange={handleFileChange}
+                                        accept="*/*"
+                                        multiple
+                                        aria-label="Add files"
+                                    />
+                                </div>
+                            ) : (
+                                <div className="add-hint">
+                                    <Ic name="info" size={15} sw={2} />
+                                    <span>
+                                        Add a title to the current file to add
+                                        another.
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+                    )}
 
-                    {/* Sticky navigation bar */}
+                    {/* Sticky footer actions */}
                     <div className="form-actions">
                         <div style={{ flex: 1, minWidth: 200 }}>
                             {submitting ? (
@@ -1296,28 +1312,53 @@ function CreateDataset() {
                                 </>
                             ) : (
                                 <span className="fa-note">
-                                    Fields marked{" "}
-                                    <span className="req">(required)</span> must
-                                    be filled before publishing.
+                                    Step {step} of 2 ·{" "}
+                                    {step === 1
+                                        ? "Folder basics"
+                                        : "Attribution & files"}
                                 </span>
                             )}
                         </div>
                         <div style={{ display: "flex", gap: 10 }}>
-                            <button
-                                type="button"
-                                className="btn btn-ghost"
-                                onClick={() => navigate("/dashboard")}
-                                disabled={submitting}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="submit"
-                                className="btn btn-primary"
-                                disabled={submitting}
-                            >
-                                {submitting ? "Publishing…" : "Publish dataset"}
-                            </button>
+                            {step === 1 ? (
+                                <>
+                                    <button
+                                        type="button"
+                                        className="btn btn-ghost"
+                                        onClick={() => navigate("/dashboard")}
+                                        disabled={submitting}
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="btn btn-primary"
+                                        onClick={goToStep2}
+                                    >
+                                        Next: Attribution &amp; files
+                                    </button>
+                                </>
+                            ) : (
+                                <>
+                                    <button
+                                        type="button"
+                                        className="btn btn-ghost"
+                                        onClick={() => goToStep(1)}
+                                        disabled={submitting}
+                                    >
+                                        Back
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        className="btn btn-primary"
+                                        disabled={submitting}
+                                    >
+                                        {submitting
+                                            ? "Publishing…"
+                                            : "Publish dataset"}
+                                    </button>
+                                </>
+                            )}
                         </div>
                     </div>
                 </form>

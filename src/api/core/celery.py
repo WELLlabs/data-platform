@@ -50,6 +50,13 @@ celery_app.conf.task_time_limit = settings.CELERY_TASK_TIME_LIMIT
 celery_app.conf.result_backend_expires = settings.CELERY_RESULT_BACKEND_EXPIRES
 celery_app.conf.task_default_retry_delay = settings.CELERY_TASK_DEFAULT_RETRY_DELAY
 celery_app.conf.task_max_retries = settings.CELERY_TASK_MAX_RETRIES
+celery_app.conf.beat_schedule = {
+    "purge-expired-converted-files": {
+        "task": "cpu.purge_expired_converted_files",
+        "schedule": 3600.0,
+        "options": {"queue": "cpu"},
+    }
+}
 
 def _sanitize_url(url: str) -> str:
     """

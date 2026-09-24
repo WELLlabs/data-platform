@@ -134,6 +134,10 @@ class Settings(BaseSettings):
     HOMEPAGE_STATS_CACHE_AGE_SECONDS: int = 300
     HOMEPAGE_STATS_RESULT_COUNT: int = 10
 
+    AUTO_REMOVE_CONVERTED_FILES: bool = False
+    CONVERTED_FILES_EXPIRY_TIME_DAYS: int = 30
+    TITILER_BASE_URL: str = ""
+
     model_config = SettingsConfigDict(
         env_file=(
             str(_REPO_ROOT_ENV) if _REPO_ROOT_ENV.is_file() else ".env",

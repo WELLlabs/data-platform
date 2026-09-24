@@ -3,6 +3,7 @@
 from .base import Base
 from .dataset import Dataset
 from .dataset_owner import DatasetOwner
+from .converted_file import ConvertedFile, FileAccessLog
 from .file import File
 from .file_download import FileDownloadCount, FileDownloadLog
 from .global_search_index import GlobalSearchIndex

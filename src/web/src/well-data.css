@@ -890,3 +890,124 @@ textarea.autogrow{width:100%;resize:none;overflow:hidden;min-height:42px;line-he
 .preview-empty{text-align:center;padding:48px 16px;display:flex;flex-direction:column;align-items:center;gap:10px}
 .preview-empty h3{font-size:22px}
 .preview-empty p{color:var(--muted);max-width:420px}
+.preview-pdf{display:flex;flex-direction:column;align-items:center;gap:12px;overflow:auto;max-height:80vh}
+.preview-map{border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.cloud-native-status{display:inline-flex;align-items:center;gap:8px;font-size:14px}
+.cloud-native-dot{width:9px;height:9px;border-radius:50%;background:#d1d5db;display:inline-block}
+.cloud-native-dot.on{background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.18)}
+
+/* ============================================================
+   Publish form redesign — compact single-page layout
+   Shared attribution block, compact file rows, sticky publish rail.
+   ============================================================ */
+.pub-grid{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:24px;align-items:start}
+.pub-main{min-width:0}
+@media(max-width:900px){.pub-grid{grid-template-columns:1fr}}
+
+/* Numbered section badge in the card head */
+.fs-head .fs-num{width:26px;height:26px;flex:none;border-radius:8px;background:var(--navy);color:#fff;font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:center;font-family:var(--mono)}
+
+/* Shared-block reassurance strip */
+.shared-tip{display:flex;gap:9px;align-items:center;font-size:12.5px;color:var(--navy-70);background:var(--green-soft);border:1px solid var(--green-line);border-radius:var(--radius-sm);padding:9px 12px;margin-bottom:16px}
+.shared-tip svg{color:var(--green);flex:none}
+
+/* Yes/No segmented control */
+.seg{display:inline-flex;background:var(--bg-tint);border:1px solid var(--line-strong);border-radius:var(--radius-sm);padding:3px;gap:2px}
+.seg-opt{border:none;background:transparent;font:inherit;font-size:13px;font-weight:500;color:var(--muted);padding:6px 18px;border-radius:6px;cursor:pointer;transition:var(--t)}
+.seg-opt.on{background:var(--paper);color:var(--navy);box-shadow:var(--shadow-sm)}
+
+/* Compact file rows */
+.frow-list{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+.frow{border:1px solid var(--line);border-radius:var(--radius);background:var(--paper);transition:var(--t)}
+.frow:hover{border-color:var(--line-strong)}
+.frow-main{display:flex;align-items:center;gap:12px;padding:11px 14px;flex-wrap:wrap}
+.fico{width:36px;height:36px;flex:none;border-radius:8px;background:var(--blue-soft);color:var(--blue-deep);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:10px;font-weight:500}
+.fmeta{min-width:120px;flex:1}
+.fname{font-weight:500;color:var(--navy);font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fsub{font-size:11.5px;color:var(--muted);margin-top:1px}
+.ftitle{flex:1;min-width:140px;max-width:280px}
+.ftitle input{width:100%;border:1px solid var(--line-strong);background:var(--paper);border-radius:6px;padding:7px 10px;font-size:13px;font-family:inherit;color:var(--ink);transition:var(--t)}
+.ftitle input:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(23,105,170,.12)}
+.chip{font-size:11px;font-weight:500;padding:3px 10px;border-radius:20px;border:1px solid;white-space:nowrap}
+.chip.shared{background:var(--bg-tint);border-color:var(--line-strong);color:var(--muted)}
+.chip.custom{background:var(--amber-soft);border-color:var(--amber-line);color:var(--amber)}
+.linkbtn{border:none;background:transparent;color:var(--blue);font:inherit;font-size:12.5px;font-weight:500;cursor:pointer;padding:0;white-space:nowrap}
+.linkbtn:hover{color:var(--blue-deep);text-decoration:underline}
+.iconbtn{border:none;background:transparent;color:var(--faint);cursor:pointer;padding:6px;border-radius:6px;line-height:0;transition:var(--t)}
+.iconbtn:hover{background:var(--bg-tint);color:var(--navy)}
+.frow-over{border-top:1px dashed var(--line);padding:16px 14px;background:var(--bg-tint);border-radius:0 0 var(--radius) var(--radius)}
+.over-head{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;margin-bottom:12px}
+.frow-over .field-row{margin-bottom:0}
+.frow-over .field{margin-bottom:12px}
+
+/* Sticky publish rail */
+.pub-rail{position:sticky;top:calc(env(safe-area-inset-top,0px) + 20px)}
+@media(max-width:900px){.pub-rail{position:static}}
+.rail-card{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius-lg);box-shadow:var(--shadow);padding:18px}
+.rail-card h4{font-family:var(--display);font-size:15px;font-weight:500;color:var(--navy);margin:0 0 12px}
+.rc-check{display:flex;align-items:flex-start;gap:10px;font-size:13px;padding:5px 0;color:var(--ink-soft)}
+.rc-check .rc-box{width:18px;height:18px;border-radius:6px;flex:none;display:flex;align-items:center;justify-content:center;margin-top:1px}
+.rc-check.done .rc-box{background:var(--green);color:#fff}
+.rc-check.done{color:var(--navy-70)}
+.rc-check.todo .rc-box{background:#fff;border:1.5px solid var(--line-strong);color:transparent}
+.rc-check small{display:block;color:var(--faint);font-size:11.5px;margin-top:1px}
+.rc-sep{height:1px;background:var(--line-soft);margin:12px 0}
+.rc-stat{display:flex;justify-content:space-between;font-size:12.5px;color:var(--muted);padding:3px 0}
+.rc-stat b{color:var(--navy);font-family:var(--mono);font-weight:500}
+.rc-btn{width:100%}
+.rc-btn+.rc-btn{margin-top:8px}
+
+/* ============================================================
+   Publish form — two-step horizontal stepper
+   ============================================================ */
+.stepper{display:flex;align-items:center;gap:14px;margin-bottom:22px}
+.step-item{display:flex;align-items:center;gap:11px;background:transparent;border:none;font:inherit;cursor:pointer;padding:6px 8px;border-radius:var(--radius);text-align:left;transition:var(--t)}
+.step-item:hover{background:var(--bg-tint)}
+.step-dot{width:30px;height:30px;flex:none;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:14px;font-weight:600;background:var(--paper);color:var(--muted);border:1.5px solid var(--line-strong);transition:var(--t)}
+.step-text{display:flex;flex-direction:column;line-height:1.2}
+.step-text b{font-size:14px;font-weight:600;color:var(--navy-70)}
+.step-text small{font-size:11.5px;color:var(--faint);margin-top:1px}
+.step-item.active .step-dot{background:var(--navy);color:#fff;border-color:var(--navy)}
+.step-item.active .step-text b{color:var(--navy)}
+.step-item.done .step-dot{background:var(--green);color:#fff;border-color:var(--green)}
+.step-bar{flex:1;height:2px;background:var(--line);border-radius:2px;min-width:24px}
+@media(max-width:600px){
+  .step-text small{display:none}
+  .step-text b{font-size:13px}
+  .step-item{gap:8px;padding:5px 6px}
+}
+
+/* Three-column field grid to keep step 2 short */
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.grid3 .field{margin-bottom:0}
+@media(max-width:760px){.grid3{grid-template-columns:1fr 1fr}}
+@media(max-width:500px){.grid3{grid-template-columns:1fr}}
+
+/* ============================================================
+   Publish form — per-file accordion (each file carries its own
+   attribution & coverage), with progressive add.
+   ============================================================ */
+.acc-list{display:flex;flex-direction:column;gap:10px;margin-bottom:14px}
+.acc{border:1px solid var(--line-strong);border-radius:var(--radius);background:var(--paper);overflow:hidden;transition:var(--t)}
+.acc.open{border-color:var(--blue-line);box-shadow:var(--shadow-sm)}
+.acc-head{display:flex;align-items:center;gap:10px;padding:10px 12px}
+.acc-toggle{flex:1;min-width:0;display:flex;align-items:center;gap:11px;background:transparent;border:none;font:inherit;cursor:pointer;padding:2px;text-align:left}
+.acc-chev{color:var(--faint);flex:none;display:flex;transition:transform var(--t)}
+.acc.open .acc-chev{transform:rotate(180deg);color:var(--blue)}
+.acc-name{min-width:0;display:flex;flex-direction:column;line-height:1.25}
+.acc-name b{font-size:13.5px;font-weight:500;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.acc-name small{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.acc-body{padding:14px 14px 16px;border-top:1px solid var(--line-soft);background:var(--bg-tint)}
+.acc-body .field-row,.acc-body .grid3{margin-bottom:0}
+.acc-body .field-row{margin-bottom:12px}
+.acc-body .field{margin-bottom:0}
+.chip.ok{background:var(--green-soft);border:1px solid var(--green-line);color:var(--green)}
+.chip.todo{background:var(--amber-soft);border:1px solid var(--amber-line);color:var(--amber)}
+.file-drop.compact{padding:12px 14px}
+.add-hint{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--amber);background:var(--amber-soft);border:1px dashed var(--amber-line);border-radius:var(--radius);padding:11px 14px}
+
+/* Compact in-card validation notes (small, low-footprint) */
+.form-note{display:flex;flex-direction:column;gap:3px;border-radius:var(--radius-sm);padding:9px 12px;margin-bottom:14px;font-size:12px;line-height:1.45}
+.form-note.err{background:var(--amber-soft);border:1px solid var(--amber-line);color:var(--amber)}
+.form-note.err b{font-weight:600;color:var(--amber)}
+.form-note span{display:block}

@@ -28,6 +28,7 @@ try:
     from api.models.base import Base
     from api.models import dataset  # noqa: F401
     from api.models import dataset_owner  # noqa: F401
+    from api.models import converted_file  # noqa: F401
     from api.models import file  # noqa: F401
     from api.models import file_download  # noqa: F401
     from api.models import global_search_index  # noqa: F401
@@ -41,6 +42,7 @@ except ModuleNotFoundError:
     from models.base import Base
     from models import dataset  # noqa: F401
     from models import dataset_owner  # noqa: F401
+    from models import converted_file  # noqa: F401
     from models import file  # noqa: F401
     from models import file_download  # noqa: F401
     from models import global_search_index  # noqa: F401

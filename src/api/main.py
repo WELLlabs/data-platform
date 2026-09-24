@@ -16,6 +16,7 @@ from routers.stats import router as stats_router
 from routers.tag import router as tag_router
 from routers.upload import router as upload_router
 from routers.user import router as user_router
+from routers.visualization import router as visualization_router
 from starlette.responses import JSONResponse
 
 __version__ = "1.0.0"
@@ -121,6 +122,7 @@ def create_app() -> FastAPI:
         organization_router, prefix="/organizations", tags=["Organizations"]
     )
     app.include_router(upload_router, prefix="", tags=["Files"])
+    app.include_router(visualization_router, prefix="", tags=["Visualization"])
     app.include_router(dataset_router, prefix="", tags=["Datasets"])
     app.include_router(search_router, prefix="", tags=["Search"])
     app.include_router(tag_router, prefix="", tags=["Tags"])

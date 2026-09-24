@@ -34,10 +34,8 @@ function AddFile() {
   const [geography, setGeography] = useState("");
 
   // Validation error states
-  const [fileDescriptionError, setFileDescriptionError] = useState(false);
   const [provenanceError, setProvenanceError] = useState(false);
   const [sourceError, setSourceError] = useState(false);
-  const [citeAsError, setCiteAsError] = useState(false);
 
   const datasetId = searchParams.get("dataset_id");
 
@@ -336,16 +334,11 @@ function AddFile() {
                 rows="3"
                 value={fileDescription}
                 onChange={(e) =>
-                  validateAndFilterSpecialChars(e.target.value, setFileDescription, setFileDescriptionError, 1000)
+                  setFileDescription(e.target.value.slice(0, 1000))
                 }
                 maxLength={1000}
                 disabled={submitting}
               />
-              {fileDescriptionError && (
-                <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
-                  no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
-                </span>
-              )}
             </div>
 
             <div className="field">
@@ -441,16 +434,9 @@ function AddFile() {
               <textarea
                 rows={4}
                 value={citeAs}
-                onChange={(e) =>
-                  validateAndFilterSpecialChars(e.target.value, setCiteAs, setCiteAsError, 1500)
-                }
+                onChange={(e) => setCiteAs(e.target.value.slice(0, 1500))}
                 disabled={submitting}
               />
-              {citeAsError && (
-                <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
-                  no special characters &lt; , &gt; , " , ' , &amp; , ; , ( , )
-                </span>
-              )}
             </div>
 
             <div className="field">

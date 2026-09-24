@@ -635,37 +635,6 @@ class UploadController:
                 detail="Error generating download URL",
             )
 
-    async def get_preview_url(
-        self,
-        file_id: UUID,
-        apikey: Optional[str],
-        user: Optional[User],
-    ) -> JSONResponse:
-        """Presigned URL for in-browser preview. Does not increment download counts."""
-        try:
-            _file_record, _dataset, file_key = await self._accessible_file_for_read(
-                file_id, apikey, user
-            )
-            presigned_data = await self.upload_service.get_presigned_download_url(
-                file_key
-            )
-            return JSONResponse(
-                content=jsonable_encoder(presigned_data),
-                status_code=status.HTTP_200_OK,
-            )
-        except HTTPException:
-            raise
-        except Exception as e:
-            self.logger.exception(
-                "Unexpected error generating preview URL for file_id %s: %s",
-                file_id,
-                e,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error generating preview URL",
-            )
-
     async def add_file(
         self,
         job_id: str,
@@ -965,7 +934,11 @@ class UploadController:
                     detail="Delete failed as this is the only file of the dataset",
                 )
 
-            # 3. Delete from S3
+            # 3. Delete converted objects then the native file from S3
+            from services.visualization import VisualizationService
+
+            viz = VisualizationService(self.session, self.upload_service)
+            await viz.delete_converted_objects(file_id)
             deleted = await self.upload_service.delete_object(file_key)
             if not deleted:
                 self.logger.warning(
@@ -1276,22 +1249,6 @@ async def get_download_url(
             - 500: Internal server error
     """
     return await controller.get_download_url(file_id, apikey, user)
-
-
-@router.get("/preview_url")
-async def get_preview_url(
-    file_id: UUID = Query(..., description="File ID (UUID) for the file to preview"),
-    apikey: Optional[str] = Depends(optional_api_key),
-    user: Optional[User] = Depends(get_current_user_optional_for_download),
-    controller: UploadController = Depends(get_upload_controller),
-):
-    """
-    Presigned URL for in-browser preview.
-
-    Uses the same visibility rules as /download_url but does not increment
-    download counts or write download logs.
-    """
-    return await controller.get_preview_url(file_id, apikey, user)
 
 
 @router.post("/add_file")

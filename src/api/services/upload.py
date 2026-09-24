@@ -121,17 +121,26 @@ class UploadService:
         except (ClientError, BotoCoreError) as e:
             self._raise_s3_error("presign_put", e)
 
-    def _presign_get_sync(self, file_key: str) -> str:
+    def _presign_get_sync(
+        self,
+        file_key: str,
+        inline: bool = False,
+        content_type: Optional[str] = None,
+    ) -> str:
         client = get_s3_client()
         filename = file_key.rsplit("/", 1)[-1]
+        disposition = "inline" if inline else "attachment"
+        params: Dict[str, Any] = {
+            "Bucket": self.s3_bucket,
+            "Key": file_key,
+            "ResponseContentDisposition": f'{disposition}; filename="{filename}"',
+        }
+        if inline and content_type:
+            params["ResponseContentType"] = content_type
         try:
             return client.generate_presigned_url(
                 "get_object",
-                Params={
-                    "Bucket": self.s3_bucket,
-                    "Key": file_key,
-                    "ResponseContentDisposition": f'attachment; filename="{filename}"',
-                },
+                Params=params,
                 ExpiresIn=self._download_expires_seconds(),
                 HttpMethod="GET",
             )
@@ -318,9 +327,16 @@ class UploadService:
                 detail="Error deleting file from S3",
             )
 
-    async def get_presigned_download_url(self, file_key: str) -> Dict[str, Any]:
+    async def get_presigned_download_url(
+        self,
+        file_key: str,
+        inline: bool = False,
+        content_type: Optional[str] = None,
+    ) -> Dict[str, Any]:
         try:
-            url = await asyncio.to_thread(self._presign_get_sync, file_key)
+            url = await asyncio.to_thread(
+                self._presign_get_sync, file_key, inline, content_type
+            )
             return {
                 "download_url": url,
                 "presigned_download_url": url,

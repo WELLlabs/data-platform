@@ -1671,6 +1671,32 @@ function DatasetInfo() {
                                     {(file.downloads ?? 0).toLocaleString("en-IN")}
                                   </div>
                                 </div>
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="file" size={12} sw={2} />
+                                    Cloud-native file
+                                  </div>
+                                  <div className="fmv">
+                                    <span className="cloud-native-status">
+                                      <span
+                                        className={
+                                          "cloud-native-dot" +
+                                          (file.cloud_native_available ? " on" : "")
+                                        }
+                                        title={
+                                          file.cloud_native_available
+                                            ? "Cloud-native file available"
+                                            : "Cloud-native file not available yet"
+                                        }
+                                      />
+                                      {file.cloud_native_available
+                                        ? "Available"
+                                        : file.cloud_native_status === "processing"
+                                          ? "Processing"
+                                          : "Not generated"}
+                                    </span>
+                                  </div>
+                                </div>
                                 {file.cite_as && (
                                   <div className="fm wide">
                                     <div className="fml">

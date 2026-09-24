@@ -9,4 +9,12 @@ module.exports = function setupProxy(app) {
       pathRewrite: { "^/api": "" },
     })
   );
+  app.use(
+    "/titiler",
+    createProxyMiddleware({
+      target: process.env.REACT_APP_TITILER_TARGET || "http://localhost:8001",
+      changeOrigin: true,
+      pathRewrite: { "^/titiler": "" },
+    })
+  );
 };

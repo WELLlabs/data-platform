@@ -539,6 +539,11 @@ class DatasetController:
             file_downloads = await self.dataset_service.get_download_counts_for_files(
                 [f.file_id for f in files]
             )
+            from services.formats import STATUS_AVAILABLE, plan_for_format
+            from services.visualization import VisualizationService
+
+            viz = VisualizationService(self.dataset_service.session, self.upload_service)
+            converted_status = await viz.statuses_for_files([f.file_id for f in files])
             dataset_downloads = sum(
                 file_downloads.get(f.file_id, 0) for f in files
             )
@@ -571,40 +576,49 @@ class DatasetController:
                 "owners": await self.dataset_service.list_owners(dataset_id),
             }
 
-            files_arr = [
-                {
-                    "file_id": str(f.file_id),
-                    "file_title": f.file_title,
-                    "file_name": (
-                        f.file_key.rsplit("/", 1)[-1] if f.file_key else None
-                    ),
-                    "file_size": f.file_size,
-                    "file_description": f.file_description,
-                    "file_format": f.file_format,
-                    "dataset_id": str(f.dataset_id),
-                    "downloads": file_downloads.get(f.file_id, 0),
-                    "provenance": f.provenance,
-                    "source": f.source,
-                    "cite_as": f.cite_as,
-                    "groundtruthed": f.groundtruthed,
-                    "permissions": f.permissions,
-                    "duration": f.duration,
-                    "temporal_from": f.temporal_from.isoformat()
-                    if f.temporal_from
-                    else None,
-                    "temporal_to": f.temporal_to.isoformat()
-                    if f.temporal_to
-                    else None,
-                    "geography": f.geography,
-                    "created_at": f.created_at.isoformat()
-                    if f.created_at
-                    else None,
-                    "modified_at": f.modified_at.isoformat()
-                    if getattr(f, "modified_at", None)
-                    else None,
-                }
-                for f in files
-            ]
+            files_arr = []
+            for f in files:
+                plan = plan_for_format(f.file_format, f.file_key)
+                conv_status = converted_status.get(f.file_id)
+                files_arr.append(
+                    {
+                        "file_id": str(f.file_id),
+                        "file_title": f.file_title,
+                        "file_name": (
+                            f.file_key.rsplit("/", 1)[-1] if f.file_key else None
+                        ),
+                        "file_size": f.file_size,
+                        "file_description": f.file_description,
+                        "file_format": f.file_format,
+                        "dataset_id": str(f.dataset_id),
+                        "downloads": file_downloads.get(f.file_id, 0),
+                        "provenance": f.provenance,
+                        "source": f.source,
+                        "cite_as": f.cite_as,
+                        "groundtruthed": f.groundtruthed,
+                        "permissions": f.permissions,
+                        "duration": f.duration,
+                        "temporal_from": f.temporal_from.isoformat()
+                        if f.temporal_from
+                        else None,
+                        "temporal_to": f.temporal_to.isoformat()
+                        if f.temporal_to
+                        else None,
+                        "geography": f.geography,
+                        "created_at": f.created_at.isoformat()
+                        if f.created_at
+                        else None,
+                        "modified_at": f.modified_at.isoformat()
+                        if getattr(f, "modified_at", None)
+                        else None,
+                        "viewer": plan.viewer if plan else None,
+                        "cloud_native_status": conv_status,
+                        "cloud_native_available": bool(
+                            (plan and plan.cloud_native)
+                            or conv_status == STATUS_AVAILABLE
+                        ),
+                    }
+                )
 
             privileges = await _compute_privileges(
                 dataset_id,
@@ -842,6 +856,12 @@ class DatasetController:
                 file_id = file_record.file_id
 
                 try:
+                    from services.visualization import VisualizationService
+
+                    viz = VisualizationService(
+                        self.dataset_service.session, self.upload_service
+                    )
+                    await viz.delete_converted_objects(file_id)
                     deleted = await self.upload_service.delete_object(file_key)
                     if not deleted:
                         self.logger.error(

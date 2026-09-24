@@ -25,3 +25,8 @@ dependencies = [
     "gevent>=25.9.1",
     "flower>=2.0.1",
 ]
+
+[project.optional-dependencies]
+visualization = [
+    "duckdb>=1.2.0",
+]

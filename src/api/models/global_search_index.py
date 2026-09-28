@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import DateTime, Integer, Text
+from sqlalchemy import DateTime, Index, Integer, Text
 from sqlalchemy.dialects.postgresql import TSVECTOR, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,6 +30,26 @@ class GlobalSearchIndex(Base):
     """
 
     __tablename__ = "global_search_index"
+    __table_args__ = (
+        Index(
+            "uq_global_search_index_dataset_file",
+            "dataset_id",
+            "file_id",
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+        ),
+        Index(
+            "ix_global_search_index_fts_vector",
+            "fts_vector",
+            postgresql_using="gin",
+        ),
+        Index(
+            "ix_global_search_index_title_trgm",
+            "title",
+            postgresql_using="gin",
+            postgresql_ops={"title": "gin_trgm_ops"},
+        ),
+    )
 
     id: Mapped[int] = mapped_column(
         primary_key=True,

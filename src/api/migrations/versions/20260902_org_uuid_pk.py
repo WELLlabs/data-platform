@@ -101,6 +101,13 @@ def upgrade() -> None:
         ["id"],
         ondelete="RESTRICT",
     )
+    # Dropping the old string column also dropped ix_datasets_organization.
+    op.create_index(
+        "ix_datasets_organization",
+        "datasets",
+        ["organization"],
+        unique=False,
+    )
 
     op.drop_column("user_contributions", "organization_id")
     op.alter_column(

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { Container, Row, Col, Card, Alert, Button } from "reactstrap";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import Contour from "../components/wd/Contour";
+import Ic from "../components/wd/Icons";
 
 function CreateOrgSuccess() {
   const [orgName, setOrgName] = useState("");
@@ -8,7 +9,7 @@ function CreateOrgSuccess() {
   const [orgId, setOrgId] = useState("");
   const [isValidAccess, setIsValidAccess] = useState(false);
   const [loading, setLoading] = useState(true);
-  
+
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -26,7 +27,7 @@ function CreateOrgSuccess() {
     } else {
       setIsValidAccess(false);
     }
-    
+
     setLoading(false);
   }, [searchParams]);
 
@@ -49,19 +50,12 @@ function CreateOrgSuccess() {
 
   if (loading) {
     return (
-      <div className="bg-wave">
-        <Container className="py-5">
-          <Row className="justify-content-center">
-            <Col md="8" lg="6">
-              <Card className="p-5 text-center">
-                <div className="spinner-border text-primary" role="status">
-                  <span className="visually-hidden">Loading...</span>
-                </div>
-                <h5 className="mt-3">Loading...</h5>
-              </Card>
-            </Col>
-          </Row>
-        </Container>
+      <div className="page">
+        <div className="wrap">
+          <div className="auth-wrap">
+            <div className="empty"><p>Loading…</p></div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -69,92 +63,67 @@ function CreateOrgSuccess() {
   // Invalid access - page accessed directly without proper parameters
   if (!isValidAccess) {
     return (
-      <div className="bg-wave">
-        <Container className="py-5">
-          <Row className="justify-content-center">
-            <Col md="8" lg="6">
-              <Card className="p-4 p-md-5 text-center">
-                <Alert color="warning" className="mb-4">
-                  <h5 className="alert-heading">Invalid Access</h5>
-                  <p className="mb-0">
-                    Navigation to this page is invalid. Go to sign up or create organisation.
-                  </p>
-                </Alert>
-                
-                <div className="d-flex flex-column flex-md-row gap-2 justify-content-center">
-                  <Button 
-                    color="primary" 
-                    onClick={() => navigate("/signup")}
-                    className="mb-2 mb-md-0"
-                  >
-                    Sign Up
-                  </Button>
-                  <Button 
-                    color="outline-primary" 
-                    onClick={() => navigate("/createorg")}
-                  >
-                    Create Organisation
-                  </Button>
-                </div>
-              </Card>
-            </Col>
-          </Row>
-        </Container>
+      <div className="page">
+        <div className="wrap">
+          <div className="auth-wrap">
+            <div className="auth-card" style={{ position: "relative", overflow: "hidden" }}>
+              <Contour op={0.35} />
+              <span className="eyebrow">Organizations</span>
+              <h1 className="display">Invalid access</h1>
+              <p className="auth-sub">
+                Navigation to this page is invalid. Go to sign up or create an organisation.
+              </p>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 22 }}>
+                <button className="btn btn-primary" onClick={() => navigate("/signup")}>
+                  Sign up
+                </button>
+                <button className="btn btn-ghost" onClick={() => navigate("/")}>
+                  Go home
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
 
   // Valid access - show success message
   return (
-    <div className="bg-wave">
-      <Container className="py-5">
-        <Row className="justify-content-center">
-          <Col md="8" lg="6">
-            <Card className="p-4 p-md-5 text-center">
-              <div className="mb-4">
-                <div className="text-success mb-3">
-                  <i className="bi bi-check-circle-fill" style={{ fontSize: "4rem" }}></i>
-                </div>
-                <h3 className="text-success mb-3">Success!</h3>
+    <div className="page">
+      <div className="wrap">
+        <div className="auth-wrap">
+          <div className="auth-card" style={{ position: "relative", overflow: "hidden" }}>
+            <Contour op={0.35} />
+            <span className="eyebrow">Organizations</span>
+            <h1 className="display">Organization created</h1>
+            <p className="auth-sub">
+              Organisation <strong>{orgName}</strong> was successfully created on{" "}
+              <strong>{formatDate(createdAt)}</strong>.
+            </p>
+            <div className="rail-card" style={{ marginTop: 18 }}>
+              <div className="rrow">
+                <span>Organisation ID</span>
+                <span className="mono-token">{orgId}</span>
               </div>
-
-              <Alert color="success" className="mb-4">
-                <h5 className="alert-heading">Organization Created Successfully</h5>
-                <p className="mb-2">
-                  Organisation <strong>{orgName}</strong> is successfully created at{" "}
-                  <strong>{formatDate(createdAt)}</strong>.
-                </p>
-                <p className="mb-0">
-                  Organisation ID: <strong>{orgId}</strong>
-                </p>
-              </Alert>
-
-              <div className="d-flex flex-column flex-md-row gap-2 justify-content-center">
-                <Button 
-                  color="primary" 
-                  onClick={() => navigate("/signup")}
-                  className="mb-2 mb-md-0"
-                >
-                  Sign Up
-                </Button>
-                <Button 
-                  color="outline-primary" 
-                  onClick={() => navigate("/createorg")}
-                  className="mb-2 mb-md-0"
-                >
-                  Create Another Organization
-                </Button>
-                <Button 
-                  color="outline-secondary" 
-                  onClick={() => navigate("/")}
-                >
-                  Go Home
-                </Button>
-              </div>
-            </Card>
-          </Col>
-        </Row>
-      </Container>
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 22 }}>
+              <button
+                className="btn btn-primary"
+                onClick={() => navigate(`/organisation?id=${encodeURIComponent(orgId)}`)}
+              >
+                View organization<Ic name="arrow" size={16} />
+              </button>
+              <button className="btn btn-ghost" onClick={() => navigate("/orgsearch")}>
+                All organizations
+              </button>
+              <button className="btn btn-ghost" onClick={() => navigate("/createorg")}>
+                Create another
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

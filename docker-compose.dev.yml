@@ -1,5 +1,6 @@
 volumes:
   pg_data:
+  typesense_data:
 
 services:
   backend:
@@ -18,10 +19,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      s3handler:
-        condition: service_healthy
       email-worker:
         condition: service_healthy
+      typesense:
+        condition: service_started
     # restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
@@ -42,6 +43,8 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+      titiler:
+        condition: service_started
     # restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
@@ -51,7 +54,7 @@ services:
       start_period: 5s
   
   db:
-    image: postgres
+    image: postgres:17
     environment:
       - POSTGRES_USER
       - POSTGRES_PASSWORD
@@ -75,22 +78,25 @@ services:
     # restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "-e", "QUIT"]
-  
-  s3handler:
-    image: s3handler:latest
+
+  typesense:
+    image: typesense/typesense:27.1
     networks:
       - appnet
-    # expose at random port, internally backend fetches from 8000
     ports:
-      - "33333:8000"
-    env_file:
-      - ./.env
-    # restart: unless-stopped
+      - "8108:8108"
+    environment:
+      TYPESENSE_DATA_DIR: /data
+      TYPESENSE_API_KEY: ${TYPESENSE_API_KEY:-xyz}
+      TYPESENSE_ENABLE_CORS: "true"
+    volumes:
+      - typesense_data:/data
+    command: ["--data-dir", "/data", "--api-key", "${TYPESENSE_API_KEY:-xyz}", "--enable-cors"]
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
-      interval: 30s
+      test: ["CMD-SHELL", "curl -sf http://localhost:8108/health || exit 1"]
+      interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 10
       start_period: 10s
 
   email-worker:
@@ -138,6 +144,67 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  titiler:
+    image: ghcr.io/developmentseed/titiler:latest
+    platform: linux/amd64
+    command:
+      [
+        "uvicorn",
+        "titiler.application.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--workers",
+        "1",
+      ]
+    environment:
+      CPL_TMPDIR: /tmp
+      GDAL_CACHEMAX: 75%
+      GDAL_DISABLE_READDIR_ON_OPEN: EMPTY_DIR
+      GDAL_HTTP_MERGE_CONSECUTIVE_RANGES: "YES"
+      GDAL_HTTP_MULTIPLEX: "YES"
+      GDAL_HTTP_VERSION: "2"
+      VSI_CACHE: "TRUE"
+      VSI_CACHE_SIZE: "536870912"
+      TITILER_API_CORS_ORIGINS: "*"
+    ports:
+      - "8001:8000"
+    networks:
+      - appnet
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  conversion-worker:
+    build:
+      context: ./src/api
+      dockerfile: Dockerfile.conversion
+    env_file:
+      - ./.env
+    networks:
+      - appnet
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "uv run celery -A celery_cpu_worker inspect ping || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
 networks:
   appnet:

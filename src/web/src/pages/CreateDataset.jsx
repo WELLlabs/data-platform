@@ -1,15 +1,80 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import {
-    upload_url_endpoint,
     create_upload_job_endpoint,
     complete_upload_job_endpoint,
     create_dataset_endpoint,
     add_files_url_endpoint,
     organization_by_id_endpoint,
 } from "../api/endpoints";
+import { requestAndUploadFile } from "../api/s3Upload";
 import HelpTooltip from "../components/HelpTooltip";
+import Ic from "../components/wd/Icons";
+import TagMultiSelect from "../components/wd/TagMultiSelect";
+import {
+    AVAILABILITY_OPTIONS,
+    AVAILABILITY_PUBLIC,
+} from "../constants/availability";
+
+const INVALID_CHARS = /[<>"'&;()]/;
+const INVALID_CHARS_G = /[<>"'&;()]/g;
+
+const PERMISSION_OPTIONS = [
+    "CC0: Public Domain",
+    "CC BY: Attribution",
+    "CC BY-SA: Attribution-ShareAlike",
+    "CC BY-NC: Attribution-NonCommercial",
+    "CC BY-NC-SA: Attribution-NonCommercial-ShareAlike",
+    "CC BY-ND: Attribution-NoDerivatives",
+    "CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives",
+];
+
+
+// Textarea that grows to fit its content as the user types.
+function AutoTextarea({ value, minRows = 2, onChange, ...rest }) {
+    const ref = useRef(null);
+    useEffect(() => {
+        const el = ref.current;
+        if (!el) return;
+        el.style.height = "auto";
+        el.style.height = `${el.scrollHeight}px`;
+    }, [value]);
+    return (
+        <textarea
+            ref={ref}
+            rows={minRows}
+            value={value}
+            onChange={onChange}
+            className="autogrow"
+            {...rest}
+        />
+    );
+}
+
+// Convert a datetime-local input value into an ISO string (or "").
+function localToIso(val) {
+    if (!val) return "";
+    const date = new Date(val);
+    return isNaN(date.getTime()) ? "" : date.toISOString();
+}
+
+// Convert a stored ISO string back into a datetime-local input value.
+function isoToLocal(iso) {
+    if (!iso) return "";
+    try {
+        const date = new Date(iso);
+        if (isNaN(date.getTime())) return "";
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, "0");
+        const day = String(date.getDate()).padStart(2, "0");
+        const hours = String(date.getHours()).padStart(2, "0");
+        const minutes = String(date.getMinutes()).padStart(2, "0");
+        return `${year}-${month}-${day}T${hours}:${minutes}`;
+    } catch {
+        return "";
+    }
+}
 
 function CreateDataset() {
     const navigate = useNavigate();
@@ -23,39 +88,27 @@ function CreateDataset() {
     const [error, setError] = useState("");
     const [success, setSuccess] = useState(false);
 
-    // Form state
+    // Dataset-level state
     const [title, setTitle] = useState("");
     const [datasetDescription, setDatasetDescription] = useState("");
-    const [tags, setTags] = useState("");
-    const [provenance, setProvenance] = useState("");
-    const [source, setSource] = useState("");
-    const [citeAs, setCiteAs] = useState("");
-    const [groundtruthed, setGroundtruthed] = useState(false);
-    const [isPrivate, setIsPrivate] = useState(false);
-    const [permissions, setPermissions] = useState("CC0: Public Domain");
-    const [duration, setDuration] = useState(0);
-    const [value, setValue] = useState("low");
+    const [tags, setTags] = useState([]);
+    const [availability, setAvailability] = useState(AVAILABILITY_PUBLIC);
 
-    const [file, setFile] = useState(null);
-    const [fileTitle, setFileTitle] = useState("");
-    const [fileDescription, setFileDescription] = useState("");
-    const [fileFormat, setFileFormat] = useState("");
-    const [temporalFrom, setTemporalFrom] = useState("");
-    const [temporalTo, setTemporalTo] = useState("");
-    const [geography, setGeography] = useState("");
+    // Per-file state
+    const [files, setFiles] = useState([]);
+    const [dragging, setDragging] = useState(false);
 
-    // Validation error states
+    // Accordion: key of the file whose attribution panel is expanded.
+    const [openKey, setOpenKey] = useState(null);
+
+    // Wizard step: 1 = dataset details, 2 = attribution, coverage & files.
+    const [step, setStep] = useState(1);
+    // Show validation messages inside the cards after a failed step/submit.
+    const [showErrors, setShowErrors] = useState(false);
+
+    // Dataset-level validation flags
     const [titleError, setTitleError] = useState(false);
-    const [datasetDescriptionError, setDatasetDescriptionError] =
-        useState(false);
-    const [tagsError, setTagsError] = useState(false);
-    const [provenanceError, setProvenanceError] = useState(false);
-    const [sourceError, setSourceError] = useState(false);
-    const [citeAsError, setCiteAsError] = useState(false);
-    const [permissionsError, setPermissionsError] = useState(false);
-    const [fileTitleError, setFileTitleError] = useState(false);
-    const [fileDescriptionError, setFileDescriptionError] = useState(false);
-    const [fileFormatError, setFileFormatError] = useState(false);
+    // Dataset description allows all characters (backend sanitises).
 
     // Ensure auth and populate query params with userId and organization
     useEffect(() => {
@@ -66,7 +119,6 @@ function CreateDataset() {
                     navigate("/signin");
                     return;
                 }
-                // Ensure query params include userId and organization
                 const qp = new URLSearchParams(searchParams);
                 let updated = false;
                 if (qp.get("userId") !== userData.id) {
@@ -81,7 +133,6 @@ function CreateDataset() {
                     setSearchParams(qp);
                 }
 
-                // Fetch organization to know if private can be set from UI
                 if (userData.organization) {
                     const resp = await fetch(
                         organization_by_id_endpoint(userData.organization),
@@ -105,56 +156,170 @@ function CreateDataset() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const handleFileChange = (e) => {
-        const f =
-            e.target.files && e.target.files[0] ? e.target.files[0] : null;
-        setFile(f);
-        if (f && !fileTitle) {
-            // Filter special characters from filename when auto-filling
-            const filteredName = f.name.replace(/[<>"'&;()]/g, "");
-            const title = filteredName.slice(0, 200);
-            setFileTitle(title);
-            if (title !== f.name.slice(0, 200)) {
-                setFileTitleError(true);
-            }
-        }
-        if (f && !fileFormat) {
-            const parts = f.name.split(".");
-            if (parts.length > 1) {
-                const format = parts.pop().slice(0, 20);
-                // Filter special characters from format
-                const filteredFormat = format.replace(/[<>"'&;()]/g, "");
-                setFileFormat(filteredFormat);
-                if (filteredFormat !== format) {
-                    setFileFormatError(true);
-                }
-            }
-        }
-    };
-
     const constrained = (v, max) => (v || "").slice(0, max);
 
-    // Helper function to validate and filter special characters
+    const toFileEntry = (f) => {
+        const filteredName = f.name.replace(INVALID_CHARS_G, "");
+        const parts = f.name.split(".");
+        const ext = parts.length > 1 ? parts.pop().slice(0, 20) : "";
+        const filteredFormat = ext.replace(INVALID_CHARS_G, "");
+        return {
+            key: `${f.name}-${f.size}-${f.lastModified}`,
+            file: f,
+            title: filteredName.slice(0, 200),
+            description: "",
+            format: filteredFormat,
+            provenance: "",
+            source: "",
+            permissions: "CC0: Public Domain",
+            citeAs: "",
+            groundtruthed: "",
+            temporalFrom: "",
+            temporalTo: "",
+            duration: 0,
+            geography: "",
+            errors: {},
+        };
+    };
+
+    const addFiles = (picked) => {
+        if (!picked.length) return;
+        let lastAdded = null;
+        setFiles((prev) => {
+            const next = [...prev];
+            picked.forEach((f) => {
+                const entry = toFileEntry(f);
+                if (!next.some((x) => x.key === entry.key)) {
+                    next.push(entry);
+                    lastAdded = entry.key;
+                }
+            });
+            return next;
+        });
+        if (lastAdded) setOpenKey(lastAdded);
+    };
+
+    const handleFileChange = (e) => {
+        const picked = e.target.files ? Array.from(e.target.files) : [];
+        addFiles(picked);
+        e.target.value = "";
+    };
+
+    const handleDrop = (e) => {
+        e.preventDefault();
+        setDragging(false);
+        const picked = e.dataTransfer?.files
+            ? Array.from(e.dataTransfer.files)
+            : [];
+        addFiles(picked);
+    };
+
+    // Plain per-file field update (no special-character filtering).
+    const updateFileEntry = (key, field, value) => {
+        setFiles((prev) =>
+            prev.map((item) =>
+                item.key === key ? { ...item, [field]: value } : item
+            )
+        );
+    };
+
+    // Per-file text update that strips blocked characters and flags the field.
+    const updateFileText = (key, field, value, max) => {
+        const bad = INVALID_CHARS.test(value);
+        const cleaned = bad ? value.replace(INVALID_CHARS_G, "") : value;
+        setFiles((prev) =>
+            prev.map((item) =>
+                item.key === key
+                    ? {
+                          ...item,
+                          [field]: constrained(cleaned, max),
+                          errors: { ...item.errors, [field]: bad },
+                      }
+                    : item
+            )
+        );
+    };
+
+    const removeFileEntry = (key) => {
+        setFiles((prev) => prev.filter((item) => item.key !== key));
+        setOpenKey((k) => (k === key ? null : k));
+    };
+
+    // Accordion toggle: open the clicked file, or close it if already open.
+    const toggleOpen = (key) => {
+        setOpenKey((k) => (k === key ? null : key));
+    };
+
+    // Dataset-level special-character validation helper.
     const validateAndFilterSpecialChars = (
         value,
         setValue,
-        setError,
+        setErrorFlag,
         maxLength
     ) => {
-        // Characters to block: <, >, ", ', &, ;, (, )
-        const invalidChars = /[<>"'&;()]/g;
-        const hasInvalidChars = invalidChars.test(value);
-
-        if (hasInvalidChars) {
-            // Filter out invalid characters
-            const filtered = value.replace(invalidChars, "");
-            setValue(constrained(filtered, maxLength));
-            setError(true);
+        const bad = INVALID_CHARS.test(value);
+        if (bad) {
+            setValue(constrained(value.replace(INVALID_CHARS_G, ""), maxLength));
+            setErrorFlag(true);
         } else {
             setValue(constrained(value, maxLength));
-            setError(false);
+            setErrorFlag(false);
         }
     };
+
+    // Step 1 is complete once the folder has a title and at least one tag.
+    const step1Complete = () => Boolean(title.trim() && tags.length);
+
+    const goToStep2 = () => {
+        setError("");
+        if (!title.trim() || !tags.length) {
+            setShowErrors(true);
+            window.scrollTo({ top: 0, behavior: "smooth" });
+            return;
+        }
+        setShowErrors(false);
+        setStep(2);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+    };
+
+    const goToStep = (target) => {
+        if (target === 2 && !step1Complete()) {
+            goToStep2();
+            return;
+        }
+        setError("");
+        setStep(target);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+    };
+
+    // Fields every file must carry before the dataset can be published.
+    const fileMissing = (item) => {
+        const missing = [];
+        if (!item.title.trim()) missing.push("File title");
+        if (item.groundtruthed !== "yes" && item.groundtruthed !== "no")
+            missing.push("Groundtruthed");
+        if (
+            item.duration === "" ||
+            item.duration === null ||
+            isNaN(Number(item.duration))
+        )
+            missing.push("Duration (years)");
+        if (!item.temporalFrom) missing.push("Temporal coverage from");
+        if (!item.temporalTo) missing.push("Temporal coverage to");
+        if (!String(item.geography || "").trim())
+            missing.push("Geographical extent");
+        return missing;
+    };
+
+    // Per-file validation summary (only files with something missing).
+    const getFileErrors = () =>
+        files
+            .map((item) => ({
+                key: item.key,
+                name: item.title.trim() || item.file.name,
+                missing: fileMissing(item),
+            }))
+            .filter((f) => f.missing.length > 0);
 
     const onSubmit = async (e) => {
         e.preventDefault();
@@ -164,20 +329,18 @@ function CreateDataset() {
             navigate("/signin");
             return;
         }
-        if (!file) {
-            setError("Please select a file.");
+        // Title and tags belong to step 1; send the user back if missing.
+        if (!title.trim() || !tags.length) {
+            setShowErrors(true);
+            setStep(1);
+            window.scrollTo({ top: 0, behavior: "smooth" });
             return;
         }
-        if (!title.trim()) {
-            setError("Dataset title is required.");
-            return;
-        }
-        if (!tags.trim()) {
-            setError("Tags are required.");
-            return;
-        }
-        if (!fileTitle.trim()) {
-            setError("File title is required.");
+        const fileErrs = getFileErrors();
+        if (!files.length || fileErrs.length) {
+            setShowErrors(true);
+            if (fileErrs.length) setOpenKey(fileErrs[0].key);
+            window.scrollTo({ top: 0, behavior: "smooth" });
             return;
         }
 
@@ -208,19 +371,12 @@ function CreateDataset() {
                 constrained(datasetDescription, 2000)
             );
             datasetForm.append(
-                "private",
-                orgPrivate && isPrivate ? "true" : "false"
+                "availability",
+                String(orgPrivate ? availability : AVAILABILITY_PUBLIC)
             );
             datasetForm.append("job_id", jobId);
-
-            // Process tags: split by comma, strip whitespace, replace internal spaces with hyphens, send as array
-            if (tags && tags.trim()) {
-                const tagsArray = tags
-                    .split(",")
-                    .map((tag) => tag.trim())
-                    .filter((tag) => tag.length > 0)
-                    .map((tag) => tag.replace(/\s+/g, "-"));
-                tagsArray.forEach((tag) => {
+            if (tags.length) {
+                tags.forEach((tag) => {
                     datasetForm.append("tags", tag);
                 });
             }
@@ -241,97 +397,73 @@ function CreateDataset() {
                 throw new Error("Dataset ID not found in response.");
             }
 
-            // 3) Get upload URL for selected filename
-            const filenameOnly = file.name; // do not include path
-            const uploadResp = await fetch(
-                `${upload_url_endpoint}?job_id=${encodeURIComponent(
-                    datasetJobId
-                )}&filename=${encodeURIComponent(filenameOnly)}`,
-                { credentials: "include" }
+            // 3) Upload every file with its own metadata
+            const totalBytes = files.reduce(
+                (sum, item) => sum + (item.file.size || 0),
+                0
             );
-            if (!uploadResp.ok) {
-                const txt = await uploadResp.text();
-                throw new Error(`Failed to get upload URL: ${txt}`);
-            }
-            const uploadData = await uploadResp.json();
-            const uploadUrl =
-                uploadData.presigned_upload_url ||
-                uploadData.upload_url ||
-                uploadData.url ||
-                uploadData.uploadUrl;
-            const fileId = uploadData.file_id;
-            if (!uploadUrl) {
-                throw new Error("Upload URL missing in response.");
-            }
-            if (!fileId) {
-                throw new Error("File ID missing in response.");
-            }
+            let uploadedBytes = 0;
+            for (const item of files) {
+                const priorBytes = uploadedBytes;
+                const { fileId } = await requestAndUploadFile({
+                    jobId: datasetJobId,
+                    file: item.file,
+                    onProgress: (pct) => {
+                        const current = (item.file.size || 0) * (pct / 100);
+                        const overall = totalBytes
+                            ? Math.round(
+                                  ((priorBytes + current) / totalBytes) * 100
+                              )
+                            : pct;
+                        setProgress(Math.min(99, overall));
+                    },
+                });
 
-            // Use the content_type from the response (matches what was used to sign the presigned URL)
-            // Fallback to file.type for backward compatibility
-            const contentType =
-                uploadData.content_type ||
-                file.type ||
-                "application/octet-stream";
+                const addFileForm = new FormData();
+                addFileForm.append("job_id", datasetJobId);
+                addFileForm.append("file_id", fileId);
+                addFileForm.append("file_title", constrained(item.title, 200));
+                addFileForm.append(
+                    "file_description",
+                    constrained(item.description, 1000)
+                );
+                addFileForm.append("file_format", constrained(item.format, 20));
+                addFileForm.append("dataset_id", datasetId);
+                if (item.groundtruthed === "yes")
+                    addFileForm.append("groundtruthed", "true");
+                addFileForm.append("provenance", constrained(item.provenance, 125));
+                addFileForm.append("source", constrained(item.source, 1000));
+                addFileForm.append("cite_as", constrained(item.citeAs, 1500));
+                addFileForm.append(
+                    "permissions",
+                    constrained(item.permissions, 1000)
+                );
+                addFileForm.append("duration", String(item.duration || 0));
+                if (item.temporalFrom)
+                    addFileForm.append("temporal_from", item.temporalFrom);
+                if (item.temporalTo)
+                    addFileForm.append("temporal_to", item.temporalTo);
+                if (item.geography) {
+                    addFileForm.append(
+                        "geography",
+                        constrained(item.geography, 2000)
+                    );
+                }
 
-            // 2) Upload the file to S3 using the presigned URL (PUT)
-            await new Promise((resolve, reject) => {
-                const xhr = new XMLHttpRequest();
-                xhr.upload.onprogress = (evt) => {
-                    if (evt.lengthComputable) {
-                        const pct = Math.round((evt.loaded / evt.total) * 100);
-                        setProgress(pct);
-                    }
-                };
-                xhr.onload = () => {
-                    if (xhr.status >= 200 && xhr.status < 300) resolve();
-                    else
-                        reject(
-                            new Error(`Upload failed with status ${xhr.status}`)
-                        );
-                };
-                xhr.onerror = () => reject(new Error("Upload network error"));
-                xhr.open("PUT", uploadUrl);
-                xhr.setRequestHeader("Content-Type", contentType);
-                xhr.send(file);
-            });
-
-            // 4) Stage file metadata using job_id + file_id
-            const addFileForm = new FormData();
-            addFileForm.append("job_id", datasetJobId);
-            addFileForm.append("file_id", fileId);
-            addFileForm.append("file_title", constrained(fileTitle, 200));
-            addFileForm.append(
-                "file_description",
-                constrained(fileDescription, 1000)
-            );
-            addFileForm.append("file_format", constrained(fileFormat, 20));
-            addFileForm.append("dataset_id", datasetId);
-            if (groundtruthed) addFileForm.append("groundtruthed", "true");
-            addFileForm.append("provenance", constrained(provenance, 125));
-            addFileForm.append("source", constrained(source, 1000));
-            addFileForm.append("cite_as", constrained(citeAs, 1500));
-            addFileForm.append("permissions", constrained(permissions, 1000));
-            addFileForm.append("duration", duration.toString());
-            if (value) addFileForm.append("value", value);
-            if (temporalFrom) addFileForm.append("temporal_from", temporalFrom);
-            if (temporalTo) addFileForm.append("temporal_to", temporalTo);
-            if (geography) {
-                addFileForm.append("geography", constrained(geography, 2000));
+                const addFileResp = await fetch(add_files_url_endpoint, {
+                    method: "POST",
+                    body: addFileForm,
+                    credentials: "include",
+                });
+                if (!addFileResp.ok) {
+                    const txt = await addFileResp.text();
+                    throw new Error(`Failed to add file: ${txt}`);
+                }
+                await addFileResp.json();
+                uploadedBytes += item.file.size || 0;
             }
 
-            const addFileResp = await fetch(add_files_url_endpoint, {
-                method: "POST",
-                body: addFileForm,
-                credentials: "include",
-            });
-            if (!addFileResp.ok) {
-                const txt = await addFileResp.text();
-                throw new Error(`Failed to add file: ${txt}`);
-            }
-            await addFileResp.json();
-
-            // 5) Complete upload job
+            // 4) Complete upload job
             const completeResp = await fetch(
                 `${complete_upload_job_endpoint}?job_id=${encodeURIComponent(
                     datasetJobId
@@ -357,11 +489,29 @@ function CreateDataset() {
         }
     };
 
+    const invalidCharsNote = (
+        <span className="err">
+            No special characters &lt; &gt; " ' &amp; ; ( )
+        </span>
+    );
+
+    const fmtBytes = (n) => {
+        if (!n && n !== 0) return "";
+        if (n < 1024) return `${n} B`;
+        if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`;
+        return `${(n / 1048576).toFixed(1)} MB`;
+    };
+
     if (loading) {
         return (
-            <div className="container py-5 text-center">
-                <div className="spinner-border" role="status">
-                    <span className="visually-hidden">Loading...</span>
+            <div className="page">
+                <div
+                    className="wrap"
+                    style={{ maxWidth: 860, padding: "48px 0 88px" }}
+                >
+                    <div className="empty">
+                        <p>Loading…</p>
+                    </div>
                 </div>
             </div>
         );
@@ -371,598 +521,848 @@ function CreateDataset() {
 
     if (success) {
         return (
-            <div className="container py-5 min-vh-100 d-flex align-items-center justify-content-center">
-                <div className="text-center">
-                    <p className="fs-4 mb-4">
-                        Dataset upload is in progress, it will soon be
-                        available in your dashboard.
-                    </p>
-                    <button
-                        type="button"
-                        className="btn text-white"
-                        style={{ backgroundColor: "#0d6efd" }}
-                        onMouseEnter={(e) => {
-                            e.currentTarget.style.backgroundColor = "#0b5ed7";
-                        }}
-                        onMouseLeave={(e) => {
-                            e.currentTarget.style.backgroundColor = "#0d6efd";
-                        }}
-                        onClick={() => navigate("/dashboard")}
-                    >
-                        Dashboard
-                    </button>
+            <div className="page">
+                <div
+                    className="wrap"
+                    style={{ maxWidth: 560, padding: "72px 0 88px" }}
+                >
+                    <div className="auth-card" style={{ textAlign: "center" }}>
+                        <div
+                            style={{
+                                width: 56,
+                                height: 56,
+                                borderRadius: "50%",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                margin: "0 auto 18px",
+                                color: "var(--green)",
+                                background: "var(--green-soft)",
+                                border: "1px solid var(--green-line)",
+                            }}
+                        >
+                            <Ic name="check" size={26} sw={2.4} />
+                        </div>
+                        <span className="eyebrow">Datasets</span>
+                        <h1 className="display" style={{ marginTop: 6 }}>
+                            Dataset submitted
+                        </h1>
+                        <p
+                            className="auth-sub"
+                            style={{ maxWidth: "42ch", margin: "8px auto 0" }}
+                        >
+                            Your dataset was uploaded successfully. It is being
+                            processed and will appear in your dashboard shortly.
+                        </p>
+                        <div
+                            style={{
+                                marginTop: 24,
+                                display: "flex",
+                                gap: 10,
+                                justifyContent: "center",
+                                flexWrap: "wrap",
+                            }}
+                        >
+                            <button
+                                type="button"
+                                className="btn btn-primary"
+                                onClick={() => navigate("/dashboard")}
+                            >
+                                Go to dashboard
+                            </button>
+                            <button
+                                type="button"
+                                className="btn btn-ghost"
+                                onClick={() => window.location.reload()}
+                            >
+                                Publish another
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
         );
     }
 
+    const fileErrs = showErrors ? getFileErrors() : [];
+
     return (
-        <div className="container py-4">
-            <h2 className="mb-4">Create a Dataset</h2>
-
-            {error && (
-                <div className="alert alert-danger" role="alert">
-                    {error}
-                </div>
-            )}
-
-            <form onSubmit={onSubmit}>
-                <div className="mb-3">
-                    <label className="form-label">
-                        Dataset Title{" "}
-                        <span style={{ color: "red" }}>(required)</span>
-                        <HelpTooltip
-                            text="Name of the dataset. For example: Bangalore Rainfall Data would be dataset and you can add several datasets by year under that Title"
-                            id="tooltip-dataset-title"
-                        />
-                    </label>
-                    <input
-                        type="text"
-                        className={`form-control ${
-                            titleError ? "is-invalid" : ""
-                        }`}
-                        value={title}
-                        onChange={(e) =>
-                            validateAndFilterSpecialChars(
-                                e.target.value,
-                                setTitle,
-                                setTitleError,
-                                200
-                            )
-                        }
-                        required
-                    />
-                    {titleError && (
-                        <div
-                            className="invalid-feedback"
-                            style={{ display: "block", color: "red" }}
-                        >
-                            no special characters &lt; , &gt; , " , ' , &amp; ,
-                            ; , ( , )
-                        </div>
-                    )}
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label">
-                        Dataset Description
-                        <HelpTooltip
-                            text="What does the dataset contain."
-                            id="tooltip-dataset-description"
-                        />
-                    </label>
-                    <textarea
-                        className={`form-control ${
-                            datasetDescriptionError ? "is-invalid" : ""
-                        }`}
-                        rows={4}
-                        value={datasetDescription}
-                        onChange={(e) =>
-                            validateAndFilterSpecialChars(
-                                e.target.value,
-                                setDatasetDescription,
-                                setDatasetDescriptionError,
-                                2000
-                            )
-                        }
-                    />
-                    {datasetDescriptionError && (
-                        <div
-                            className="invalid-feedback"
-                            style={{ display: "block", color: "red" }}
-                        >
-                            no special characters &lt; , &gt; , " , ' , &amp; ,
-                            ; , ( , )
-                        </div>
-                    )}
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label">
-                        Tags (keywords separated by comma){" "}
-                        <span style={{ color: "red" }}>(required)</span>
-                        <HelpTooltip
-                            text="Think keyword. Which all search results should this dataset appear in."
-                            id="tooltip-tags"
-                        />
-                    </label>
-                    <input
-                        type="text"
-                        className={`form-control ${
-                            tagsError ? "is-invalid" : ""
-                        }`}
-                        value={tags}
-                        onChange={(e) =>
-                            validateAndFilterSpecialChars(
-                                e.target.value,
-                                setTags,
-                                setTagsError,
-                                500
-                            )
-                        }
-                    />
-                    {tagsError && (
-                        <div
-                            className="invalid-feedback"
-                            style={{ display: "block", color: "red" }}
-                        >
-                            no special characters &lt; , &gt; , " , ' , &amp; ,
-                            ; , ( , )
-                        </div>
-                    )}
-                </div>
-
-                {orgPrivate && (
-                    <div className="mb-3">
-                        <label className="form-label">
-                            Availability
-                            <HelpTooltip
-                                text="Is the dataset public or available to only your organisation?"
-                                id="tooltip-private"
-                            />
-                        </label>
-                        <select
-                            className="form-select"
-                            value={isPrivate ? "private" : "public"}
-                            onChange={(e) =>
-                                setIsPrivate(e.target.value === "private")
-                            }
-                        >
-                            <option value="public">Public</option>
-                            <option value="private">Private</option>
-                        </select>
-                    </div>
-                )}
-
-                <h4 className="mt-4">File Upload</h4>
-
-                <div className="mb-3">
-                    <label className="form-label">
-                        File <span style={{ color: "red" }}>(required)</span>
-                    </label>
-                    <input
-                        type="file"
-                        className="form-control"
-                        onChange={handleFileChange}
-                        accept="*/*"
-                    />
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label">
-                        File Title{" "}
-                        <span style={{ color: "red" }}>(required)</span>
-                    </label>
-                    <input
-                        type="text"
-                        className={`form-control ${
-                            fileTitleError ? "is-invalid" : ""
-                        }`}
-                        value={fileTitle}
-                        onChange={(e) =>
-                            validateAndFilterSpecialChars(
-                                e.target.value,
-                                setFileTitle,
-                                setFileTitleError,
-                                200
-                            )
-                        }
-                        required
-                    />
-                    {fileTitleError && (
-                        <div
-                            className="invalid-feedback"
-                            style={{ display: "block", color: "red" }}
-                        >
-                            no special characters &lt; , &gt; , " , ' , &amp; ,
-                            ; , ( , )
-                        </div>
-                    )}
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label">File Description</label>
-                    <textarea
-                        className={`form-control ${
-                            fileDescriptionError ? "is-invalid" : ""
-                        }`}
-                        rows={3}
-                        value={fileDescription}
-                        onChange={(e) =>
-                            validateAndFilterSpecialChars(
-                                e.target.value,
-                                setFileDescription,
-                                setFileDescriptionError,
-                                1000
-                            )
-                        }
-                    />
-                    {fileDescriptionError && (
-                        <div
-                            className="invalid-feedback"
-                            style={{ display: "block", color: "red" }}
-                        >
-                            no special characters &lt; , &gt; , " , ' , &amp; ,
-                            ; , ( , )
-                        </div>
-                    )}
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label">
-                        Provenance
-                        <HelpTooltip
-                            text="Who own the dataset?"
-                            id="tooltip-provenance"
-                        />
-                    </label>
-                    <input
-                        type="text"
-                        className={`form-control ${
-                            provenanceError ? "is-invalid" : ""
-                        }`}
-                        value={provenance}
-                        onChange={(e) =>
-                            validateAndFilterSpecialChars(
-                                e.target.value,
-                                setProvenance,
-                                setProvenanceError,
-                                125
-                            )
-                        }
-                    />
-                    {provenanceError && (
-                        <div
-                            className="invalid-feedback"
-                            style={{ display: "block", color: "red" }}
-                        >
-                            no special characters &lt; , &gt; , " , ' , &amp; ,
-                            ; , ( , )
-                        </div>
-                    )}
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label">
-                        Source
-                        <HelpTooltip
-                            text="Who gave you the dataset?"
-                            id="tooltip-source"
-                        />
-                    </label>
-                    <input
-                        type="text"
-                        className={`form-control ${
-                            sourceError ? "is-invalid" : ""
-                        }`}
-                        value={source}
-                        onChange={(e) =>
-                            validateAndFilterSpecialChars(
-                                e.target.value,
-                                setSource,
-                                setSourceError,
-                                1000
-                            )
-                        }
-                    />
-                    {sourceError && (
-                        <div
-                            className="invalid-feedback"
-                            style={{ display: "block", color: "red" }}
-                        >
-                            no special characters &lt; , &gt; , " , ' , &amp; ,
-                            ; , ( , )
-                        </div>
-                    )}
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label">
-                        Permissions
-                        <HelpTooltip
-                            text={
-                                <>
-                                    To know more about the Creative Commons Licenses please visit{" "}
-                                    <a
-                                        href="https://creativecommons.org/share-your-work/cclicenses/"
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        onClick={(e) => e.stopPropagation()}
-                                    >
-                                        here
-                                    </a>
-                                    .
-                                </>
-                            }
-                            id="tooltip-permissions"
-                        />
-                    </label>
-                    <select
-                        className="form-select"
-                        value={permissions}
-                        onChange={(e) => setPermissions(e.target.value)}
-                    >
-                        <option value="CC0: Public Domain">CC0: Public Domain</option>
-                        <option value="CC BY: Attribution">CC BY: Attribution</option>
-                        <option value="CC BY-SA: Attribution-ShareAlike">CC BY-SA: Attribution-ShareAlike</option>
-                        <option value="CC BY-NC: Attribution-NonCommercial">CC BY-NC: Attribution-NonCommercial</option>
-                        <option value="CC BY-NC-SA: Attribution-NonCommercial-ShareAlike">CC BY-NC-SA: Attribution-NonCommercial-ShareAlike</option>
-                        <option value="CC BY-ND: Attribution-NoDerivatives">CC BY-ND: Attribution-NoDerivatives</option>
-                        <option value="CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives">CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives</option>
-                    </select>
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label">
-                        Cite As
-                        <HelpTooltip
-                            text="How should someone give credit for the data?"
-                            id="tooltip-cite-as"
-                        />
-                    </label>
-                    <textarea
-                        className={`form-control ${
-                            citeAsError ? "is-invalid" : ""
-                        }`}
-                        rows={4}
-                        value={citeAs}
-                        onChange={(e) =>
-                            validateAndFilterSpecialChars(
-                                e.target.value,
-                                setCiteAs,
-                                setCiteAsError,
-                                1500
-                            )
-                        }
-                    />
-                    {citeAsError && (
-                        <div
-                            className="invalid-feedback"
-                            style={{ display: "block", color: "red" }}
-                        >
-                            no special characters &lt; , &gt; , " , ' , &amp; ,
-                            ; , ( , )
-                        </div>
-                    )}
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label me-3">
-                        Groundtruthed
-                        <HelpTooltip
-                            text="Has this data been validated in the field?"
-                            id="tooltip-groundtruthed"
-                        />
-                    </label>
+        <div className="page">
+            <div className="wrap ds-form" style={{ padding: "48px 0 88px" }}>
+                {/* <span className="eyebrow">Datasets</span> */}
+                <div className="section-head" style={{ marginTop: 4 }}>
                     <div>
-                        <div className="form-check form-check-inline">
-                            <input
-                                className="form-check-input"
-                                type="radio"
-                                name="groundtruthed"
-                                id="gt_no"
-                                checked={!groundtruthed}
-                                onChange={() => setGroundtruthed(false)}
-                            />
-                            <label className="form-check-label" htmlFor="gt_no">
-                                No
-                            </label>
-                        </div>
-                        <div className="form-check form-check-inline">
-                            <input
-                                className="form-check-input"
-                                type="radio"
-                                name="groundtruthed"
-                                id="gt_yes"
-                                checked={groundtruthed}
-                                onChange={() => setGroundtruthed(true)}
-                            />
-                            <label
-                                className="form-check-label"
-                                htmlFor="gt_yes"
-                            >
-                                Yes
-                            </label>
-                        </div>
+                        <h2 className="section-title">Publish a dataset</h2>
+                        <p
+                            className="muted"
+                            style={{ marginTop: 6, maxWidth: "100ch" }}
+                        >
+                            A dataset is a folder for any number of files. Set
+                            the folder details, drag in your files, then record
+                            where each file came from and what it covers. Every
+                            file keeps its own attribution and coverage.
+                        </p>
                     </div>
                 </div>
 
-                <div className="mb-3">
-                    <label className="form-label">
-                        Duration
-                        <HelpTooltip
-                            text="How many years can this data be used for from the date of creation? 0 if not applicable"
-                            id="tooltip-duration"
-                        />
-                    </label>
-                    <input
-                        type="number"
-                        className="form-control"
-                        value={duration}
-                        onChange={(e) => {
-                            const val = parseInt(e.target.value) || 0;
-                            setDuration(Math.max(0, val));
-                        }}
-                        min="0"
-                    />
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label">
-                        Value
-                        <HelpTooltip
-                            text={`What is the value of the data?
-High: data has high acquisition cost or sensitive information
-Medium: data is specific to a particular organisation and hard to search online
-Low: Openly downloadable in public domain`}
-                            id="tooltip-value"
-                        />
-                    </label>
-                    <select
-                        className="form-select"
-                        value={value}
-                        onChange={(e) => setValue(e.target.value)}
-                    >
-                        <option value="low">low</option>
-                        <option value="medium">medium</option>
-                        <option value="high">high</option>
-                    </select>
-                </div>
-
-                <div className="mb-3">
-                    <label className="form-label">
-                        Temporal Coverage From
-                        <HelpTooltip
-                            text="Start date of temporal coverage (ISO format: YYYY-MM-DDTHH:mm:ssZ)"
-                            id="tooltip-temporal-from"
-                        />
-                    </label>
-                    <input
-                        type="datetime-local"
-                        className="form-control"
-                        value={temporalFrom ? (() => {
-                            // Convert ISO string to datetime-local format (YYYY-MM-DDTHH:mm)
-                            try {
-                                const date = new Date(temporalFrom);
-                                if (isNaN(date.getTime())) return "";
-                                // Get local datetime string in format YYYY-MM-DDTHH:mm
-                                const year = date.getFullYear();
-                                const month = String(date.getMonth() + 1).padStart(2, '0');
-                                const day = String(date.getDate()).padStart(2, '0');
-                                const hours = String(date.getHours()).padStart(2, '0');
-                                const minutes = String(date.getMinutes()).padStart(2, '0');
-                                return `${year}-${month}-${day}T${hours}:${minutes}`;
-                            } catch {
-                                return "";
+                <form onSubmit={onSubmit} style={{ marginTop: 22 }}>
+                    {/* Horizontal stepper */}
+                    {/* <div className="stepper" role="tablist">
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected={step === 1}
+                            className={
+                                "step-item" +
+                                (step === 1 ? " active" : "") +
+                                (step > 1 ? " done" : "")
                             }
-                        })() : ""}
-                        onChange={(e) => {
-                            const val = e.target.value;
-                            // Convert to ISO format with timezone
-                            if (val) {
-                                // datetime-local gives us YYYY-MM-DDTHH:mm in local time
-                                // We need to convert it to ISO format
-                                const date = new Date(val);
-                                if (!isNaN(date.getTime())) {
-                                    setTemporalFrom(date.toISOString());
-                                } else {
-                                    setTemporalFrom("");
-                                }
-                            } else {
-                                setTemporalFrom("");
+                            onClick={() => goToStep(1)}
+                        >
+                            <span className="step-dot">
+                                {step > 1 ? (
+                                    <Ic name="check" size={14} sw={3} />
+                                ) : (
+                                    "1"
+                                )}
+                            </span>
+                            <span className="step-text">
+                                <b>Dataset details</b>
+                                <small>Title, tags, visibility</small>
+                            </span>
+                        </button>
+                        <span className="step-bar" aria-hidden="true" />
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected={step === 2}
+                            className={
+                                "step-item" + (step === 2 ? " active" : "")
                             }
-                        }}
-                    />
-                </div>
+                            onClick={() => goToStep(2)}
+                        >
+                            <span className="step-dot">2</span>
+                            <span className="step-text">
+                                <b>Attribution &amp; coverage</b>
+                                <small>Shared metadata &amp; files</small>
+                            </span>
+                        </button>
+                    </div> */}
 
-                <div className="mb-3">
-                    <label className="form-label">
-                        Temporal Coverage To
-                        <HelpTooltip
-                            text="End date of temporal coverage (ISO format: YYYY-MM-DDTHH:mm:ssZ)"
-                            id="tooltip-temporal-to"
-                        />
-                    </label>
-                    <input
-                        type="datetime-local"
-                        className="form-control"
-                        value={temporalTo ? (() => {
-                            // Convert ISO string to datetime-local format (YYYY-MM-DDTHH:mm)
-                            try {
-                                const date = new Date(temporalTo);
-                                if (isNaN(date.getTime())) return "";
-                                // Get local datetime string in format YYYY-MM-DDTHH:mm
-                                const year = date.getFullYear();
-                                const month = String(date.getMonth() + 1).padStart(2, '0');
-                                const day = String(date.getDate()).padStart(2, '0');
-                                const hours = String(date.getHours()).padStart(2, '0');
-                                const minutes = String(date.getMinutes()).padStart(2, '0');
-                                return `${year}-${month}-${day}T${hours}:${minutes}`;
-                            } catch {
-                                return "";
-                            }
-                        })() : ""}
-                        onChange={(e) => {
-                            const val = e.target.value;
-                            // Convert to ISO format with timezone
-                            if (val) {
-                                // datetime-local gives us YYYY-MM-DDTHH:mm in local time
-                                // We need to convert it to ISO format
-                                const date = new Date(val);
-                                if (!isNaN(date.getTime())) {
-                                    setTemporalTo(date.toISOString());
-                                } else {
-                                    setTemporalTo("");
-                                }
-                            } else {
-                                setTemporalTo("");
-                            }
-                        }}
-                    />
-                </div>
+                    {/* Step 1 — Dataset details */}
+                    {step === 1 && (
+                        <div className="form-section">
+                            <div className="fs-head">
+                                <div>
+                                    <h3>Dataset details</h3>
+                                    <p>
+                                        Folder title, description, tags, and who
+                                        can see it.
+                                    </p>
+                                </div>
+                            </div>
 
-                <div className="mb-3">
-                    <label className="form-label">
-                        Geographical Extent
-                        <HelpTooltip
-                            text="Geographic coverage or location information"
-                            id="tooltip-geography"
-                        />
-                    </label>
-                    <textarea
-                        className="form-control"
-                        rows={3}
-                        value={geography}
-                        onChange={(e) => setGeography(e.target.value)}
-                    />
-                </div>
+                            {showErrors &&
+                                (!title.trim() || !tags.length) && (
+                                    <div className="form-note err">
+                                        {!title.trim() && (
+                                            <span>
+                                                Dataset title is required.
+                                            </span>
+                                        )}
+                                        {!tags.length && (
+                                            <span>
+                                                At least one tag is required.
+                                            </span>
+                                        )}
+                                    </div>
+                                )}
 
-                {submitting && (
-                    <div className="mb-3">
-                        <label className="form-label">Upload progress</label>
-                        <div className="progress">
-                            <div
-                                className="progress-bar"
-                                role="progressbar"
-                                style={{ width: `${progress}%` }}
-                                aria-valuenow={progress}
-                                aria-valuemin="0"
-                                aria-valuemax="100"
-                            >
-                                {progress}%
+                            <div className="field">
+                                <label>
+                                    Dataset title{" "}
+                                    <span className="req">(required)</span>
+                                    <HelpTooltip
+                                        text="Name of the dataset. For example: Bangalore Rainfall Data would be the dataset, and you can add several files by year under that title."
+                                        id="tooltip-dataset-title"
+                                    />
+                                </label>
+                                <input
+                                    type="text"
+                                    value={title}
+                                    onChange={(e) =>
+                                        validateAndFilterSpecialChars(
+                                            e.target.value,
+                                            setTitle,
+                                            setTitleError,
+                                            200
+                                        )
+                                    }
+                                    required
+                                />
+                                {titleError && invalidCharsNote}
+                            </div>
+
+                            <div className="field">
+                                <label>
+                                    Dataset description
+                                    <HelpTooltip
+                                        text="What does the dataset contain?"
+                                        id="tooltip-dataset-description"
+                                    />
+                                </label>
+                                <AutoTextarea
+                                    minRows={3}
+                                    value={datasetDescription}
+                                    onChange={(e) =>
+                                        setDatasetDescription(
+                                            e.target.value.slice(0, 2000)
+                                        )
+                                    }
+                                />
+                            </div>
+
+                            <div className="field-row">
+                                <div className="field">
+                                    <label>
+                                        Tags{" "}
+                                        <span className="req">(required)</span>
+                                        <HelpTooltip
+                                            text="Search existing tags as you type. If none fit, add a custom tag (it will be grouped under topic NA)."
+                                            id="tooltip-tags"
+                                        />
+                                    </label>
+                                    <TagMultiSelect
+                                        value={tags}
+                                        onChange={(next) => setTags(next)}
+                                        disabled={submitting}
+                                    />
+                                </div>
+
+                                <div className="field">
+                                    <label>
+                                        Availability
+                                        <HelpTooltip
+                                            text="Who can view this dataset: Public, Private (creator only), Organization, Admins, or Owners. Restricted levels apply only when your organization is private."
+                                            id="tooltip-private"
+                                        />
+                                    </label>
+                                    <select
+                                        value={String(availability)}
+                                        onChange={(e) =>
+                                            setAvailability(
+                                                Number(e.target.value)
+                                            )
+                                        }
+                                        disabled={!orgPrivate}
+                                        aria-disabled={!orgPrivate}
+                                    >
+                                        {AVAILABILITY_OPTIONS.map((opt) => (
+                                            <option
+                                                key={opt.value}
+                                                value={String(opt.value)}
+                                            >
+                                                {opt.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    {!orgPrivate && (
+                                        <span className="hint">
+                                            Locked to Public because your
+                                            organization does not have private
+                                            data enabled.
+                                        </span>
+                                    )}
+                                </div>
                             </div>
                         </div>
-                    </div>
-                )}
+                    )}
 
-                <button
-                    type="submit"
-                    className="btn btn-primary"
-                    disabled={submitting}
-                >
-                    {submitting ? "Submitting..." : "Submit"}
-                </button>
-            </form>
+                    {/* Step 2 — Attribution & coverage merged with Files */}
+                    {step === 2 && (
+                        <div className="form-section">
+                            <div className="fs-head">
+                                <div>
+                                    <h3>Files &amp; attribution</h3>
+                                    <p>
+                                        Add a file and record its attribution
+                                        and coverage. Once it has a title you
+                                        can add another. Every file keeps its
+                                        own attribution.
+                                    </p>
+                                </div>
+                            </div>
+
+                            {showErrors &&
+                                (error ||
+                                    files.length === 0 ||
+                                    fileErrs.length > 0) && (
+                                    <div className="form-note err">
+                                        {files.length === 0 && (
+                                            <span>
+                                                Add at least one file to this
+                                                dataset folder.
+                                            </span>
+                                        )}
+                                        {fileErrs.map((f) => (
+                                            <span key={f.key}>
+                                                <b>{f.name}</b>:{" "}
+                                                {f.missing.join(", ")} required.
+                                            </span>
+                                        ))}
+                                        {error && <span>{error}</span>}
+                                    </div>
+                                )}
+
+                            {files.length > 0 && (
+                                <div className="acc-list">
+                                    {files.map((item) => {
+                                        const isOpen = openKey === item.key;
+                                        const complete = !!item.title.trim();
+                                        return (
+                                            <div
+                                                className={
+                                                    "acc" +
+                                                    (isOpen ? " open" : "")
+                                                }
+                                                key={item.key}
+                                            >
+                                                <div className="acc-head">
+                                                    <button
+                                                        type="button"
+                                                        className="acc-toggle"
+                                                        onClick={() =>
+                                                            toggleOpen(item.key)
+                                                        }
+                                                        aria-expanded={isOpen}
+                                                    >
+                                                        <span className="acc-chev">
+                                                            <Ic
+                                                                name="chev"
+                                                                size={16}
+                                                            />
+                                                        </span>
+                                                        <span className="fico">
+                                                            {item.format
+                                                                ? item.format
+                                                                      .slice(0, 4)
+                                                                      .toUpperCase()
+                                                                : "FILE"}
+                                                        </span>
+                                                        <span className="acc-name">
+                                                            <b>
+                                                                {item.title.trim() ||
+                                                                    item.file
+                                                                        .name}
+                                                            </b>
+                                                            <small>
+                                                                {item.file.name}
+                                                                {" · "}
+                                                                {fmtBytes(
+                                                                    item.file
+                                                                        .size
+                                                                )}
+                                                            </small>
+                                                        </span>
+                                                    </button>
+                                                    <span
+                                                        className={
+                                                            "chip " +
+                                                            (complete
+                                                                ? "ok"
+                                                                : "todo")
+                                                        }
+                                                    >
+                                                        {complete
+                                                            ? "Complete"
+                                                            : "Needs title"}
+                                                    </span>
+                                                    <button
+                                                        type="button"
+                                                        className="iconbtn"
+                                                        aria-label="Remove file"
+                                                        onClick={() =>
+                                                            removeFileEntry(
+                                                                item.key
+                                                            )
+                                                        }
+                                                    >
+                                                        <Ic
+                                                            name="close"
+                                                            size={16}
+                                                            sw={2}
+                                                        />
+                                                    </button>
+                                                </div>
+
+                                                {isOpen && (
+                                                    <div className="acc-body">
+                                                        <div className="field-row">
+                                                            <div className="field">
+                                                                <label>
+                                                                    File title{" "}
+                                                                    <span className="req">
+                                                                        (required)
+                                                                    </span>
+                                                                </label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={
+                                                                        item.title
+                                                                    }
+                                                                    onChange={(
+                                                                        e
+                                                                    ) =>
+                                                                        updateFileText(
+                                                                            item.key,
+                                                                            "title",
+                                                                            e
+                                                                                .target
+                                                                                .value,
+                                                                            200
+                                                                        )
+                                                                    }
+                                                                    required
+                                                                />
+                                                                {item.errors
+                                                                    ?.title &&
+                                                                    invalidCharsNote}
+                                                            </div>
+                                                            <div className="field">
+                                                                <label>
+                                                                    File
+                                                                    description
+                                                                </label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={
+                                                                        item.description
+                                                                    }
+                                                                    onChange={(
+                                                                        e
+                                                                    ) =>
+                                                                        updateFileEntry(
+                                                                            item.key,
+                                                                            "description",
+                                                                            e.target.value.slice(
+                                                                                0,
+                                                                                1000
+                                                                            )
+                                                                        )
+                                                                    }
+                                                                />
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="grid3">
+                                                            <div className="field">
+                                                                <label>
+                                                                    Provenance
+                                                                </label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={
+                                                                        item.provenance
+                                                                    }
+                                                                    onChange={(
+                                                                        e
+                                                                    ) =>
+                                                                        updateFileText(
+                                                                            item.key,
+                                                                            "provenance",
+                                                                            e
+                                                                                .target
+                                                                                .value,
+                                                                            125
+                                                                        )
+                                                                    }
+                                                                />
+                                                                {item.errors
+                                                                    ?.provenance &&
+                                                                    invalidCharsNote}
+                                                            </div>
+                                                            <div className="field">
+                                                                <label>
+                                                                    Source
+                                                                </label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={
+                                                                        item.source
+                                                                    }
+                                                                    onChange={(
+                                                                        e
+                                                                    ) =>
+                                                                        updateFileText(
+                                                                            item.key,
+                                                                            "source",
+                                                                            e
+                                                                                .target
+                                                                                .value,
+                                                                            1000
+                                                                        )
+                                                                    }
+                                                                />
+                                                                {item.errors
+                                                                    ?.source &&
+                                                                    invalidCharsNote}
+                                                            </div>
+                                                            <div className="field">
+                                                                <label>
+                                                                    Permissions /
+                                                                    licence
+                                                                </label>
+                                                                <select
+                                                                    value={
+                                                                        item.permissions
+                                                                    }
+                                                                    onChange={(
+                                                                        e
+                                                                    ) =>
+                                                                        updateFileEntry(
+                                                                            item.key,
+                                                                            "permissions",
+                                                                            e
+                                                                                .target
+                                                                                .value
+                                                                        )
+                                                                    }
+                                                                >
+                                                                    {PERMISSION_OPTIONS.map(
+                                                                        (opt) => (
+                                                                            <option
+                                                                                key={
+                                                                                    opt
+                                                                                }
+                                                                                value={
+                                                                                    opt
+                                                                                }
+                                                                            >
+                                                                                {
+                                                                                    opt
+                                                                                }
+                                                                            </option>
+                                                                        )
+                                                                    )}
+                                                                </select>
+                                                            </div>
+                                                            <div className="field">
+                                                                <label>
+                                                                    Cite as
+                                                                </label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={
+                                                                        item.citeAs
+                                                                    }
+                                                                    onChange={(
+                                                                        e
+                                                                    ) =>
+                                                                        updateFileEntry(
+                                                                            item.key,
+                                                                            "citeAs",
+                                                                            e.target.value.slice(
+                                                                                0,
+                                                                                1500
+                                                                            )
+                                                                        )
+                                                                    }
+                                                                />
+                                                            </div>
+                                                            <div className="field">
+                                                                <label>
+                                                                    Groundtruthed
+                                                                </label>
+                                                                <div className="seg">
+                                                                    <button
+                                                                        type="button"
+                                                                        className={
+                                                                            "seg-opt" +
+                                                                            (item.groundtruthed ===
+                                                                            "yes"
+                                                                                ? " on"
+                                                                                : "")
+                                                                        }
+                                                                        onClick={() =>
+                                                                            updateFileEntry(
+                                                                                item.key,
+                                                                                "groundtruthed",
+                                                                                "yes"
+                                                                            )
+                                                                        }
+                                                                    >
+                                                                        Yes
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        className={
+                                                                            "seg-opt" +
+                                                                            (item.groundtruthed ===
+                                                                            "no"
+                                                                                ? " on"
+                                                                                : "")
+                                                                        }
+                                                                        onClick={() =>
+                                                                            updateFileEntry(
+                                                                                item.key,
+                                                                                "groundtruthed",
+                                                                                "no"
+                                                                            )
+                                                                        }
+                                                                    >
+                                                                        No
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                            <div className="field">
+                                                                <label>
+                                                                    Duration
+                                                                    (years)
+                                                                </label>
+                                                                <input
+                                                                    type="number"
+                                                                    value={
+                                                                        item.duration
+                                                                    }
+                                                                    onChange={(
+                                                                        e
+                                                                    ) =>
+                                                                        updateFileEntry(
+                                                                            item.key,
+                                                                            "duration",
+                                                                            Math.max(
+                                                                                0,
+                                                                                parseInt(
+                                                                                    e
+                                                                                        .target
+                                                                                        .value
+                                                                                ) ||
+                                                                                    0
+                                                                            )
+                                                                        )
+                                                                    }
+                                                                    min="0"
+                                                                />
+                                                            </div>
+                                                            <div className="field">
+                                                                <label>
+                                                                    Temporal
+                                                                    coverage from
+                                                                </label>
+                                                                <input
+                                                                    type="datetime-local"
+                                                                    value={isoToLocal(
+                                                                        item.temporalFrom
+                                                                    )}
+                                                                    onChange={(
+                                                                        e
+                                                                    ) =>
+                                                                        updateFileEntry(
+                                                                            item.key,
+                                                                            "temporalFrom",
+                                                                            localToIso(
+                                                                                e
+                                                                                    .target
+                                                                                    .value
+                                                                            )
+                                                                        )
+                                                                    }
+                                                                />
+                                                            </div>
+                                                            <div className="field">
+                                                                <label>
+                                                                    Temporal
+                                                                    coverage to
+                                                                </label>
+                                                                <input
+                                                                    type="datetime-local"
+                                                                    value={isoToLocal(
+                                                                        item.temporalTo
+                                                                    )}
+                                                                    onChange={(
+                                                                        e
+                                                                    ) =>
+                                                                        updateFileEntry(
+                                                                            item.key,
+                                                                            "temporalTo",
+                                                                            localToIso(
+                                                                                e
+                                                                                    .target
+                                                                                    .value
+                                                                            )
+                                                                        )
+                                                                    }
+                                                                />
+                                                            </div>
+                                                            <div className="field">
+                                                                <label>
+                                                                    Geographical
+                                                                    extent
+                                                                </label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={
+                                                                        item.geography
+                                                                    }
+                                                                    onChange={(
+                                                                        e
+                                                                    ) =>
+                                                                        updateFileText(
+                                                                            item.key,
+                                                                            "geography",
+                                                                            e
+                                                                                .target
+                                                                                .value,
+                                                                            2000
+                                                                        )
+                                                                    }
+                                                                />
+                                                                {item.errors
+                                                                    ?.geography &&
+                                                                    invalidCharsNote}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+
+                            {files.length === 0 ||
+                            files[files.length - 1].title.trim() ? (
+                                <div
+                                    className={
+                                        "file-drop" +
+                                        (dragging ? " drag" : "") +
+                                        (files.length ? " compact" : "")
+                                    }
+                                    onDragOver={(e) => {
+                                        e.preventDefault();
+                                        setDragging(true);
+                                    }}
+                                    onDragLeave={(e) => {
+                                        e.preventDefault();
+                                        setDragging(false);
+                                    }}
+                                    onDrop={handleDrop}
+                                >
+                                    <span className="fdic">
+                                        <Ic name="dl" size={18} sw={2} />
+                                    </span>
+                                    <div className="fdmain">
+                                        <b>
+                                            {dragging
+                                                ? "Drop files to add them"
+                                                : files.length
+                                                ? "Add another file"
+                                                : "Drag files here, or click to browse"}
+                                        </b>
+                                        <span>
+                                            {files.length
+                                                ? "Its attribution starts from blank."
+                                                : "Any format. You can add multiple files at once."}
+                                        </span>
+                                    </div>
+                                    <input
+                                        type="file"
+                                        onChange={handleFileChange}
+                                        accept="*/*"
+                                        multiple
+                                        aria-label="Add files"
+                                    />
+                                </div>
+                            ) : (
+                                <div className="add-hint">
+                                    <Ic name="info" size={15} sw={2} />
+                                    <span>
+                                        Add a title to the current file to add
+                                        another.
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Sticky footer actions */}
+                    <div className="form-actions">
+                        <div style={{ flex: 1, minWidth: 200 }}>
+                            {submitting ? (
+                                <>
+                                    <div className="progress-track">
+                                        <div
+                                            className="progress-fill"
+                                            role="progressbar"
+                                            aria-valuenow={progress}
+                                            aria-valuemin="0"
+                                            aria-valuemax="100"
+                                            style={{ width: `${progress}%` }}
+                                        />
+                                    </div>
+                                    <span
+                                        className="mono-token"
+                                        style={{
+                                            marginTop: 6,
+                                            display: "inline-block",
+                                        }}
+                                    >
+                                        Uploading… {progress}%
+                                    </span>
+                                </>
+                            ) : (
+                                <span className="fa-note">
+                                    Step {step} of 2 ·{" "}
+                                    {step === 1
+                                        ? "Folder basics"
+                                        : "Attribution & files"}
+                                </span>
+                            )}
+                        </div>
+                        <div style={{ display: "flex", gap: 10 }}>
+                            {step === 1 ? (
+                                <>
+                                    <button
+                                        type="button"
+                                        className="btn btn-ghost"
+                                        onClick={() => navigate("/dashboard")}
+                                        disabled={submitting}
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="btn btn-primary"
+                                        onClick={goToStep2}
+                                    >
+                                        Next: Attribution &amp; files
+                                    </button>
+                                </>
+                            ) : (
+                                <>
+                                    <button
+                                        type="button"
+                                        className="btn btn-ghost"
+                                        onClick={() => goToStep(1)}
+                                        disabled={submitting}
+                                    >
+                                        Back
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        className="btn btn-primary"
+                                        disabled={submitting}
+                                    >
+                                        {submitting
+                                            ? "Publishing…"
+                                            : "Publish dataset"}
+                                    </button>
+                                </>
+                            )}
+                        </div>
+                    </div>
+                </form>
+            </div>
         </div>
     );
 }

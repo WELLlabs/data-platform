@@ -1,8 +1,8 @@
 """
 Email tasks for sending transactional emails via Brevo (formerly Sendinblue).
 
-This module contains Celery tasks for sending forgot password and email verification emails
-using Brevo's transactional email API with template support.
+Bodies are rendered from HTML files in ``src/api/emails`` and sent as
+``html_content``. Brevo dashboard template IDs are not used.
 """
 
 import logging
@@ -17,9 +17,15 @@ from brevo_python.models.send_smtp_email import SendSmtpEmail
 from brevo_python.models.send_smtp_email_to import SendSmtpEmailTo
 from celery import signature
 from core.celery import celery_app
-from core.config import settings
+from core.config import host_name_from_env, settings
+from emails.render import render_email
 
 logger = logging.getLogger(__name__)
+
+
+def _sender_name() -> str:
+    host = host_name_from_env() or (settings.HOST_NAME or "").strip()
+    return f"Data Platform by {host}" if host else "Data Platform"
 
 
 def _recipient_display_name_for_email(addr: str, display_name: str) -> str:
@@ -72,7 +78,8 @@ def _sanitize_url(url: str, extra_sensitive: Iterable[str] | None = None) -> str
     except Exception:
         # If URL parsing fails, return a masked version
         logger.debug(
-            "Failed to parse URL for sanitization: ***REDACTED_URL***", exc_info=True
+            "Failed to parse URL for sanitization: ***REDACTED_URL***",
+            exc_info=True,
         )
         try:
             parsed = urlparse(url)
@@ -80,7 +87,8 @@ def _sanitize_url(url: str, extra_sensitive: Iterable[str] | None = None) -> str
         except Exception:
             # If even basic parsing fails, return a generic masked URL
             logger.debug(
-                "Failed to perform basic URL parsing: ***REDACTED_URL***", exc_info=True
+                "Failed to perform basic URL parsing: ***REDACTED_URL***",
+                exc_info=True,
             )
             return "***://***/***?token=***"
 
@@ -122,6 +130,35 @@ def _get_brevo_client() -> TransactionalEmailsApi:
     return _brevo_client
 
 
+def _render_email(template_name: str, *, email_title: str, **context: Any) -> str:
+    """Render an HTML email from ``src/api/emails/{template_name}``."""
+    return render_email(
+        template_name,
+        email_title=email_title,
+        sender_name=_sender_name(),
+        host_name=host_name_from_env() or (settings.HOST_NAME or "").strip(),
+        **context,
+    )
+
+
+def _send_html_email(
+    *,
+    to_email: str,
+    to_name: str,
+    subject: str,
+    html: str,
+) -> Any:
+    """Send a transactional email with inline HTML via Brevo."""
+    api_instance = _get_brevo_client()
+    send_smtp_email = SendSmtpEmail(
+        to=[SendSmtpEmailTo(email=to_email, name=to_name)],
+        sender={"name": _sender_name(), "email": settings.EMAIL_SENDER},
+        subject=subject,
+        html_content=html,
+    )
+    return api_instance.send_transac_email(send_smtp_email)
+
+
 @celery_app.task(
     name="email.send_forgot_password_email",
     bind=True,
@@ -132,7 +169,7 @@ def send_forgot_password_email(
     self: Any, email: str, full_name: str, reset_link: str
 ) -> dict[str, Any]:
     """
-    Send forgot password email via Brevo using template.
+    Send forgot password email with the local HTML template.
 
     Args:
         self: Celery task instance (for retry capability)
@@ -148,27 +185,19 @@ def send_forgot_password_email(
     """
     try:
         logger.debug("Sending forgot password email")
-
-        # Initialize Brevo client
-        api_instance = _get_brevo_client()
-
-        # Prepare email parameters for template
-        params = {
-            "full_name": full_name,
-            "email": email,
-            "reset_link": reset_link,
-        }
-
-        # Create email object
-        send_smtp_email = SendSmtpEmail(
-            to=[SendSmtpEmailTo(email=email, name=full_name)],
-            template_id=settings.FORGOT_PASSWORD_TEMPLATE_ID,
-            params=params,
-            sender={"name": "WELL Labs Data Portal", "email": settings.EMAIL_SENDER},
+        html = _render_email(
+            "forgot_password.html",
+            email_title="Reset your password",
+            full_name=full_name,
+            email=email,
+            reset_link=reset_link,
         )
-
-        # Send email
-        api_response = api_instance.send_transac_email(send_smtp_email)
+        api_response = _send_html_email(
+            to_email=email,
+            to_name=full_name,
+            subject="Reset your password",
+            html=html,
+        )
         message_id = api_response.message_id
 
         logger.info(
@@ -247,7 +276,7 @@ def send_verify_email(
     self: Any, email: str, full_name: str, verify_link: str
 ) -> dict[str, Any]:
     """
-    Send email verification email via Brevo using template.
+    Send email verification with the local HTML template.
 
     Args:
         self: Celery task instance (for retry capability)
@@ -262,38 +291,24 @@ def send_verify_email(
         Retry: If email sending fails and retries are available
     """
     try:
-        logger.debug(
-            "Sending verification email to %s with template ID %s",
-            email,
-            settings.VERIFY_EMAIL_TEMPLATE_ID,
-        )
-
-        # Initialize Brevo client
-        api_instance = _get_brevo_client()
-
-        # Prepare email parameters for template
-        # Template requires params.full_name and params.verify_link
-        params = {
-            "full_name": full_name,
-            "verify_link": verify_link,
-        }
-
+        logger.debug("Sending verification email to %s", email)
         logger.debug(
             "Sending verification email with params: full_name=%s, verify_link=%s",
             full_name,
             _sanitize_url(verify_link),
         )
-
-        # Create email object
-        send_smtp_email = SendSmtpEmail(
-            to=[SendSmtpEmailTo(email=email, name=full_name)],
-            template_id=settings.VERIFY_EMAIL_TEMPLATE_ID,
-            params=params,
-            sender={"name": "WELL Labs Data Portal", "email": settings.EMAIL_SENDER},
+        html = _render_email(
+            "verify_email.html",
+            email_title="Verify your email",
+            full_name=full_name,
+            verify_link=verify_link,
         )
-
-        # Send email
-        api_response = api_instance.send_transac_email(send_smtp_email)
+        api_response = _send_html_email(
+            to_email=email,
+            to_name=full_name,
+            subject="Verify your email",
+            html=html,
+        )
         message_id = api_response.message_id
 
         logger.info(
@@ -372,34 +387,27 @@ def send_upload_approval(
     self: Any, email: str, title: str, name: str
 ) -> dict[str, Any]:
     """
-    Send upload-approval notification (Brevo template: title + name params).
+    Send upload-approval notification (HTML: title + name).
 
     Args:
         email: Recipient address
-        title: Dataset title (template param)
-        name: Display name for template (e.g. uploader full_name from job meta)
+        title: Dataset title
+        name: Display name (e.g. uploader full_name from job meta)
     """
     try:
-        logger.debug(
-            "Sending upload approval email to %s template_id=%s",
-            email,
-            settings.UPLOAD_APPROVAL_TEMPLATE_ID,
+        logger.debug("Sending upload approval email to %s", email)
+        html = _render_email(
+            "upload_approval.html",
+            email_title="Dataset waiting for review",
+            title=title,
+            name=name,
         )
-        api_instance = _get_brevo_client()
-        params = {"title": title, "name": name}
-
-        send_smtp_email = SendSmtpEmail(
-            to=[
-                SendSmtpEmailTo(
-                    email=email,
-                    name=_recipient_display_name_for_email(email, name),
-                )
-            ],
-            template_id=settings.UPLOAD_APPROVAL_TEMPLATE_ID,
-            params=params,
-            sender={"name": "WELL Labs Data Portal", "email": settings.EMAIL_SENDER},
+        api_response = _send_html_email(
+            to_email=email,
+            to_name=_recipient_display_name_for_email(email, name),
+            subject="A dataset is waiting for your review",
+            html=html,
         )
-        api_response = api_instance.send_transac_email(send_smtp_email)
         message_id = api_response.message_id
         logger.info(
             "Upload approval email sent to %s message_id=%s", email, message_id
@@ -431,34 +439,27 @@ def send_upload_approval_response(
     self: Any, email: str, title: str, name: str
 ) -> dict[str, Any]:
     """
-    Send upload-approval response notification (Brevo template: title + name params).
+    Send upload-approval response notification (HTML: title + name).
 
     Args:
         email: Recipient address
-        title: Dataset title (template param)
-        name: Approver full name (template param)
+        title: Dataset title
+        name: Approver full name
     """
     try:
-        logger.debug(
-            "Sending upload approval response email to %s template_id=%s",
-            email,
-            settings.UPLOAD_APPROVAL_RESPONSE_TEMPLATE_ID,
+        logger.debug("Sending upload approval response email to %s", email)
+        html = _render_email(
+            "upload_approval_response.html",
+            email_title="Your dataset has been approved",
+            title=title,
+            name=name,
         )
-        api_instance = _get_brevo_client()
-        params = {"title": title, "name": name}
-
-        send_smtp_email = SendSmtpEmail(
-            to=[
-                SendSmtpEmailTo(
-                    email=email,
-                    name=_recipient_display_name_for_email(email, ""),
-                )
-            ],
-            template_id=settings.UPLOAD_APPROVAL_RESPONSE_TEMPLATE_ID,
-            params=params,
-            sender={"name": "WELL Labs Data Portal", "email": settings.EMAIL_SENDER},
+        api_response = _send_html_email(
+            to_email=email,
+            to_name=_recipient_display_name_for_email(email, ""),
+            subject="Your dataset has been approved",
+            html=html,
         )
-        api_response = api_instance.send_transac_email(send_smtp_email)
         message_id = api_response.message_id
         logger.info(
             "Upload approval response email sent to %s message_id=%s",
@@ -492,36 +493,33 @@ def send_user_approval_response(
     self: Any, email: str, action: str, name: str, message: str
 ) -> dict[str, Any]:
     """
-    Send user approval/rejection notification (Brevo template: action, name, message).
+    Send user approval/rejection notification (HTML: action, name, message).
 
     Args:
         email: Recipient address
-        action: Template param (e.g. accepted / rejected)
-        name: Approver display name (template param)
-        message: Body copy (template param)
+        action: e.g. accepted / rejected
+        name: Approver display name
+        message: Body copy
     """
     try:
         logger.debug(
-            "Sending user approval response email to %s template_id=%s action=%s",
+            "Sending user approval response email to %s action=%s",
             email,
-            settings.USER_APPROVAL_RESPONSE_TEMPLATE_ID,
             action,
         )
-        api_instance = _get_brevo_client()
-        params = {"action": action, "name": name, "message": message}
-
-        send_smtp_email = SendSmtpEmail(
-            to=[
-                SendSmtpEmailTo(
-                    email=email,
-                    name=_recipient_display_name_for_email(email, ""),
-                )
-            ],
-            template_id=settings.USER_APPROVAL_RESPONSE_TEMPLATE_ID,
-            params=params,
-            sender={"name": "WELL Labs Data Portal", "email": settings.EMAIL_SENDER},
+        html = _render_email(
+            "user_approval_response.html",
+            email_title=f"Your account was {action}",
+            action=action,
+            name=name,
+            message=message,
         )
-        api_response = api_instance.send_transac_email(send_smtp_email)
+        api_response = _send_html_email(
+            to_email=email,
+            to_name=_recipient_display_name_for_email(email, ""),
+            subject=f"Your account was {action}",
+            html=html,
+        )
         message_id = api_response.message_id
         logger.info(
             "User approval response email sent to %s message_id=%s action=%s",
@@ -558,30 +556,25 @@ def send_user_approval_request(self: Any, email: str, name: str) -> dict[str, An
 
     Args:
         email: Recipient admin email address
-        name: New signup user full name (template param)
+        name: New signup user full name
     """
     try:
         logger.debug(
-            "Sending user approval request email to %s template_id=%s name=%s",
+            "Sending user approval request email to %s name=%s",
             email,
-            settings.USER_APPROVAL_REQUEST_TEMPLATE_ID,
             name,
         )
-        api_instance = _get_brevo_client()
-        params = {"name": name}
-
-        send_smtp_email = SendSmtpEmail(
-            to=[
-                SendSmtpEmailTo(
-                    email=email,
-                    name=_recipient_display_name_for_email(email, ""),
-                )
-            ],
-            template_id=settings.USER_APPROVAL_REQUEST_TEMPLATE_ID,
-            params=params,
-            sender={"name": "WELL Labs Data Portal", "email": settings.EMAIL_SENDER},
+        html = _render_email(
+            "user_approval_request.html",
+            email_title="A new user needs approval",
+            name=name,
         )
-        api_response = api_instance.send_transac_email(send_smtp_email)
+        api_response = _send_html_email(
+            to_email=email,
+            to_name=_recipient_display_name_for_email(email, ""),
+            subject="A new user needs approval",
+            html=html,
+        )
         message_id = api_response.message_id
         logger.info(
             "User approval request email sent to %s message_id=%s",
@@ -615,38 +608,29 @@ def send_dataset_transfer(
     self: Any, email: str, title: str, new_creator: str, admin_name: str
 ) -> dict[str, Any]:
     """
-    Notify previous creator and/or new creator about a dataset ownership transfer (Brevo template).
+    Notify a user that they were added as a dataset owner.
 
     Args:
         email: Recipient address
-        title: Dataset title (template param)
-        new_creator: New creator display name (template param)
-        admin_name: Admin who performed the transfer (template param)
+        title: Dataset title
+        new_creator: New creator display name
+        admin_name: Admin who performed the transfer
     """
     try:
-        logger.debug(
-            "Sending dataset transfer email to %s template_id=%s",
-            email,
-            settings.DATASET_TRANSFER_TEMPLATE_ID,
+        logger.debug("Sending dataset transfer email to %s", email)
+        html = _render_email(
+            "dataset_transfer.html",
+            email_title="You were added as a dataset owner",
+            title=title,
+            new_creator=new_creator,
+            admin_name=admin_name,
         )
-        api_instance = _get_brevo_client()
-        params = {
-            "title": title,
-            "new_creator": new_creator,
-            "admin_name": admin_name,
-        }
-        send_smtp_email = SendSmtpEmail(
-            to=[
-                SendSmtpEmailTo(
-                    email=email,
-                    name=_recipient_display_name_for_email(email, new_creator),
-                )
-            ],
-            template_id=settings.DATASET_TRANSFER_TEMPLATE_ID,
-            params=params,
-            sender={"name": "WELL Labs Data Portal", "email": settings.EMAIL_SENDER},
+        api_response = _send_html_email(
+            to_email=email,
+            to_name=_recipient_display_name_for_email(email, new_creator),
+            subject="You were added as a dataset owner",
+            html=html,
         )
-        api_response = api_instance.send_transac_email(send_smtp_email)
         message_id = api_response.message_id
         logger.info(
             "Dataset transfer email sent to %s message_id=%s", email, message_id

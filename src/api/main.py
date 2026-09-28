@@ -3,6 +3,7 @@ import os
 import sys
 
 import uvicorn
+from core.config import host_name_from_env, settings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -12,8 +13,10 @@ from routers.dataset import router as dataset_router
 from routers.organization import router as organization_router
 from routers.search import router as search_router
 from routers.stats import router as stats_router
+from routers.tag import router as tag_router
 from routers.upload import router as upload_router
 from routers.user import router as user_router
+from routers.visualization import router as visualization_router
 from starlette.responses import JSONResponse
 
 __version__ = "1.0.0"
@@ -50,9 +53,9 @@ def create_app() -> FastAPI:
         )
 
     app = FastAPI(
-        title="WELL Labs Data Portal API",
+        title=f"Data Platform API by {host_name_from_env() or (settings.HOST_NAME or '').strip()}".strip(),
         version=__version__,
-        description="Open data portal API from WELL Labs",
+        description="Open data portal API",
         docs_url="/docs",
         redoc_url="/redoc",
         root_path="/api",
@@ -85,10 +88,31 @@ def create_app() -> FastAPI:
         expose_headers=["*"],
     )
 
+    @app.on_event("startup")
+    async def _ensure_typesense() -> None:
+        from services.typesense_index import ensure_collection, ensure_tags_collection
+
+        await ensure_collection()
+        await ensure_tags_collection()
+
     # Health route
     @app.get("/health")
     async def health() -> JSONResponse:
         return JSONResponse({"status": "healthy", "version": __version__})
+
+    def _branding_payload() -> dict:
+        host = host_name_from_env() or (settings.HOST_NAME or "").strip()
+        return {
+            "host_name": host,
+            "product_name": "Data Platform",
+            "brand_line": f"Data Platform by {host}" if host else "Data Platform",
+        }
+
+    # Served at /branding (nginx/CRA strip /api) and /api/branding (direct uvicorn + OpenAPI root_path).
+    @app.get("/branding")
+    @app.get("/api/branding")
+    async def branding() -> JSONResponse:
+        return JSONResponse(_branding_payload())
 
     # API routes
     app.include_router(
@@ -98,8 +122,10 @@ def create_app() -> FastAPI:
         organization_router, prefix="/organizations", tags=["Organizations"]
     )
     app.include_router(upload_router, prefix="", tags=["Files"])
+    app.include_router(visualization_router, prefix="", tags=["Visualization"])
     app.include_router(dataset_router, prefix="", tags=["Datasets"])
     app.include_router(search_router, prefix="", tags=["Search"])
+    app.include_router(tag_router, prefix="", tags=["Tags"])
     app.include_router(stats_router, prefix="")
     app.include_router(user_router, prefix="", tags=["Users"])
 

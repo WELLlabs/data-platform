@@ -16,13 +16,8 @@ import logging
 # Import Celery app to ensure configuration is loaded
 from core.celery import celery_app
 
-# Import all task modules to register them with Celery
-# This ensures Celery can discover and execute all tasks
-from tasks import (
-    cpu,  # noqa: F401
-    default,  # noqa: F401
-    email,  # noqa: F401
-)
+# Email worker only registers email tasks. CPU conversion runs in celery_cpu_worker.
+from tasks import email  # noqa: F401
 
 logger = logging.getLogger(__name__)
 

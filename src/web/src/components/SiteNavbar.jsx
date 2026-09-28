@@ -1,127 +1,91 @@
 import React, { useState } from "react";
-import { Navbar, NavbarBrand, Nav, NavItem, NavbarToggler, Collapse } from "reactstrap";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { BrandLockup } from "../branding";
+import Ic from "./wd/Icons";
 
-function SiteNavbar() {
-  const [isOpen, setIsOpen] = useState(false);
+function initials(name) {
+  if (!name) return "U";
+  const parts = String(name).trim().split(/\s+/);
+  return ((parts[0]?.[0] || "") + (parts[1]?.[0] || "")).toUpperCase() || "U";
+}
+
+export default function SiteNavbar() {
+  const [open, setOpen] = useState(false);
   const [signOutError, setSignOutError] = useState(null);
   const navigate = useNavigate();
+  const location = useLocation();
   const { isAuthenticated, user, signOut } = useAuth();
 
-  const toggle = () => setIsOpen(!isOpen);
+  const path = location.pathname;
+  const isActive = (m) => m.some((p) => path === p || path.startsWith(p + "/"));
 
   const handleSignOut = async () => {
-    setIsOpen(false);
+    setOpen(false);
     setSignOutError(null);
     try {
       await signOut();
       navigate("/signin", { replace: true });
     } catch (error) {
-      const message = error?.message || "Sign out failed. Please try again.";
-      setSignOutError(message);
-      if (process.env.NODE_ENV === "development") {
-        console.error("handleSignOut: signOut failed", { error });
-      }
+      setSignOutError(error?.message || "Sign out failed. Please try again.");
     }
   };
+
+  const links = isAuthenticated
+    ? [
+        { label: "Explore", to: "/datasets", match: ["/datasets", "/search"] },
+        { label: "Dashboard", to: `/dashboard${user?.id ? `?userId=${user.id}` : ""}`, match: ["/dashboard"] },
+        { label: "Organisation", to: "/orgsearch", match: ["/organisation", "/orgsearch"] },
+        ...(Number(user?.role) > 0 ? [{ label: "Approvals", to: "/approvals", match: ["/approvals"] }] : []),
+        { label: "About", to: "/faq", match: ["/faq", "/terms"] },
+      ]
+    : [
+        { label: "Explore", to: "/datasets", match: ["/datasets", "/search"] },
+        { label: "Organizations", to: "/orgsearch", match: ["/orgsearch"] },
+        { label: "About", to: "/faq", match: ["/faq", "/terms"] },
+      ];
 
   return (
     <>
       {signOutError && (
-        <div
-          className="alert alert-danger alert-dismissible fade show mb-0 rounded-0"
-          role="alert"
-        >
+        <div style={{ background: "#faf3e4", color: "#9a6b12", borderBottom: "1px solid #ecdcb8", padding: "10px 28px", fontSize: 13.5 }} role="alert">
           {signOutError}
-          <button
-            type="button"
-            className="btn-close"
-            onClick={() => setSignOutError(null)}
-            aria-label="Close"
-          />
+          <button onClick={() => setSignOutError(null)} style={{ marginLeft: 12, background: "none", border: "none", color: "inherit", cursor: "pointer" }} aria-label="Close">✕</button>
         </div>
       )}
-      <Navbar expand="md" light className="navbar-custom px-3">
-      <NavbarBrand tag={Link} to="/" className="d-flex align-items-center gap-2">
-        <img src={process.env.PUBLIC_URL + "/assets/logo/well-labs-logo.png"} alt="WELL Labs" />
-      </NavbarBrand>
-      
-      <NavbarToggler onClick={toggle} className="d-md-none" />
-      
-      <Collapse isOpen={isOpen} navbar>
-        <Nav className="ms-auto" navbar>
-          {isAuthenticated ? (
-            <>
-              <NavItem>
-                <Link 
-                  className="nav-link" 
-                  to={`/dashboard?userId=${user?.id}`} 
-                  onClick={() => setIsOpen(false)}
-                >
-                  Dashboard
+      <header className={"nav" + (open ? " open" : "")}>
+        <div className="nav-inner">
+          <BrandLockup onClick={() => setOpen(false)} />
+          <nav className="nav-links" aria-label="Primary">
+            {links.map((l) => (
+              <Link key={l.label} to={l.to} className={isActive(l.match) ? "active" : ""} onClick={() => setOpen(false)}>
+                {l.label}
+              </Link>
+            ))}
+            {isAuthenticated && (
+              <button className="nav-menu-signout" onClick={handleSignOut}>Sign out</button>
+            )}
+          </nav>
+          <div className="nav-right">
+            <button className="navk-icon" onClick={() => navigate("/search")} aria-label="Search" title="Search">
+              <Ic name="search" size={17} sw={2} />
+            </button>
+            {isAuthenticated ? (
+              <>
+                <Link to={`/profile${user?.id ? `?userId=${user.id}` : ""}`} className="avatar" title={user?.name || user?.email || "Profile"}>
+                  {initials(user?.name || user?.email)}
                 </Link>
-              </NavItem>
-              <NavItem>
-                <Link className="nav-link" to="/datasets" onClick={() => setIsOpen(false)}>
-                  Datasets
-                </Link>
-              </NavItem>
-              <NavItem>
-                <Link className="nav-link" to="/organisation" onClick={() => setIsOpen(false)}>
-                  Organisation
-                </Link>
-              </NavItem>
-              <NavItem>
-                <Link 
-                  className="nav-link" 
-                  to={`/profile?userId=${user?.id}`} 
-                  onClick={() => setIsOpen(false)}
-                >
-                  Profile
-                </Link>
-              </NavItem>
-              {Number(user?.role) > 0 && (
-                <NavItem>
-                  <Link className="nav-link" to="/approvals" onClick={() => setIsOpen(false)}>
-                    Approvals
-                  </Link>
-                </NavItem>
-              )}
-              <NavItem className="ms-2">
-                <button 
-                  className="btn btn-outline-light" 
-                  onClick={handleSignOut}
-                >
-                  <i className="bi bi-box-arrow-right me-1" /> Sign Out
-                </button>
-              </NavItem>
-            </>
-          ) : (
-            <>
-              <NavItem>
-                <Link className="nav-link" to="/datasets" onClick={() => setIsOpen(false)}>
-                  Datasets
-                </Link>
-              </NavItem>
-              <NavItem className="ms-2">
-                <Link 
-                  className="btn btn-outline-light" 
-                  to="/signin"
-                  onClick={() => setIsOpen(false)}
-                >
-                  <i className="bi bi-person-plus me-1" /> Sign In
-                </Link>
-              </NavItem>
-            </>
-          )}
-        </Nav>
-      </Collapse>
-    </Navbar>
+                <button className="btn btn-ghost nav-signout" onClick={handleSignOut} style={{ padding: "9px 12px" }}>Sign out</button>
+              </>
+            ) : (
+              <Link className="btn btn-primary" to="/signin">Sign in</Link>
+            )}
+          </div>
+          <button className="nav-burger" onClick={() => setOpen((o) => !o)} aria-label="Menu">
+            <Ic name="menu" size={18} sw={2} />
+          </button>
+        </div>
+      </header>
     </>
   );
 }
-
-export default SiteNavbar;
-
-

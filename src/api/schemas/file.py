@@ -3,10 +3,22 @@ File schemas for validation and serialization.
 """
 
 from datetime import datetime, timezone
-from typing import Literal, Optional
+from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, validator
+
+class MultipartPartComplete(BaseModel):
+    part_number: int = Field(..., ge=1)
+    etag: str = Field(..., min_length=1)
+
+
+class CompleteMultipartRequest(BaseModel):
+    job_id: str
+    file_id: UUID
+    upload_id: str
+    parts: List[MultipartPartComplete]
+
 
 class FileEditRequest(BaseModel):
     """
@@ -36,9 +48,6 @@ class FileEditRequest(BaseModel):
         None, description="Permissions (CC license type)"
     )
     duration: int = Field(default=0, ge=0, description="Duration in years")
-    value: Optional[Literal["high", "medium", "low"]] = Field(
-        "low", description="Value level (high, medium, low); invalid/empty defaults to low"
-    )
     temporal_from: Optional[datetime] = Field(
         None, description="Temporal coverage start (ISO 8601)"
     )
@@ -48,17 +57,6 @@ class FileEditRequest(BaseModel):
     geography: Optional[str] = Field(
         None, description="Geographic coverage"
     )
-
-    @validator("value", pre=True)
-    def validate_value_default_low(cls, v):
-        """Default invalid or empty value to 'low' for consistency with frontend."""
-        if v is None or (isinstance(v, str) and not v.strip()):
-            return "low"
-        if isinstance(v, str):
-            v = v.strip()
-        if v not in ("high", "medium", "low"):
-            return "low"
-        return v
 
     @validator("file_title")
     def validate_file_title(cls, v):

@@ -7,10 +7,10 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
+from urllib.parse import quote
 from uuid import UUID, uuid4
 
-import httpx
 from core.config import settings
 from db.session import get_session
 from fastapi import (
@@ -24,25 +24,34 @@ from fastapi import (
     status,
 )
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from models.dataset import Dataset
 from models.file import File
 from models.orphaned_s3_object import OrphanedS3Object
 from models.file_download import FileDownloadCount, FileDownloadLog
 from models.user import User
-from schemas.file import FileEditRequest
+from schemas.file import CompleteMultipartRequest, FileEditRequest
 from redis.asyncio import Redis
 from services.auth import AuthService, RedisStrategy, get_auth_service, get_upload_jobs_redis
 from services.dataset import DatasetService, get_dataset_service
-from services.upload import UploadService, get_upload_service
+from services.upload import (
+    S3_PUT_OBJECT_MAX_BYTES,
+    UploadService,
+    get_upload_service,
+)
 from services.upload_completion import complete_upload_job
+from services.zip_stream import iter_stored_zip
 from services.upload_job import get_job_status
+from services.typesense_index import (
+    safe_delete_file_document,
+    safe_index_dataset,
+)
 from services.user import UserService, get_user_service
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from utils.security import sanitize_input
+from utils.security import mask_apikey, optional_api_key, sanitize_input
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -53,6 +62,32 @@ def _upload_job_ttl() -> int:
 
 async def _redis_set_json(redis: Redis, key: str, obj: Any, ttl: int) -> None:
     await redis.setex(key, ttl, json.dumps(obj, default=str))
+
+
+_ZIP32_MAX = 0xFFFFFFFF
+
+
+def _zip_arcname(file_key: str, file_id: UUID, used: set[str]) -> str:
+    raw = (file_key or "").replace("\\", "/").rsplit("/", 1)[-1]
+    raw = raw.replace("\x00", "").replace("/", "_").strip()
+    if raw in {"", ".", ".."}:
+        raw = str(file_id)
+    name = raw
+    n = 2
+    while name in used:
+        stem, dot, ext = raw.rpartition(".")
+        if dot and stem:
+            name = f"{stem} ({n}).{ext}"
+        else:
+            name = f"{raw} ({n})"
+        n += 1
+    used.add(name)
+    return name
+
+
+def _zip_download_name(title: Optional[str]) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", (title or "dataset")).strip("-._")
+    return f"{(cleaned or 'dataset')[:80]}.zip"
 
 
 ALLOWED_PERMISSIONS = [
@@ -154,6 +189,14 @@ async def get_current_active_user(
                 detail="User account is not active",
             )
 
+        from utils.security import is_profile_complete
+
+        if not is_profile_complete(user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Complete your profile before continuing",
+            )
+
         return user
 
     except HTTPException:
@@ -168,12 +211,12 @@ async def get_current_active_user(
 
 async def get_current_user_optional_for_download(
     request: Request,
-    apikey: Optional[str] = Query(None, description="Optional API key for download auth"),
+    apikey: Optional[str] = Depends(optional_api_key),
     auth_service: AuthService = Depends(get_auth_service),
     user_service: UserService = Depends(get_user_service),
 ) -> Optional[User]:
     """
-    Resolve user from session cookie or from apikey. Returns None if neither present or invalid.
+    Resolve user from session cookie or from X-API-Key. Returns None if neither present or invalid.
     Used by /download_url to allow optional auth for logging and private-dataset checks.
     """
     # 1. Try session cookie
@@ -188,7 +231,7 @@ async def get_current_user_optional_for_download(
                     return user
         except Exception:
             pass
-    # 2. Try apikey
+    # 2. Try X-API-Key header
     if apikey and apikey.strip():
         user = await user_service.get_user_model_by_apikey(apikey.strip())
         if user:
@@ -251,7 +294,11 @@ class UploadController:
         )
 
     async def get_upload_url(
-        self, job_id: str, filename: str, user: User
+        self,
+        job_id: str,
+        filename: str,
+        user: User,
+        file_size: int,
     ) -> JSONResponse:
         """
         Get presigned upload URL for a file.
@@ -328,6 +375,18 @@ class UploadController:
                 sanitized_filename,
             )
 
+            if file_size < 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid file_size",
+                )
+            max_size = int(settings.S3_UPLOAD_MAX_SIZE)
+            if file_size > max_size:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"File exceeds maximum upload size of {max_size} bytes",
+                )
+
             file_status = await self.upload_service.check_file_exists(
                 user.id, sanitized_filename
             )
@@ -342,42 +401,77 @@ class UploadController:
                 )
 
             file_id = uuid4()
-            presigned_data = await self.upload_service.get_presigned_upload_url(
-                user.id, sanitized_filename
-            )
-
-            url = (
-                presigned_data.get("presigned_upload_url")
-                or presigned_data.get("presigned_url")
-                or presigned_data.get("url")
-                or presigned_data.get("upload_url")
-            )
-            if not url:
-                self.logger.error(
-                    "S3 handler response missing URL keys: %s", presigned_data.keys()
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail="S3 handler service unavailable",
-                )
-
+            use_multipart = file_size > S3_PUT_OBJECT_MAX_BYTES
             file_key = f"{user.id}/{sanitized_filename}"
-            self.session.add(
-                OrphanedS3Object(
-                    file_id=file_id,
-                    job_id=UUID(jid),
-                    file_key=file_key,
-                    bucket=settings.S3_BUCKET,
-                    status="initiated",
+            multipart = None
+            url = None
+            presigned_data = None
+
+            try:
+                if use_multipart:
+                    multipart = await self.upload_service.create_multipart_upload(
+                        user.id, sanitized_filename, file_size
+                    )
+                    ttl = _upload_job_ttl()
+                    await _redis_set_json(
+                        self.redis_jobs,
+                        f"multipart:{file_id}",
+                        {
+                            "job_id": jid,
+                            "upload_id": multipart["upload_id"],
+                            "key": file_key,
+                            "creator": str(user.id),
+                        },
+                        ttl,
+                    )
+                else:
+                    presigned_data = await self.upload_service.get_presigned_upload_url(
+                        user.id, sanitized_filename
+                    )
+                    url = presigned_data.get("presigned_upload_url")
+                    if not url:
+                        raise HTTPException(
+                            status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail="S3 service unavailable",
+                        )
+
+                self.session.add(
+                    OrphanedS3Object(
+                        file_id=file_id,
+                        job_id=UUID(jid),
+                        file_key=file_key,
+                        bucket=settings.S3_BUCKET,
+                        status="initiated",
+                    )
                 )
-            )
-            await self.session.commit()
+                await self.session.commit()
+            except Exception:
+                if multipart:
+                    await self.upload_service.abort_multipart_upload(
+                        file_key, multipart["upload_id"]
+                    )
+                raise
 
             self.logger.info(
                 "Presigned URL generated successfully for user %s, filename: %s",
                 user.id,
                 sanitized_filename,
             )
+
+            if use_multipart:
+                return JSONResponse(
+                    content={
+                        "job_id": jid,
+                        "file_id": str(file_id),
+                        "multipart": True,
+                        "upload_id": multipart["upload_id"],
+                        "content_type": multipart["content_type"],
+                        "part_size": multipart["part_size"],
+                        "part_count": multipart["part_count"],
+                        "parts": multipart["parts"],
+                    },
+                    status_code=status.HTTP_200_OK,
+                )
 
             return JSONResponse(
                 content={
@@ -404,80 +498,113 @@ class UploadController:
                 detail="Error generating upload URL",
             )
 
+    async def complete_multipart(
+        self, body: CompleteMultipartRequest, user: User
+    ) -> JSONResponse:
+        jid = sanitize_input(body.job_id)
+        if not jid or not jid.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid job_id"
+            )
+        jid = jid.strip()
+        raw_job = await self.redis_jobs.get(f"job:{jid}")
+        if not raw_job:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"job {jid} does not exist.",
+            )
+        job = json.loads(raw_job)
+        if str(job.get("creator")) != str(user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Job does not belong to this user",
+            )
+        raw_mp = await self.redis_jobs.get(f"multipart:{body.file_id}")
+        if not raw_mp:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Multipart upload session not found or expired",
+            )
+        mp = json.loads(raw_mp)
+        if mp.get("job_id") != jid or mp.get("upload_id") != body.upload_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Multipart upload does not match this job",
+            )
+        parts = [{"part_number": p.part_number, "etag": p.etag} for p in body.parts]
+        try:
+            await self.upload_service.complete_multipart_upload(
+                mp["key"], body.upload_id, parts
+            )
+        except Exception:
+            await self.upload_service.abort_multipart_upload(mp["key"], body.upload_id)
+            await self.redis_jobs.delete(f"multipart:{body.file_id}")
+            raise
+        await self.redis_jobs.delete(f"multipart:{body.file_id}")
+        return JSONResponse(
+            content={"detail": "multipart upload completed", "file_id": str(body.file_id)},
+            status_code=status.HTTP_200_OK,
+        )
+
+    async def _accessible_file_for_read(
+        self,
+        file_id: UUID,
+        apikey: Optional[str],
+        user: Optional[User],
+    ) -> tuple[File, Dataset, str]:
+        apikey_sanitized = sanitize_input(apikey) if apikey else None
+        if apikey and (not apikey_sanitized or not apikey_sanitized.strip()):
+            self.logger.warning("Invalid apikey provided for file access")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid apikey",
+            )
+
+        result = await self.session.execute(
+            select(File, Dataset)
+            .join(Dataset, File.dataset_id == Dataset.dataset_id)
+            .where(File.file_id == file_id)
+        )
+        row = result.one_or_none()
+        if not row:
+            self.logger.warning("File record not found for file_id: %s", file_id)
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="File record not found",
+            )
+        file_record, dataset = row
+
+        if not await self.dataset_service.viewer_can_see(dataset, user):
+            self.logger.warning(
+                "File access denied: availability rules for file_id=%s",
+                file_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Download permission is not granted.",
+            )
+
+        file_key = file_record.file_key
+        file_status = await self.upload_service.check_file_status_by_key(file_key)
+        if not file_status.get("exists", False):
+            self.logger.warning("File does not exist in S3: %s", file_key)
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="File does not exist",
+            )
+        return file_record, dataset, file_key
+
     async def get_download_url(
         self,
         file_id: UUID,
         apikey: Optional[str],
         user: Optional[User],
     ) -> JSONResponse:
-        """
-        Get presigned download URL for a file by file_id.
-
-        Validates access for private datasets (session or apikey, same organization),
-        checks file exists in S3, increments file_download_counts, optionally logs to
-        file_download_logs when user is identified, then returns presigned URL.
-        """
+        """Presigned URL that counts as a download."""
         try:
-            # Sanitize inputs
-            apikey_sanitized = sanitize_input(apikey) if apikey else None
-            if apikey and (not apikey_sanitized or not apikey_sanitized.strip()):
-                self.logger.warning("Invalid apikey provided for download")
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid apikey",
-                )
-
-            self.logger.info(
-                "Processing download URL request for file_id: %s",
-                file_id,
+            file_record, _dataset, file_key = await self._accessible_file_for_read(
+                file_id, apikey, user
             )
-
-            # 1. Get file and dataset (private, organization)
-            result = await self.session.execute(
-                select(File, Dataset).join(
-                    Dataset, File.dataset_id == Dataset.dataset_id
-                ).where(File.file_id == file_id)
-            )
-            row = result.one_or_none()
-            if not row:
-                self.logger.warning("File record not found for file_id: %s", file_id)
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="File record not found",
-                )
-            file_record, dataset = row
-
-            # 2. Private dataset: require same organization via session or apikey
-            if dataset.private:
-                if user is None:
-                    self.logger.warning(
-                        "Download denied: private dataset, no session or apikey"
-                    )
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="Download permission is not granted.",
-                    )
-                if user.organization != dataset.organization:
-                    self.logger.warning(
-                        "Download denied: organization mismatch for file_id=%s",
-                        file_id,
-                    )
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="Download permission is not granted.",
-                    )
-
-            # 3. Get file_key and check file exists in S3
-            file_key = file_record.file_key
-            file_status = await self.upload_service.check_file_status_by_key(file_key)
-            if not file_status.get("exists", False):
-                self.logger.warning("File does not exist in S3: %s", file_key)
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="File does not exist",
-                )
-
-            # 4. Increment file_download_counts (upsert to avoid TOCTOU race)
             try:
                 stmt = pg_insert(FileDownloadCount).values(
                     file_id=file_id,
@@ -495,9 +622,7 @@ class UploadController:
                     "Error incrementing FileDownloadCount for file_id %s",
                     file_id,
                 )
-                # Continue with URL generation
 
-            # 5. Log download when user is identified
             if user is not None:
                 try:
                     self.session.add(
@@ -515,22 +640,16 @@ class UploadController:
                         e,
                     )
 
-            # 6. Return presigned download URL
             presigned_data = await self.upload_service.get_presigned_download_url(
                 file_key
             )
             await _invalidate_dataset_cache(
                 file_record.dataset_id, self.auth_service, self.logger
             )
-            self.logger.info(
-                "Presigned download URL generated for file_id: %s",
-                file_id,
-            )
             return JSONResponse(
                 content=jsonable_encoder(presigned_data),
                 status_code=status.HTTP_200_OK,
             )
-
         except HTTPException:
             raise
         except Exception as e:
@@ -543,6 +662,121 @@ class UploadController:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Error generating download URL",
             )
+
+    async def download_dataset_zip(
+        self,
+        dataset_id: UUID,
+        user: Optional[User],
+    ) -> StreamingResponse:
+        """Zip every file in the dataset and count a download on each file."""
+        dataset, files = await self.dataset_service.get_dataset_and_files(dataset_id)
+        if not await self.dataset_service.viewer_can_see(dataset, user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Download permission is not granted.",
+            )
+        if not files:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="This dataset has no files to download.",
+            )
+
+        used_names: set[str] = set()
+        members: list[dict[str, Any]] = []
+        total_size = 0
+        for file_record in files:
+            bucket = file_record.bucket or settings.S3_BUCKET
+            size = await asyncio.to_thread(
+                self.upload_service.object_size, bucket, file_record.file_key
+            )
+            if size is None:
+                self.logger.warning(
+                    "Skipping missing S3 object for dataset zip file_id=%s",
+                    file_record.file_id,
+                )
+                continue
+            if size > _ZIP32_MAX or total_size + size > _ZIP32_MAX:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="This dataset is too large to download as a single zip.",
+                )
+            total_size += size
+            members.append(
+                {
+                    "file_id": file_record.file_id,
+                    "dataset_id": file_record.dataset_id,
+                    "bucket": bucket,
+                    "key": file_record.file_key,
+                    "arcname": _zip_arcname(
+                        file_record.file_key, file_record.file_id, used_names
+                    ),
+                }
+            )
+
+        if not members:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No downloadable files were found for this dataset.",
+            )
+
+        try:
+            for member in members:
+                stmt = pg_insert(FileDownloadCount).values(
+                    file_id=member["file_id"],
+                    dataset_id=member["dataset_id"],
+                    downloads=1,
+                ).on_conflict_do_update(
+                    index_elements=["file_id"],
+                    set_={"downloads": FileDownloadCount.downloads + 1},
+                )
+                await self.session.execute(stmt)
+            if user is not None:
+                for member in members:
+                    self.session.add(
+                        FileDownloadLog(
+                            file_id=member["file_id"],
+                            user_id=user.id,
+                        )
+                    )
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            self.logger.exception(
+                "Error recording dataset download counts for dataset_id %s",
+                dataset_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error recording download",
+            )
+
+        await _invalidate_dataset_cache(dataset_id, self.auth_service, self.logger)
+
+        upload_service = self.upload_service
+
+        def generate() -> Iterator[bytes]:
+            def entries():
+                for member in members:
+                    yield (
+                        member["arcname"],
+                        upload_service.iter_object_chunks(member["bucket"], member["key"]),
+                    )
+
+            yield from iter_stored_zip(entries())
+
+        filename = _zip_download_name(dataset.dataset_title)
+        disposition = (
+            f'attachment; filename="{filename}"; '
+            f"filename*=UTF-8''{quote(filename)}"
+        )
+        return StreamingResponse(
+            generate(),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": disposition,
+                "Cache-Control": "no-store",
+            },
+        )
 
     async def add_file(
         self,
@@ -558,7 +792,6 @@ class UploadController:
         cite_as: Optional[str],
         permissions: Optional[str],
         duration: int,
-        value: Optional[str],
         temporal_from: Optional[datetime],
         temporal_to: Optional[datetime],
         geography: Optional[str],
@@ -616,7 +849,15 @@ class UploadController:
                     select(Dataset).where(Dataset.dataset_id == dataset_id)
                 )
                 ds_row = result_ds.scalar_one_or_none()
-                if not ds_row or ds_row.creator != user.id:
+                if not ds_row:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="dataset does not exist or inadequate permission",
+                    )
+                can_add = await self.dataset_service.can_edit_or_add_file(
+                    user.id, dataset_id
+                )
+                if not can_add:
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,
                         detail="dataset does not exist or inadequate permission",
@@ -650,14 +891,6 @@ class UploadController:
             sanitized_geography = sanitize_input(geography)
             sanitized_permissions = _validate_permissions(permissions, self.logger)
             duration_value = duration if duration is not None else 0
-            val = sanitize_input(value)
-            stripped_value = val.strip() if val else None
-            if stripped_value not in ["high", "medium", "low"]:
-                if stripped_value:
-                    self.logger.warning(
-                        "Invalid value '%s', defaulting to 'low'", stripped_value
-                    )
-                stripped_value = "low"
             if temporal_to is not None and temporal_from is not None:
                 if temporal_to < temporal_from:
                     raise HTTPException(
@@ -739,7 +972,6 @@ class UploadController:
                 "cite_as": sanitized_cite_as,
                 "permissions": sanitized_permissions,
                 "duration": duration_value,
-                "value": stripped_value,
                 "temporal_from": tf_iso,
                 "temporal_to": tt_iso,
                 "geography": sanitized_geography,
@@ -762,7 +994,12 @@ class UploadController:
                 detail="Error processing add_files request",
             )
 
-    async def delete_file(self, file_id: UUID, apikey: str) -> JSONResponse:
+    async def delete_file(
+        self,
+        file_id: UUID,
+        user_id: Optional[UUID] = None,
+        apikey: Optional[str] = None,
+    ) -> JSONResponse:
         """
         Delete a file from S3 and the database.
 
@@ -787,7 +1024,7 @@ class UploadController:
             self.logger.info(
                 "Processing delete_file request for file_id: %s, apikey: %s",
                 file_id,
-                apikey,
+                mask_apikey(apikey),
             )
 
             # 1. Get file record
@@ -806,16 +1043,15 @@ class UploadController:
             dataset_id = file_record.dataset_id
             file_key = file_record.file_key
 
-            # 2. Check permission (apikey only for delete_file endpoint)
             has_permission = await self.dataset_service.check_dataset_permission(
-                None, apikey, dataset_id
+                user_id, apikey, dataset_id
             )
 
             if not has_permission:
                 self.logger.warning(
                     "Permission denied for file deletion: file_id=%s, apikey=%s",
                     file_id,
-                    apikey,
+                    mask_apikey(apikey),
                 )
                 return JSONResponse(
                     content={
@@ -841,62 +1077,21 @@ class UploadController:
                     detail="Delete failed as this is the only file of the dataset",
                 )
 
-            # 3. Delete from S3
-            s3_handler_url = settings.S3_HANDLER_URL.rstrip("/")
-            s3_region = settings.S3_REGION
-            s3_bucket = settings.S3_BUCKET
+            # 3. Delete converted objects then the native file from S3
+            from services.visualization import VisualizationService
 
-            params = {
-                "key": file_key,
-                "s3_region": s3_region,
-                "s3_bucket": s3_bucket,
-            }
-
-            try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    response = await client.delete(
-                        f"{s3_handler_url}/delete",
-                        params=params,
-                    )
-
-                    if response.status_code != 200:
-                        self.logger.error(
-                            "S3 handler delete endpoint returned status %d: %s",
-                            response.status_code,
-                            response.text,
-                        )
-                        raise HTTPException(
-                            status_code=status.HTTP_502_BAD_GATEWAY,
-                            detail="S3 handler service unavailable",
-                        )
-
-                    data = response.json()
-                    deleted = data.get("deleted", False)
-
-                    if not deleted:
-                        self.logger.warning(
-                            "File deletion failed in S3: file_id=%s, file_key=%s",
-                            file_id,
-                            file_key,
-                        )
-                        return JSONResponse(
-                            content={"detail": f"file {file_id} does not exist"},
-                            status_code=status.HTTP_404_NOT_FOUND,
-                        )
-
-            except httpx.TimeoutException:
-                self.logger.exception("Timeout while deleting file from S3")
-                raise HTTPException(
-                    status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                    detail="S3 handler service timeout",
+            viz = VisualizationService(self.session, self.upload_service)
+            await viz.delete_converted_objects(file_id)
+            deleted = await self.upload_service.delete_object(file_key)
+            if not deleted:
+                self.logger.warning(
+                    "File deletion failed in S3: file_id=%s, file_key=%s",
+                    file_id,
+                    file_key,
                 )
-            except httpx.RequestError as e:
-                self.logger.exception(
-                    "Request error while deleting file from S3: %s", e
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail="S3 handler service connection error",
+                return JSONResponse(
+                    content={"detail": f"file {file_id} does not exist"},
+                    status_code=status.HTTP_404_NOT_FOUND,
                 )
 
             # 4. Delete from database
@@ -904,6 +1099,8 @@ class UploadController:
             await self.session.commit()
 
             await _invalidate_dataset_cache(dataset_id, self.auth_service, self.logger)
+            await safe_delete_file_document(file_id)
+            await safe_index_dataset(self.session, dataset_id)
             self.logger.info("File deleted successfully: file_id=%s", file_id)
 
             return JSONResponse(
@@ -933,7 +1130,6 @@ class UploadController:
         groundtruthed: Optional[bool],
         permissions: Optional[str],
         duration: int,
-        value: Optional[str],
         temporal_from: Optional[datetime],
         temporal_to: Optional[datetime],
         geography: Optional[str],
@@ -967,18 +1163,18 @@ class UploadController:
                 )
 
             dataset_id = file_record.dataset_id
-            is_creator = await self.user_service.check_if_dataset_creator_by_id(
+            can_edit = await self.dataset_service.can_edit_or_add_file(
                 user.id, dataset_id
             )
-            if not is_creator:
+            if not can_edit:
                 self.logger.warning(
-                    "Edit denied: user %s is not creator of dataset %s",
+                    "Edit denied: user %s is not creator or owner of dataset %s",
                     user.id,
                     dataset_id,
                 )
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Only creator of dataset can edit.",
+                    detail="Only a dataset owner can edit.",
                 )
 
             sanitized_title = sanitize_input(file_title)
@@ -1017,15 +1213,6 @@ class UploadController:
 
             file_record.duration = max(0, duration)
 
-            val = sanitize_input(value)
-            stripped = val.strip() if val else None
-            if stripped not in ["high", "medium", "low"]:
-                if stripped:
-                    self.logger.warning(
-                        "Invalid value '%s', defaulting to 'low'", stripped
-                    )
-                stripped = "low"
-            file_record.value = stripped
             file_record.temporal_from = temporal_from
             file_record.temporal_to = temporal_to
             file_record.geography = sanitize_input(geography)
@@ -1033,6 +1220,7 @@ class UploadController:
             self.session.add(file_record)
             await self.session.commit()
             await self.session.refresh(file_record)
+            await safe_index_dataset(self.session, dataset_id)
 
             self.logger.info("File updated successfully: file_id=%s", file_id)
 
@@ -1046,7 +1234,6 @@ class UploadController:
                 "groundtruthed": file_record.groundtruthed,
                 "permissions": file_record.permissions,
                 "duration": file_record.duration,
-                "value": file_record.value,
                 "temporal_from": (
                     file_record.temporal_from.isoformat()
                     if file_record.temporal_from
@@ -1162,45 +1349,28 @@ async def http_job_status(
 async def get_upload_url(
     job_id: str = Query(..., description="Upload job UUID"),
     filename: str = Query(..., description="Name of the file to upload"),
+    file_size: int = Query(..., description="File size in bytes"),
     user: User = Depends(get_current_active_user),
     controller: UploadController = Depends(get_upload_controller),
 ):
-    """
-    Get a presigned URL for uploading a file to S3.
+    """Get a presigned URL (or multipart part URLs) for uploading a file to S3."""
+    return await controller.get_upload_url(job_id, filename, user, file_size)
 
-    This endpoint:
-    - Requires authentication (valid session cookie)
-    - Checks if the user is active
-    - Validates that the file doesn't already exist
-    - Returns a presigned URL for uploading the file
 
-    Args:
-        filename: Name of the file with extension
-        user: Authenticated user (from dependency)
-        controller: Upload controller (from dependency)
-
-    Returns:
-        JSON response containing presigned URL information
-
-    Raises:
-        HTTPException:
-            - 401: Not authenticated
-            - 403: User account not active
-            - 400: Invalid filename
-            - 409: File already exists
-            - 500: Internal server error
-            - 502: S3 handler service unavailable
-            - 504: S3 handler service timeout
-    """
-    return await controller.get_upload_url(job_id, filename, user)
+@router.post("/complete_multipart")
+async def complete_multipart(
+    body: CompleteMultipartRequest,
+    user: User = Depends(get_current_active_user),
+    controller: UploadController = Depends(get_upload_controller),
+):
+    """Complete an S3 multipart upload after all parts have been PUT."""
+    return await controller.complete_multipart(body, user)
 
 
 @router.get("/download_url")
 async def get_download_url(
     file_id: UUID = Query(..., description="File ID (UUID) for the file to download"),
-    apikey: Optional[str] = Query(
-        None, description="Optional API key for auth when session cookie is not sent"
-    ),
+    apikey: Optional[str] = Depends(optional_api_key),
     user: Optional[User] = Depends(get_current_user_optional_for_download),
     controller: UploadController = Depends(get_upload_controller),
 ):
@@ -1224,6 +1394,21 @@ async def get_download_url(
     return await controller.get_download_url(file_id, apikey, user)
 
 
+@router.get("/download_dataset")
+async def download_dataset(
+    dataset_id: UUID = Query(..., description="Dataset ID whose files should be zipped"),
+    user: Optional[User] = Depends(get_current_user_optional_for_download),
+    controller: UploadController = Depends(get_upload_controller),
+):
+    """
+    Download every file in a dataset as one zip.
+
+    Uses the same visibility rules as /download_url. Each file included in the
+    zip gets one download count, and a download log row when the user is known.
+    """
+    return await controller.download_dataset_zip(dataset_id, user)
+
+
 @router.post("/add_file")
 async def add_files(
     job_id: str = Form(..., description="Upload job UUID"),
@@ -1242,7 +1427,6 @@ async def add_files(
     cite_as: Optional[str] = Form(None, description="Citation information"),
     permissions: Optional[str] = Form(None, description="Permissions"),
     duration: int = Form(0, description="Duration in years"),
-    value: Optional[str] = Form(None, description="Value level (high, medium, low)"),
     temporal_from: Optional[str] = Form(
         None, description="Temporal coverage start date (ISO format)"
     ),
@@ -1311,7 +1495,6 @@ async def add_files(
             cite_as=cite_as,
             permissions=permissions,
             duration=duration,
-            value=value,
             temporal_from=parsed_temporal_from,
             temporal_to=parsed_temporal_to,
             geography=geography,
@@ -1331,7 +1514,8 @@ async def add_files(
 @router.delete("/delete_file")
 async def delete_file(
     file_id: UUID = Query(..., description="File ID (UUID)"),
-    apikey: str = Query(..., description="API key for authentication"),
+    apikey: Optional[str] = Depends(optional_api_key),
+    user: Optional[User] = Depends(get_current_user_optional_for_download),
     controller: UploadController = Depends(get_upload_controller),
 ):
     """
@@ -1356,10 +1540,16 @@ async def delete_file(
             - 403: User does not have permission
             - 404: File does not exist
             - 500: Internal server error
-            - 502: S3 handler service unavailable
-            - 504: S3 handler service timeout
+            - 502: S3 service unavailable
     """
-    return await controller.delete_file(file_id, apikey)
+    if user is None and not apikey:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+        )
+    return await controller.delete_file(
+        file_id, user_id=user.id if user else None, apikey=apikey
+    )
 
 
 @router.put("/edit_file")
@@ -1372,7 +1562,7 @@ async def edit_file(
     Update file metadata. Only the dataset creator may edit.
 
     Request body: file_id, file_title, file_description, provenance, source,
-    cite_as, groundtruthed, permissions, duration, value, temporal_from,
+    cite_as, groundtruthed, permissions, duration, temporal_from,
     temporal_to, geography. Requires authentication (valid session cookie).
     """
     try:
@@ -1386,7 +1576,6 @@ async def edit_file(
             groundtruthed=payload.groundtruthed,
             permissions=payload.permissions,
             duration=payload.duration,
-            value=payload.value,
             temporal_from=payload.temporal_from,
             temporal_to=payload.temporal_to,
             geography=payload.geography,

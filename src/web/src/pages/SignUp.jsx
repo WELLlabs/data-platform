@@ -1,17 +1,20 @@
 import React, { useMemo, useState, useEffect } from "react";
 import axios from "axios";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
     list_organizations_endpoint,
+    login_options_endpoint,
     signup_endpoint,
 } from "../api/endpoints";
+import { BrandLockup } from "../branding";
+
+const BrandMark = () => <BrandLockup className="auth-brand" />;
 
 function SignUp() {
     const [fullName, setFullName] = useState("");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [confirmPassword, setConfirmPassword] = useState("");
-    const [isStudent, setIsStudent] = useState(false);
     const [designation, setDesignation] = useState("");
     const [organization, setOrganization] = useState("");
     const [organizations, setOrganizations] = useState([]);
@@ -21,23 +24,11 @@ function SignUp() {
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState("");
     const [success, setSuccess] = useState("");
+    const [googleEnabled, setGoogleEnabled] = useState(false);
+    const [allowedDomains, setAllowedDomains] = useState([]);
     const navigate = useNavigate();
 
-    // When student is true, force designation to "student" and lock the field
     useEffect(() => {
-        if (isStudent) {
-            setDesignation("student");
-        }
-    }, [isStudent]);
-
-    // Clear organization whenever isStudent changes so dropdown/input reflects current mode
-    useEffect(() => {
-        setOrganization("");
-    }, [isStudent]);
-
-    // Fetch organization list for dropdown when not a student
-    useEffect(() => {
-        if (isStudent) return;
         let cancelled = false;
         const controller = new AbortController();
         const fetchOrganizations = async () => {
@@ -68,7 +59,24 @@ function SignUp() {
             cancelled = true;
             controller.abort();
         };
-    }, [isStudent]);
+    }, []);
+
+    useEffect(() => {
+        fetch(login_options_endpoint, { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data) => {
+                if (data) {
+                    setGoogleEnabled(!!data.google_enabled);
+                    const domains = Array.isArray(data.allowed_email_domains)
+                        ? data.allowed_email_domains.filter(Boolean)
+                        : data.allowed_email_domain
+                        ? [data.allowed_email_domain]
+                        : [];
+                    setAllowedDomains(domains);
+                }
+            })
+            .catch(() => {});
+    }, []);
 
     const passwordsMatch = useMemo(
         () => password.length > 0 && password === confirmPassword,
@@ -76,7 +84,6 @@ function SignUp() {
     );
 
     const emailValid = useMemo(() => {
-        // Simple email regex for client-side validation
         const re = /[^\s@]+@[^\s@]+\.[^\s@]+/;
         return re.test(email.trim());
     }, [email]);
@@ -103,9 +110,7 @@ function SignUp() {
 
     const onPhoneChange = (e) => {
         const value = e.target.value;
-        // Allow only digits
         if (value === "" || /^\d+$/.test(value)) {
-            // Limit to 10 digits
             setPhone(value.slice(0, 10));
         }
     };
@@ -121,11 +126,8 @@ function SignUp() {
                 email: email.trim(),
                 password,
                 full_name: fullName.trim(),
-                student: isStudent,
-                designation: isStudent
-                    ? "student"
-                    : designation?.trim() || null,
-                organization: organization.trim(), // backend expects string
+                designation: designation?.trim() || null,
+                organization: organization.trim(),
                 role: 0,
                 phone: phone ? phone.trim() : null,
             };
@@ -136,17 +138,14 @@ function SignUp() {
             });
 
             if (resp.status === 201 || resp.status === 200) {
-                // Extract returned user fields robustly (API may use snake_case or camelCase)
                 const user = resp.data || {};
                 const returnedEmail = user.email || email;
                 const returnedFullName =
                     user.full_name || user.fullName || fullName;
 
-                // clear sensitive fields
                 setPassword("");
                 setConfirmPassword("");
 
-                // Navigate to signup success page and pass user info via location state
                 navigate("/signupsuccess", {
                     state: { email: returnedEmail, fullName: returnedFullName },
                 });
@@ -163,344 +162,218 @@ function SignUp() {
     };
 
     return (
-        <div className="bg-wave">
-            <section className="container py-5">
-                <div className="row justify-content-center">
-                    <div className="col-12 col-sm-10 col-md-8 col-lg-6">
-                        <div className="card auth-card p-4 p-md-5">
-                            <h2 className="mb-3 text-center auth-title">
-                                Sign Up
-                            </h2>
-                            <p className="text-muted text-center mb-4">
-                                Create your account to access the WELL Labs Data
-                                Portal.
-                            </p>
+        <div className="page auth-screen">
+            <BrandMark />
+            <div className="auth-card wide">
+                <h1 className="display">Create your account</h1>
+                <p className="auth-sub">
+                    Join the Data Portal to publish and access
+                    water, land, and environmental datasets.
+                </p>
 
-                            {error && (
-                                <div
-                                    className="alert alert-danger"
-                                    role="alert"
-                                >
-                                    {error}
-                                </div>
+                {error && (
+                    <div
+                        className="auth-note"
+                        role="alert"
+                        style={{ background: "#faf3e4", borderColor: "#ecdcb8", color: "#9a6b12" }}
+                    >
+                        {error}
+                    </div>
+                )}
+                {success && (
+                    <div className="auth-note" role="alert" style={{ marginTop: 16 }}>
+                        {success}
+                    </div>
+                )}
+
+                <form onSubmit={handleSubmit} noValidate>
+                    <div className="field">
+                        <label htmlFor="fullName">
+                            Full name <span className="req">(required)</span>
+                        </label>
+                        <input
+                            id="fullName"
+                            type="text"
+                            placeholder="Enter your full name"
+                            value={fullName}
+                            onChange={(e) =>
+                                setFullName(e.target.value.slice(0, 50))
+                            }
+                            required
+                            maxLength={50}
+                        />
+                    </div>
+
+                    <div className="field">
+                        <label htmlFor="email">
+                            Email <span className="req">(required)</span>
+                        </label>
+                        <input
+                            id="email"
+                            name="email"
+                            type="email"
+                            placeholder={
+                                allowedDomains.length === 1
+                                    ? `you@${allowedDomains[0]}`
+                                    : allowedDomains.length > 1
+                                    ? `you@${allowedDomains[0]}`
+                                    : "you@ifmr.ac.in"
+                            }
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            autoComplete="email"
+                            required
+                        />
+                        {email && !emailValid && (
+                            <span className="err">
+                                Please enter a valid email address
+                            </span>
+                        )}
+                        {allowedDomains.length > 0 && (
+                            <span className="muted" style={{ fontSize: 12, display: "block", marginTop: 6 }}>
+                                Sign-up is limited to {allowedDomains.join(", ")}
+                            </span>
+                        )}
+                    </div>
+
+                    <div className="field-row">
+                        <div className="field">
+                            <label htmlFor="password">
+                                Password <span className="req">(required)</span>
+                            </label>
+                            <input
+                                id="password"
+                                name="password"
+                                type="password"
+                                placeholder="Minimum 8 characters"
+                                value={password}
+                                onChange={(e) =>
+                                    setPassword(e.target.value)
+                                }
+                                autoComplete="new-password"
+                                required
+                                minLength={8}
+                            />
+                            {password && password.length < 8 && (
+                                <span className="err">
+                                    At least 8 characters
+                                </span>
                             )}
-                            {success && (
-                                <div
-                                    className="alert alert-success"
-                                    role="alert"
-                                >
-                                    {success}
-                                </div>
+                        </div>
+
+                        <div className="field">
+                            <label htmlFor="confirmPassword">
+                                Confirm password <span className="req">(required)</span>
+                            </label>
+                            <input
+                                id="confirmPassword"
+                                name="confirmPassword"
+                                type="password"
+                                placeholder="Re-enter your password"
+                                value={confirmPassword}
+                                onChange={(e) =>
+                                    setConfirmPassword(e.target.value)
+                                }
+                                autoComplete="new-password"
+                                required
+                            />
+                            {!passwordsMatch && confirmPassword && (
+                                <span className="err">
+                                    Passwords do not match
+                                </span>
                             )}
-
-                            <form onSubmit={handleSubmit} noValidate>
-                                {/* <div className="alert alert-info py-2">
-                  <small>
-                    Required: full name, email, password, confirm password, are you a student?, {isStudent ? "institution" : "organization"}
-                  </small>
-                </div> */}
-                                <div className="mb-3">
-                                    <label
-                                        htmlFor="fullName"
-                                        className="form-label"
-                                    >
-                                        Full Name{" "}
-                                        <span style={{ color: "red" }}>
-                                            (required)
-                                        </span>
-                                    </label>
-                                    <input
-                                        id="fullName"
-                                        type="text"
-                                        className="form-control"
-                                        placeholder="Enter your full name"
-                                        value={fullName}
-                                        onChange={(e) =>
-                                            setFullName(
-                                                e.target.value.slice(0, 50)
-                                            )
-                                        }
-                                        required
-                                        maxLength={50}
-                                    />
-                                </div>
-
-                                <div className="mb-3">
-                                    <label
-                                        htmlFor="email"
-                                        className="form-label"
-                                    >
-                                        Email{" "}
-                                        <span style={{ color: "red" }}>
-                                            (required)
-                                        </span>
-                                    </label>
-                                    <input
-                                        id="email"
-                                        name="email"
-                                        type="email"
-                                        className={`form-control ${
-                                            email && !emailValid
-                                                ? "is-invalid"
-                                                : ""
-                                        }`}
-                                        placeholder="Enter your email"
-                                        value={email}
-                                        onChange={(e) =>
-                                            setEmail(e.target.value)
-                                        }
-                                        autoComplete="email"
-                                        required
-                                    />
-                                    {email && !emailValid && (
-                                        <div className="invalid-feedback">
-                                            Please enter a valid email address
-                                        </div>
-                                    )}
-                                </div>
-
-                                <div className="mb-3">
-                                    <label
-                                        htmlFor="password"
-                                        className="form-label"
-                                    >
-                                        Password{" "}
-                                        <span style={{ color: "red" }}>
-                                            (required)
-                                        </span>
-                                    </label>
-                                    <input
-                                        id="password"
-                                        name="password"
-                                        type="password"
-                                        className={`form-control ${
-                                            password && password.length < 8
-                                                ? "is-invalid"
-                                                : ""
-                                        }`}
-                                        placeholder="Minimum 8 characters"
-                                        value={password}
-                                        onChange={(e) =>
-                                            setPassword(e.target.value)
-                                        }
-                                        autoComplete="new-password"
-                                        required
-                                        minLength={8}
-                                    />
-                                    {password && password.length < 8 && (
-                                        <div className="invalid-feedback">
-                                            Password must be at least 8
-                                            characters
-                                        </div>
-                                    )}
-                                </div>
-
-                                <div className="mb-3">
-                                    <label
-                                        htmlFor="confirmPassword"
-                                        className="form-label"
-                                    >
-                                        Confirm Password{" "}
-                                        <span style={{ color: "red" }}>
-                                            (required)
-                                        </span>
-                                    </label>
-                                    <input
-                                        id="confirmPassword"
-                                        name="confirmPassword"
-                                        type="password"
-                                        className={`form-control ${
-                                            confirmPassword && !passwordsMatch
-                                                ? "is-invalid"
-                                                : ""
-                                        }`}
-                                        placeholder="Re-enter your password"
-                                        value={confirmPassword}
-                                        onChange={(e) =>
-                                            setConfirmPassword(e.target.value)
-                                        }
-                                        autoComplete="new-password"
-                                        required
-                                    />
-                                    {!passwordsMatch && confirmPassword && (
-                                        <div className="invalid-feedback">
-                                            Passwords do not match
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/*
-                                <div className="mb-3">
-                                    <label className="form-label d-block">
-                                        Are you a student?{" "}
-                                        <span style={{ color: "red" }}>
-                                            (required)
-                                        </span>
-                                    </label>
-                                    <div className="d-flex gap-3">
-                                        <div className="form-check">
-                                            <input
-                                                className="form-check-input"
-                                                type="radio"
-                                                name="studentRadio"
-                                                id="studentNo"
-                                                checked={!isStudent}
-                                                onChange={() =>
-                                                    setIsStudent(false)
-                                                }
-                                            />
-                                            <label
-                                                className="form-check-label"
-                                                htmlFor="studentNo"
-                                            >
-                                                No
-                                            </label>
-                                        </div>
-                                        <div className="form-check">
-                                            <input
-                                                className="form-check-input"
-                                                type="radio"
-                                                name="studentRadio"
-                                                id="studentYes"
-                                                checked={isStudent}
-                                                onChange={() =>
-                                                    setIsStudent(true)
-                                                }
-                                            />
-                                            <label
-                                                className="form-check-label"
-                                                htmlFor="studentYes"
-                                            >
-                                                Yes
-                                            </label>
-                                        </div>
-                                    </div>
-                                </div>
-                                */}
-
-                                <div className="mb-3">
-                                    <label
-                                        htmlFor="designation"
-                                        className="form-label"
-                                    >
-                                        Designation
-                                    </label>
-                                    <input
-                                        id="designation"
-                                        type="text"
-                                        className="form-control"
-                                        placeholder={
-                                            isStudent
-                                                ? "student"
-                                                : "Enter your designation"
-                                        }
-                                        value={designation}
-                                        onChange={(e) =>
-                                            setDesignation(
-                                                e.target.value.slice(0, 25)
-                                            )
-                                        }
-                                        disabled={isStudent}
-                                        maxLength={25}
-                                    />
-                                    {/* {!isStudent && <small className="text-muted">Max 25 characters</small>} */}
-                                </div>
-
-                                <div className="mb-1">
-                                    <label
-                                        htmlFor="organization"
-                                        className="form-label"
-                                    >
-                                        {isStudent
-                                            ? "Institution"
-                                            : "Organization ID"}{" "}
-                                        <span style={{ color: "red" }}>
-                                            (required)
-                                        </span>
-                                    </label>
-                                    {isStudent ? (
-                                        <input
-                                            id="organization"
-                                            type="text"
-                                            className="form-control"
-                                            placeholder="Enter your institution"
-                                            value={organization}
-                                            onChange={(e) =>
-                                                setOrganization(
-                                                    e.target.value.slice(0, 50)
-                                                )
-                                            }
-                                            required
-                                            maxLength={50}
-                                            aria-label="Institution"
-                                        />
-                                    ) : (
-                                        <select
-                                            id="organization"
-                                            className="form-select form-control"
-                                            value={organization}
-                                            onChange={(e) =>
-                                                setOrganization(
-                                                    e.target.value
-                                                )
-                                            }
-                                            required
-                                            disabled={organizationsLoading}
-                                            aria-label="Organization"
-                                        >
-                                            <option value="">
-                                                {organizationsLoading
-                                                    ? "Loading..."
-                                                    : "Select organization"}
-                                            </option>
-                                            {organizations.map((org) => (
-                                                <option
-                                                    key={org.id}
-                                                    value={org.id}
-                                                >
-                                                    {org.name}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    )}
-                                </div>
-                                {!isStudent && organizationsError && (
-                                    <div className="text-danger small mb-2" role="alert">
-                                        {organizationsError}
-                                    </div>
-                                )}
-                                <div className="mb-4">
-                                    <label
-                                        htmlFor="phone"
-                                        className="form-label"
-                                    >
-                                        Phone
-                                    </label>
-                                    <input
-                                        id="phone"
-                                        type="tel"
-                                        inputMode="numeric"
-                                        pattern="[0-9]{0,10}"
-                                        className="form-control"
-                                        placeholder="10 digits phone number"
-                                        value={phone}
-                                        onChange={onPhoneChange}
-                                        maxLength={10}
-                                    />
-                                </div>
-
-                                <button
-                                    type="submit"
-                                    className="btn btn-primary w-100 auth-submit-btn"
-                                    disabled={!canSubmit}
-                                >
-                                    {submitting ? "Signing Up..." : "Sign Up"}
-                                </button>
-                            </form>
                         </div>
                     </div>
+
+                    <div className="field">
+                        <label htmlFor="organization">
+                            Organization <span className="req">(required)</span>
+                        </label>
+                        <select
+                            id="organization"
+                            style={{ width: "100%" }}
+                            value={organization}
+                            onChange={(e) =>
+                                setOrganization(e.target.value)
+                            }
+                            required
+                            disabled={organizationsLoading}
+                            aria-label="Organization"
+                        >
+                            <option value="">
+                                {organizationsLoading
+                                    ? "Loading…"
+                                    : "Select organization"}
+                            </option>
+                            {organizations.map((org) => (
+                                <option key={org.id} value={org.id}>
+                                    {org.name}
+                                </option>
+                            ))}
+                        </select>
+                        {organizationsError && (
+                            <span className="err" role="alert">
+                                {organizationsError}
+                            </span>
+                        )}
+                    </div>
+
+                    <div className="field-row">
+                        <div className="field">
+                            <label htmlFor="designation">Designation</label>
+                            <input
+                                id="designation"
+                                type="text"
+                                placeholder="e.g. Research Associate"
+                                value={designation}
+                                onChange={(e) =>
+                                    setDesignation(e.target.value.slice(0, 25))
+                                }
+                                maxLength={25}
+                            />
+                        </div>
+
+                        <div className="field">
+                            <label htmlFor="phone">Phone</label>
+                            <input
+                                id="phone"
+                                type="tel"
+                                inputMode="numeric"
+                                pattern="[0-9]{0,10}"
+                                placeholder="10-digit number"
+                                value={phone}
+                                onChange={onPhoneChange}
+                                maxLength={10}
+                            />
+                        </div>
+                    </div>
+
+                    <button
+                        type="submit"
+                        className="btn btn-primary"
+                        style={{ width: "100%", marginTop: 6 }}
+                        disabled={!canSubmit}
+                    >
+                        {submitting ? "Creating account…" : "Create account"}
+                    </button>
+                </form>
+
+                {googleEnabled && (
+                    <>
+                        <div className="auth-or">or</div>
+                        <a
+                            className="gbtn"
+                            href="/api/auth/google"
+                        >
+                            Sign up with Google
+                        </a>
+                    </>
+                )}
+
+                <div className="auth-foot">
+                    Already have an account? <Link to="/signin">Sign in</Link>
                 </div>
-            </section>
+            </div>
         </div>
     );
 }

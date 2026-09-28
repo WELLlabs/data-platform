@@ -1,6 +1,6 @@
 # Access control: approvals workflow
 
-This document describes the **pending approvals**, **dataset approval**, **dataset creator transfer** (`/transfer_dataset`), and **organization member management** (role change / delete for verified users) features: API endpoints, service-layer queries, `/dataset_info` rules, Celery emails for user notifications, and the related frontend pages (`/approvals`, `/dataset-info`, `/organisation`). Routers live under `tags=["Users"]` for user management routes (see `src/api/main.py`) and dataset routes for `dataset_info` and `transfer_dataset`.
+This document describes the **pending approvals**, **dataset approval**, **dataset owners** (`/dataset_owners`), and **organization member management** (role change / delete for verified users) features: API endpoints, service-layer queries, `/dataset_info` rules, Celery emails for user notifications, and the related frontend pages (`/approvals`, `/dataset-info`, `/organisation`). Routers live under `tags=["Users"]` for user management routes (see `src/api/main.py`) and dataset routes for `dataset_info` and owner management.
 
 ---
 
@@ -10,7 +10,7 @@ This document describes the **pending approvals**, **dataset approval**, **datas
 - **1** — Organization admin: `GET /pending_approvals` returns **both** `datasets` and `users`; may **`PUT /approve_user/{user_id}`** or **`PUT /approve_user/{user_id}/{role}`** to approve a **pending** user (`users.verified == False`) and set **`users.role`** to **0** / **1** / **2** and **`users.verified = True`**; may **`DELETE /reject_user/{user_id}`** to reject and remove **only** a pending user in the same organization; may **`PUT /change_user_role/{user_id}/{role}`** to change the role of an **already verified** user in the same organization (does not gate on pending signup); may **`DELETE /delete_user/{user_id}`** to remove a user in the same organization (verified or not), subject to last-admin rules; may `PUT /approve_dataset/{dataset_id}` (subject to verification and service checks).
 - **2** — Elevated role: `GET /pending_approvals` returns **`datasets` only** (no `users` key); may approve datasets (same endpoint as role 1), not users via `approve_user`.
 
-**Dataset creator transfer** (`POST /transfer_dataset`) is restricted to **organization admins** (`role == 1`) in the **same organization** as the dataset; see [`DatasetService.transfer_dataset_creator`](src/api/services/dataset.py) and the section below.
+**Dataset owners** (`POST` / `DELETE /dataset_owners`): the original **`datasets.creator`** is immutable. Additional owners live in **`dataset_owners`**. Org admins (`role == 1`), existing owners, and instance superusers may add or remove owners (the creator row cannot be removed). Target users must belong to the dataset’s organization.
 
 Exact numeric roles are enforced in `UserController` in [`src/api/routers/user.py`](src/api/routers/user.py). **High role** (used inside `UserService.approve_dataset` and `privileges.approval`) is determined by `check_if_high_role_by_id` / `check_if_high_role_by_key` in [`src/api/services/user.py`](src/api/services/user.py).
 
@@ -77,7 +77,7 @@ Exact numeric roles are enforced in `UserController` in [`src/api/routers/user.p
 
 **Auth:** Session cookie.
 
-**Implementation:** `UserController.approve_user` → [`src/api/routers/user.py`](src/api/routers/user.py). Email: Celery task `email.send_user_approval_response` in [`src/api/tasks/email.py`](src/api/tasks/email.py), template id from **`USER_APPROVAL_RESPONSE_TEMPLATE_ID`** in [`src/api/core/config.py`](src/api/core/config.py).
+**Implementation:** `UserController.approve_user` → [`src/api/routers/user.py`](src/api/routers/user.py). Email: Celery task `email.send_user_approval_response` in [`src/api/tasks/email.py`](src/api/tasks/email.py), body from [`src/api/emails/user_approval_response.html`](src/api/emails/user_approval_response.html).
 
 ### Rules
 
@@ -225,38 +225,35 @@ Calls **`_invalidate_dataset_cache(dataset_id, redis, ...)`** from [`src/api/rou
 
 ---
 
-## `POST /transfer_dataset`
+## `POST /dataset_owners` and `DELETE /dataset_owners`
 
-**Auth:** Session cookie only (`Depends(get_current_active_user)` from [`src/api/routers/upload.py`](src/api/routers/upload.py)). **Query parameters:** `dataset_id` (UUID), `user_id` (UUID of the user who will become the new **`datasets.creator`**).
+**Auth:** Session cookie (`Depends(get_current_active_user)`).
 
-**Implementation:** Route [`transfer_dataset`](src/api/routers/dataset.py) → `DatasetController.transfer_dataset` → [`DatasetService.transfer_dataset_creator`](src/api/services/dataset.py). **Redis:** after a successful transfer, **`_invalidate_dataset_cache(dataset_id, ...)`** removes **`dataset:{dataset_id}`** from the dataset info cache.
+**Add:** JSON body `{ "dataset_id": "<uuid>", "user_id": "<uuid>" }`.
 
-**Email:** Celery task **`email.send_dataset_transfer`** in [`src/api/tasks/email.py`](src/api/tasks/email.py). Template id from **`DATASET_TRANSFER_TEMPLATE_ID`** in [`src/api/core/config.py`](src/api/core/config.py). Brevo params: **`title`** (dataset title), **`new_creator`** (new creator **`full_name`**), **`admin_name`** (transferring admin **`full_name`**). One task per distinct recipient email: **previous creator** and **new creator**, deduplicated by email address (case-insensitive) so a single address receives at most one message.
+**Remove:** Query `dataset_id` and `user_id`.
+
+**Implementation:** [`src/api/routers/dataset.py`](src/api/routers/dataset.py) → [`DatasetService.add_owner` / `remove_owner`](src/api/services/dataset.py). Cache key **`dataset:{dataset_id}`** is invalidated after a successful change.
+
+**Email:** Adding an owner queues **`email.send_dataset_transfer`** (HTML [`src/api/emails/dataset_transfer.html`](src/api/emails/dataset_transfer.html)) to the new owner with **`title`**, **`new_creator`** (new owner name), **`admin_name`** (actor name).
 
 ### Rules (service)
 
-1. Dataset must exist; else **404** `Dataset not found`.
-2. **`admin_user.role` must equal `1`**; else **403** `Unauthorized to transfer dataset`.
-3. **`admin_user.organization` must equal `dataset.organization`**; else **403** `Unauthorized to transfer dataset`.
-4. Target user must exist; else **404** `User not found`.
-5. **`target_user.organization` must equal `dataset.organization`**; else **403** `Unauthorized to transfer dataset`.
-6. Emails are queued (when addresses are present); **`datasets.creator`** is set to **`user_id`**, then **commit**.
+1. Dataset must exist; else **404**.
+2. Actor must be an existing owner, org admin (`role == 1` in the dataset org), or instance superuser; else **403**.
+3. Target user must exist and belong to the dataset organization.
+4. The **creator cannot be removed** from `dataset_owners`.
+5. Duplicate add → **409**.
 
-### Success response
+### Permission matrix
 
-```json
-{
-  "dataset_id": "<uuid>",
-  "creator": "<uuid>",
-  "detail": "Dataset transferred successfully"
-}
-```
+| Action | Who |
+|--------|-----|
+| Add file / edit dataset or file | Creator or any owner |
+| Delete file / dataset | Creator, any owner, org admin (`role == 1`), superuser |
+| Add / remove owner | Org admins, existing owners, superuser |
 
-### Errors
-
-- **401** — Missing or invalid session (from `get_current_active_user`).
-- **403** / **404** — As above.
-- **500** — Unexpected failure with detail `Error transferring dataset`.
+Reviewers (`role == 2`) may still approve datasets (high-role) but no longer delete via `check_dataset_permission`.
 
 ---
 
@@ -279,17 +276,12 @@ Calls **`_invalidate_dataset_cache(dataset_id, redis, ...)`** from [`src/api/rou
 
    So **`privileges.approval`** means: *signed-in user can approve this dataset* (same organization **and** high role), not high role alone.
 
-3. **`privileges.transfer`** (boolean)  
-   **`transfer = dataset.approved AND is_org_admin`**, where **`is_org_admin`** is:
-
-   - **Session:** `check_if_admin_by_id(dataset_organization, user_id)` (**`role == 1`** and same organization).
-   - **API key:** `check_if_admin_by_key(dataset_organization, apikey)` when there is no session user (same semantics).
-
-   Session is evaluated **before** API key when both are present (consistent with creator / approval branches and with **`check_dataset_permission`** in [`DatasetService`](src/api/services/dataset.py)). **`transfer`** is only useful for **approved** datasets: admins use it to move **`datasets.creator`** to another member via **`POST /transfer_dataset`** (see above).
+3. **`privileges.manage_owners`** (boolean)  
+   True when the caller is a dataset owner/creator, org admin of the dataset org, or superuser. **`privileges.edit`** and **`privileges.add_file`** are true for creator or any owner (not org admin unless they are also an owner).
 
 ### Unapproved dataset access (before cache / full payload)
 
-Evaluated **after** private-dataset checks, **before** returning cached or freshly built payload.
+Evaluated **after** availability checks, **before** returning cached or freshly built payload.
 
 For **`approved == False`**, access is allowed if **either**:
 
@@ -302,7 +294,21 @@ If neither holds and there is no valid session/API key path for the above → **
 { "detail": "Dataset is still pending approval." }
 ```
 
-**Approved datasets** follow the normal public/private rules without this gate.
+**Approved datasets** follow availability rules (0 public, 1 creator-only, 2 organization, 3 admins+owners, 4 owners) without this gate.
+
+### Dataset availability
+
+`datasets.availability` is an integer:
+
+| Value | Label | Who can view/download |
+|-------|--------|------------------------|
+| 0 | Public | Anyone |
+| 1 | Private | Creator and instance superuser |
+| 2 | Organization | Members of the dataset organization |
+| 3 | Admins | Org admins (`role == 1`), owners, creator, superuser |
+| 4 | Owners | Dataset owners (includes creator) and superuser |
+
+Levels 1–4 are allowed only when the **organization** is private; otherwise the API forces `0`. Listing, dataset info, download, and search all use the same rules (`core/availability.py`).
 
 ---
 
@@ -318,7 +324,7 @@ If neither holds and there is no valid session/API key path for the above → **
 | `change_user_role_endpoint(userId, role)` | `/api/change_user_role/{userId}/{role}` (**PUT**) |
 | `delete_user_endpoint(userId)` | `/api/delete_user/{userId}` (**DELETE**) |
 | `approve_dataset_endpoint(datasetId)` | `/api/approve_dataset/{datasetId}` |
-| `transfer_dataset_endpoint` | `/api/transfer_dataset` (**POST**; query `dataset_id`, `user_id`) |
+| `dataset_owners_endpoint` | `/api/dataset_owners` (**POST** body / **DELETE** query) |
 
 ### `/approvals` ([`src/web/src/pages/Approvals.jsx`](src/web/src/pages/Approvals.jsx))
 
@@ -335,8 +341,8 @@ If neither holds and there is no valid session/API key path for the above → **
 
 ### `/dataset-info` ([`src/web/src/pages/DatasetInfo.jsx`](src/web/src/pages/DatasetInfo.jsx))
 
-- **Query:** `dataset_id` (required); optional `apikey` from auth context for API-key requests.
-- **`privileges.transfer`:** When **true**, shows a **Transfer** button in the header row (**to the left of** **Approve** when both apply), same blue styling **`#0d6efd` / hover `#0b5ed7`**. Click opens a modal: **`GET`** `organization_by_id_endpoint(dataset.organization)` (with optional **`apikey`** query for parity with **`dataset_info`**), **`members`** dropdown by **`full_name`**, read-only **Name** / **Email** / **Designation** / **Role**, then **Submit** → **`POST`** `transfer_dataset_endpoint?dataset_id=…&user_id=…` with **`credentials: "include"`** → refetch dataset info on success.
+- **Query:** `dataset_id` (required). Browser requests use the session cookie only.
+- **`privileges.manage_owners`:** When **true**, shows **Manage owners**. The modal lists current owners (creator cannot be removed) and adds a same-org member via **`POST`** `dataset_owners_endpoint`.
 - **`privileges.approval`:** When **true**, shows an **Approve** button in the header row next to **“Dataset Information”** (to the left of **Edit** when **Transfer** is not shown, otherwise after **Transfer**), styled with **`#0d6efd` / hover `#0b5ed7`**. Click → confirm → **`PUT`** `approve_dataset_endpoint(dataset.dataset_id)` → reload on success.
 - **`dataset.approver_name` / `dataset.approved_by`:** When **`approved_by`** is set, shows **“Approved By”** with a **Link** to **`/profile?id={approved_by}`** and label **`approver_name`** (fallback to raw id).
 
@@ -359,9 +365,9 @@ If neither holds and there is no valid session/API key path for the above → **
 | Pending lists, approve user/dataset, reject user, change role, delete user | [`src/api/services/user.py`](src/api/services/user.py) |
 | Celery email tasks (user approval response, **`email.send_dataset_transfer`**, etc.) | [`src/api/tasks/email.py`](src/api/tasks/email.py) |
 | Email template id settings | [`src/api/core/config.py`](src/api/core/config.py) |
-| Dataset info, privileges, cache invalidation, **`POST /transfer_dataset`** | [`src/api/routers/dataset.py`](src/api/routers/dataset.py) |
-| Transfer creator, `check_dataset_permission` (session-first vs apikey) | [`src/api/services/dataset.py`](src/api/services/dataset.py) |
+| Dataset info, privileges, cache invalidation, **`/dataset_owners`** | [`src/api/routers/dataset.py`](src/api/routers/dataset.py) |
+| Owners, `check_dataset_permission` (session-first vs `X-API-Key`) | [`src/api/services/dataset.py`](src/api/services/dataset.py) |
 | Approvals page | [`src/web/src/pages/Approvals.jsx`](src/web/src/pages/Approvals.jsx) |
 | Organization page / members modal | [`src/web/src/pages/Organization.jsx`](src/web/src/pages/Organization.jsx) |
-| Dataset detail / approve & transfer UI | [`src/web/src/pages/DatasetInfo.jsx`](src/web/src/pages/DatasetInfo.jsx) |
+| Dataset detail / approve & owners UI | [`src/web/src/pages/DatasetInfo.jsx`](src/web/src/pages/DatasetInfo.jsx) |
 | Nav link | [`src/web/src/components/SiteNavbar.jsx`](src/web/src/components/SiteNavbar.jsx) |

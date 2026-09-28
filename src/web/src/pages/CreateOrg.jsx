@@ -1,22 +1,10 @@
 import React, { useState, useEffect } from "react";
-import {
-  Container,
-  Row,
-  Col,
-  Card,
-  Form,
-  Button,
-  Alert,
-  Spinner,
-  FormGroup,
-  Label,
-  Input,
-  FormText,
-} from "reactstrap";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import Select from "react-select";
 import { me_endpoint, organizations_endpoint } from "../api/endpoints";
+import { clearOrganizationNamesCache } from "../components/wd/DatasetItems";
+import Contour from "../components/wd/Contour";
 
 function CreateOrg() {
   const [user, setUser] = useState(null);
@@ -109,7 +97,7 @@ function CreateOrg() {
 
         if (response.status === 200) {
           const userData = response.data;
-          
+
           // Check if user is superuser
           if (!userData.is_superuser) {
             setError("Access denied. You must be a superuser to create organizations.");
@@ -121,11 +109,11 @@ function CreateOrg() {
         }
       } catch (err) {
         console.error("Authentication error:", err);
-        
+
         // Clear any stored auth data
         localStorage.removeItem("user");
         sessionStorage.clear();
-        
+
         if (err.response?.status === 401) {
           setError("Session expired. Please sign in again.");
         } else if (err.response?.status === 403) {
@@ -133,7 +121,7 @@ function CreateOrg() {
         } else {
           setError("Authentication failed. Please sign in again.");
         }
-        
+
         setUser(null);
       } finally {
         setLoading(false);
@@ -210,7 +198,7 @@ function CreateOrg() {
       });
 
       if (response.status === 201) {
-        // Navigate to success page with query parameters
+        clearOrganizationNamesCache();
         const orgName = encodeURIComponent(response.data.name);
         const createdAt = encodeURIComponent(response.data.created_at);
         const orgId = encodeURIComponent(response.data.id);
@@ -218,7 +206,7 @@ function CreateOrg() {
       }
     } catch (err) {
       console.error("Organization creation error:", err);
-      
+
       if (err.response?.status === 401) {
         setError("Session expired. Please sign in again.");
         // Clear auth data
@@ -238,17 +226,10 @@ function CreateOrg() {
   // Loading state
   if (loading) {
     return (
-      <div className="bg-wave">
-        <Container className="py-5">
-          <Row className="justify-content-center">
-            <Col md="8" lg="6">
-              <Card className="p-5 text-center">
-                <Spinner color="primary" size="lg" className="mb-3" />
-                <h5>Verifying access...</h5>
-              </Card>
-            </Col>
-          </Row>
-        </Container>
+      <div className="page">
+        <div className="wrap" style={{ maxWidth: 720, padding: "48px 0 88px" }}>
+          <div className="empty"><p>Verifying access…</p></div>
+        </div>
       </div>
     );
   }
@@ -256,269 +237,211 @@ function CreateOrg() {
   // Error state (no user or not superuser)
   if (!user) {
     return (
-      <div className="bg-wave">
-        <Container className="py-5">
-          <Row className="justify-content-center">
-            <Col md="8" lg="6">
-              <Card className="p-5 text-center">
-                <Alert color="danger" className="mb-4">
-                  {error}
-                </Alert>
-                {/*<Button 
-                  color="primary" 
-                  onClick={() => navigate("/signin")}
-                  className="me-2"
-                >
-                  Sign In
-                </Button>*/}
-                <Button 
-                  color="outline-primary" 
-                  onClick={() => navigate("/")}
-                >
-                  Go Home
-                </Button>
-              </Card>
-            </Col>
-          </Row>
-        </Container>
+      <div className="page">
+        <div className="wrap" style={{ maxWidth: 720, padding: "48px 0 88px" }}>
+          <div className="auth-wrap">
+            <div className="auth-card">
+              <span className="eyebrow">Organizations</span>
+              <h1 className="display">Access denied</h1>
+              <p className="auth-sub">{error}</p>
+              <div style={{ marginTop: 22 }}>
+                <button className="btn btn-ghost" onClick={() => navigate("/")}>
+                  Go home
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-wave">
-      <Container className="py-5">
-        <Row className="justify-content-center">
-          <Col md="10" lg="8">
-            <Card className="p-4 p-md-5">
-              <h2 className="mb-3 text-center auth-title">Create Organization</h2>
-              <p className="text-muted text-center mb-4">
-                Create a new organization to manage data and users.
-              </p>
+    <div className="page">
+      <div className="wrap" style={{ maxWidth: 720, padding: "48px 0 88px" }}>
+        <span className="eyebrow">Organizations</span>
+        <div className="section-head" style={{ marginTop: 8 }}>
+          <h2 className="section-title">Create organization</h2>
+        </div>
+        <p className="lede" style={{ marginTop: -8, marginBottom: 26 }}>
+          Create a new organization to manage data and users.
+        </p>
 
-              {error && (
-                <Alert color="danger" className="mb-4">
-                  {error}
-                </Alert>
-              )}
+        {error && (
+          <div className="attn-card warn" role="alert" style={{ marginBottom: 20 }}>
+            <div><b>{error}</b></div>
+          </div>
+        )}
 
-              <Form onSubmit={handleSubmit} noValidate>
-                {/* Organization Name */}
-                <FormGroup className="mb-3">
-                  <Label for="name" className="form-label">
-                    Organization Name *
-                  </Label>
-                  <Input
-                    id="name"
-                    name="name"
-                    type="text"
-                    value={formData.name}
-                    onChange={handleInputChange}
-                    placeholder="Enter organization name"
-                    maxLength={100}
-                    required
-                    className={formData.name.length > 100 ? "is-invalid" : ""}
-                  />
-                  {/* <FormText>
-                    {formData.name.length}/100 characters
-                  </FormText> */}
-                  {formData.name.length > 100 && (
-                    <div className="invalid-feedback">
-                      Organization name must be 100 characters or less
-                    </div>
-                  )}
-                </FormGroup>
+        <form onSubmit={handleSubmit} noValidate>
+          {/* Organization Name */}
+          <div className="field">
+            <label htmlFor="name">Organization name *</label>
+            <input
+              id="name"
+              name="name"
+              type="text"
+              value={formData.name}
+              onChange={handleInputChange}
+              placeholder="Enter organization name"
+              maxLength={100}
+              required
+            />
+            {formData.name.length > 100 && (
+              <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
+                Organization name must be 100 characters or less
+              </span>
+            )}
+          </div>
 
-                {/* Description */}
-                <FormGroup className="mb-3">
-                  <Label for="description" className="form-label">
-                    Description
-                  </Label>
-                  <Input
-                    id="description"
-                    name="description"
-                    type="textarea"
-                    value={formData.description}
-                    onChange={handleInputChange}
-                    placeholder="Enter organization description"
-                    maxLength={1000}
-                    rows={3}
-                    className={formData.description.length > 1000 ? "is-invalid" : ""}
-                  />
-                  {/* <FormText>
-                    {formData.description.length}/1000 characters
-                  </FormText> */}
-                  {formData.description.length > 1000 && (
-                    <div className="invalid-feedback">
-                      Description must be 1000 characters or less
-                    </div>
-                  )}
-                </FormGroup>
+          {/* Description */}
+          <div className="field">
+            <label htmlFor="description">Description</label>
+            <textarea
+              id="description"
+              name="description"
+              value={formData.description}
+              onChange={handleInputChange}
+              placeholder="Enter organization description"
+              maxLength={1000}
+              rows={3}
+            />
+            {formData.description.length > 1000 && (
+              <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
+                Description must be 1000 characters or less
+              </span>
+            )}
+          </div>
 
-                {/* Organization Type */}
-                <FormGroup className="mb-3">
-                  <Label for="org_type" className="form-label">
-                    Organization Type
-                  </Label>
-                  <Select
-                    id="org_type"
-                    name="org_type"
-                    value={orgTypeOptions.find(option => option.value === formData.org_type) || null}
-                    onChange={(selectedOption) => handleSelectChange(selectedOption, "org_type")}
-                    options={orgTypeOptions}
-                    placeholder="Select organization type"
-                    isClearable
-                    className="react-select-container"
-                    classNamePrefix="react-select"
-                  />
-                </FormGroup>
+          {/* Organization Type */}
+          <div className="field">
+            <label htmlFor="org_type">Organization type</label>
+            <Select
+              inputId="org_type"
+              name="org_type"
+              value={orgTypeOptions.find(option => option.value === formData.org_type) || null}
+              onChange={(selectedOption) => handleSelectChange(selectedOption, "org_type")}
+              options={orgTypeOptions}
+              placeholder="Select organization type"
+              isClearable
+              className="react-select-container"
+              classNamePrefix="react-select"
+            />
+          </div>
 
-                {/* Contact */}
-                <FormGroup className="mb-3">
-                  <Label for="contact" className="form-label">
-                    Contact Information
-                  </Label>
-                  <Input
-                    id="contact"
-                    name="contact"
-                    type="text"
-                    value={formData.contact}
-                    onChange={handleInputChange}
-                    placeholder="Enter contact information"
-                    maxLength={100}
-                    className={formData.contact.length > 100 ? "is-invalid" : ""}
-                  />
-                  {/* <FormText>
-                    {formData.contact.length}/100 characters
-                  </FormText> */}
-                  {formData.contact.length > 100 && (
-                    <div className="invalid-feedback">
-                      Contact information must be 100 characters or less
-                    </div>
-                  )}
-                </FormGroup>
+          {/* Contact */}
+          <div className="field">
+            <label htmlFor="contact">Contact information</label>
+            <input
+              id="contact"
+              name="contact"
+              type="text"
+              value={formData.contact}
+              onChange={handleInputChange}
+              placeholder="Enter contact information"
+              maxLength={100}
+            />
+            {formData.contact.length > 100 && (
+              <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
+                Contact information must be 100 characters or less
+              </span>
+            )}
+          </div>
 
-                {/* Website */}
-                <FormGroup className="mb-3">
-                  <Label for="website" className="form-label">
-                    Website
-                  </Label>
-                  <Input
-                    id="website"
-                    name="website"
-                    type="url"
-                    value={formData.website}
-                    onChange={handleInputChange}
-                    placeholder="https://example.com"
-                    maxLength={200}
-                    className={formData.website.length > 200 ? "is-invalid" : ""}
-                  />
-                  {/* <FormText>
-                    {formData.website.length}/200 characters
-                  </FormText> */}
-                  {formData.website.length > 200 && (
-                    <div className="invalid-feedback">
-                      Website URL must be 200 characters or less
-                    </div>
-                  )}
-                </FormGroup>
+          {/* Website */}
+          <div className="field">
+            <label htmlFor="website">Website</label>
+            <input
+              id="website"
+              name="website"
+              type="url"
+              value={formData.website}
+              onChange={handleInputChange}
+              placeholder="https://example.com"
+              maxLength={200}
+            />
+            {formData.website.length > 200 && (
+              <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
+                Website URL must be 200 characters or less
+              </span>
+            )}
+          </div>
 
-                {/* Private Data */}
-                <FormGroup className="mb-3">
-                  <Label className="form-label d-block">Private Data</Label>
-                  <div className="d-flex gap-3">
-                    <div className="form-check">
-                      <Input
-                        className="form-check-input"
-                        type="radio"
-                        name="private"
-                        id="privateNo"
-                        value="No"
-                        checked={formData.private === "No"}
-                        onChange={handleInputChange}
-                      />
-                      <Label className="form-check-label" htmlFor="privateNo">
-                        No
-                      </Label>
-                    </div>
-                    <div className="form-check">
-                      <Input
-                        className="form-check-input"
-                        type="radio"
-                        name="private"
-                        id="privateYes"
-                        value="Yes"
-                        checked={formData.private === "Yes"}
-                        onChange={handleInputChange}
-                      />
-                      <Label className="form-check-label" htmlFor="privateYes">
-                        Yes
-                      </Label>
-                    </div>
-                  </div>
-                </FormGroup>
+          {/* Private Data */}
+          <div className="field">
+            <label>Private data</label>
+            <div style={{ display: "flex", gap: 18, alignItems: "center" }}>
+              <label className="check" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <input
+                  type="radio"
+                  name="private"
+                  id="privateNo"
+                  value="No"
+                  checked={formData.private === "No"}
+                  onChange={handleInputChange}
+                />
+                No
+              </label>
+              <label className="check" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <input
+                  type="radio"
+                  name="private"
+                  id="privateYes"
+                  value="Yes"
+                  checked={formData.private === "Yes"}
+                  onChange={handleInputChange}
+                />
+                Yes
+              </label>
+            </div>
+          </div>
 
-                {/* Focus Areas */}
-                <FormGroup className="mb-3">
-                  <Label for="focus" className="form-label">
-                    Focus Areas (multi-select)
-                  </Label>
-                  <Select
-                    id="focus"
-                    name="focus"
-                    value={formData.focus}
-                    onChange={(selectedOptions) => handleMultiSelectChange(selectedOptions, "focus")}
-                    options={focusOptions}
-                    placeholder="Select focus areas"
-                    isMulti
-                    isClearable
-                    className="react-select-container"
-                    classNamePrefix="react-select"
-                  />
-                </FormGroup>
+          {/* Focus Areas */}
+          <div className="field">
+            <label htmlFor="focus">Focus areas (multi-select)</label>
+            <Select
+              inputId="focus"
+              name="focus"
+              value={formData.focus}
+              onChange={(selectedOptions) => handleMultiSelectChange(selectedOptions, "focus")}
+              options={focusOptions}
+              placeholder="Select focus areas"
+              isMulti
+              isClearable
+              className="react-select-container"
+              classNamePrefix="react-select"
+            />
+          </div>
 
-                {/* States */}
-                <FormGroup className="mb-4">
-                  <Label for="roi_states" className="form-label">
-                    States working in(multi-select)
-                  </Label>
-                  <Select
-                    id="roi_states"
-                    name="roi_states"
-                    value={formData.roi_states}
-                    onChange={(selectedOptions) => handleMultiSelectChange(selectedOptions, "roi_states")}
-                    options={stateOptions}
-                    placeholder="Select states"
-                    isMulti
-                    isClearable
-                    isSearchable
-                    className="react-select-container"
-                    classNamePrefix="react-select"
-                  />
-                </FormGroup>
+          {/* States */}
+          <div className="field">
+            <label htmlFor="roi_states">States working in (multi-select)</label>
+            <Select
+              inputId="roi_states"
+              name="roi_states"
+              value={formData.roi_states}
+              onChange={(selectedOptions) => handleMultiSelectChange(selectedOptions, "roi_states")}
+              options={stateOptions}
+              placeholder="Select states"
+              isMulti
+              isClearable
+              isSearchable
+              className="react-select-container"
+              classNamePrefix="react-select"
+            />
+          </div>
 
-                {/* Submit Button */}
-                <Button
-                  type="submit"
-                  color="primary"
-                  size="lg"
-                  className="w-100 auth-submit-btn"
-                  disabled={!isFormValid() || submitting}
-                >
-                  {submitting ? (
-                    <>
-                      <Spinner size="sm" className="me-2" />
-                      Creating Organization...
-                    </>
-                  ) : (
-                    "Create Organization"
-                  )}
-                </Button>
-              </Form>
-            </Card>
-          </Col>
-        </Row>
-      </Container>
+          {/* Submit Button */}
+          <button
+            type="submit"
+            className="btn btn-primary"
+            style={{ width: "100%", marginTop: 8 }}
+            disabled={!isFormValid() || submitting}
+          >
+            {submitting ? "Creating organization…" : "Create organization"}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }

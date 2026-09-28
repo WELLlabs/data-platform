@@ -12,14 +12,15 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from models.user import User
 from redis.asyncio import Redis
-from routers.dataset import _invalidate_dataset_cache
+from routers.dataset import _invalidate_dataset_cache, get_current_active_user_optional
 from routers.upload import get_current_active_user
 from services.auth import AuthService, get_auth_service
 from services.auth import get_redis
 from services.organization import OrganizationService, get_organization_service
 from services.user import UserService, get_user_service
+from services.typesense_index import safe_index_dataset
 from tasks.email import send_upload_approval_response, send_user_approval_response
-from utils.security import sanitize_input
+from utils.security import optional_api_key, sanitize_input
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -56,7 +57,10 @@ class UserController:
         self.logger = logging.getLogger(__name__)
 
     async def get_profile(
-        self, user_id: UUID, apikey: Optional[str] = None
+        self,
+        user_id: UUID,
+        apikey: Optional[str] = None,
+        current_user: Optional[User] = None,
     ) -> JSONResponse:
         """
         Get user profile information with conditional privileges and apikey visibility.
@@ -83,46 +87,34 @@ class UserController:
                     detail="User not found",
                 )
 
-            # Fetch organization name
-            organization = await self.org_service.get_organization_by_id(
-                user.organization
-            )
-            if organization is None:
-                self.logger.warning(
-                    "Organization not found: organization_id=%s", user.organization
+            organization = None
+            if user.organization:
+                organization = await self.org_service.get_organization_by_id(
+                    user.organization
                 )
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Organization not found",
-                )
+                if organization is None:
+                    self.logger.warning(
+                        "Organization not found: organization_id=%s",
+                        user.organization,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Organization not found",
+                    )
 
-            # Determine privileges based on apikey
             has_edit_privilege = False
             has_user_datasets_privilege = True
-            include_apikey = False
 
-            if apikey:
-                # Check if apikey belongs to the user
+            if current_user is not None and current_user.id == user_id:
+                has_edit_privilege = True
+                has_user_datasets_privilege = False
+            elif apikey:
                 apikey_belongs = await self.user_service.check_apikey_belongs_to_user(
                     apikey, user_id
                 )
                 if apikey_belongs:
                     has_edit_privilege = True
                     has_user_datasets_privilege = False
-                    include_apikey = True
-                    self.logger.info(
-                        "Apikey belongs to user: user_id=%s, privileges=edit",
-                        user_id,
-                    )
-                else:
-                    self.logger.info(
-                        "Apikey does not belong to user: user_id=%s, privileges=user_datasets",
-                        user_id,
-                    )
-            else:
-                self.logger.info(
-                    "No apikey provided: user_id=%s, privileges=user_datasets", user_id
-                )
 
             # Get contributions from user_contributions table
             contributions = await self.user_service.get_contributions_for_user(user_id)
@@ -144,16 +136,13 @@ class UserController:
                 else None,
                 "is_verified": user.is_verified,
                 "is_superuser": user.is_superuser,
-                "organization_name": organization.name,
+                "auth_provider": getattr(user, "auth_provider", None) or "password",
+                "organization_name": organization.name if organization else None,
                 "privileges": {
                     "edit": has_edit_privilege,
                     "user_datasets": has_user_datasets_privilege,
                 },
             }
-
-            # Conditionally include apikey
-            if include_apikey:
-                response_data["apikey"] = user.apikey
 
             self.logger.info(
                 "Profile fetched successfully: user_id=%s, has_edit=%s, has_user_datasets=%s",
@@ -280,20 +269,17 @@ class UserController:
                     detail="Organization not found",
                 )
 
-            # Build update dict
-            update_data = {
+            await self.auth_service.user_db.update(user, {
                 "full_name": sanitized_full_name,
                 "email": sanitized_email,
                 "designation": sanitized_designation,
-                "organization": sanitized_organization,
+                "organization": org.id,
                 "phone": sanitized_phone,
-            }
-            if sanitized_email != user.email:
-                update_data["is_verified"] = False
-            if sanitized_organization != user.organization:
-                update_data["verified"] = False
-
-            await self.auth_service.user_db.update(user, update_data)
+            } | (
+                {"is_verified": False} if sanitized_email != user.email else {}
+            ) | (
+                {"verified": False} if org.id != user.organization else {}
+            ))
             self.logger.info("Profile updated successfully for user_id=%s", user.id)
             return JSONResponse(
                 content={"detail": "Profile updated successfully"},
@@ -450,7 +436,7 @@ class UserController:
             )
             role_type = _role_type_label_for_email(assigned_role)
             acceptance_message = (
-                "Sign in to access the WELL Labs data portal with "
+                "Sign in to access the data platform with "
                 f"{role_type} role permissions."
             )
             send_user_approval_response.apply_async(
@@ -809,7 +795,7 @@ class UserController:
                     detail="Verified account required",
                 )
 
-            if signed_in_user.role not in (1, 2):
+            if signed_in_user.role not in (1, 2) and not signed_in_user.is_superuser:
                 self.logger.warning(
                     "Approve dataset denied for unauthorized approver_id=%s role=%s",
                     signed_in_user.id,
@@ -826,6 +812,9 @@ class UserController:
             )
             await _invalidate_dataset_cache(
                 approved_dataset.dataset_id, redis, self.logger
+            )
+            await safe_index_dataset(
+                self.user_service.session, approved_dataset.dataset_id
             )
             creator_user = await self.auth_service.user_db.get(approved_dataset.creator)
             if creator_user is None:
@@ -882,6 +871,37 @@ class UserController:
                 detail="Error processing approve dataset request",
             )
 
+    async def reject_dataset(
+        self,
+        signed_in_user: User,
+        dataset_id: str,
+    ) -> JSONResponse:
+        try:
+            target_dataset_id = UUID(dataset_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid dataset_id UUID format",
+            )
+        is_user_verified = await self.user_service.check_if_user_verified_by_id(
+            signed_in_user.id
+        )
+        if not is_user_verified:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Verified account required",
+            )
+        if signed_in_user.role not in (1, 2) and not signed_in_user.is_superuser:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Unauthorized to reject datasets",
+            )
+        await self.user_service.reject_dataset(signed_in_user, target_dataset_id)
+        return JSONResponse(
+            content={"detail": "Dataset rejected", "dataset_id": dataset_id},
+            status_code=status.HTTP_200_OK,
+        )
+
 
 async def get_user_controller(
     auth_service: AuthService = Depends(get_auth_service),
@@ -899,7 +919,8 @@ async def get_user_controller(
 @router.get("/profile")
 async def profile(
     user_id: str = Query(..., description="User ID (UUID)"),
-    apikey: Optional[str] = Query(None, description="Optional API key for privilege checking"),
+    apikey: Optional[str] = Depends(optional_api_key),
+    current_user: Optional[User] = Depends(get_current_active_user_optional),
     controller: UserController = Depends(get_user_controller),
 ):
     """
@@ -928,7 +949,7 @@ async def profile(
                 detail="Invalid user_id UUID format",
             )
 
-        return await controller.get_profile(user_uuid, apikey)
+        return await controller.get_profile(user_uuid, apikey, current_user)
 
     except HTTPException:
         raise
@@ -1131,5 +1152,23 @@ async def approve_dataset(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error processing approve dataset request",
+        )
+
+
+@router.delete("/reject_dataset/{dataset_id}")
+async def reject_dataset(
+    dataset_id: str,
+    user: User = Depends(get_current_active_user),
+    controller: UserController = Depends(get_user_controller),
+):
+    try:
+        return await controller.reject_dataset(user, dataset_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unexpected error in /reject_dataset/%s: %s", dataset_id, e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error processing reject dataset request",
         )
 

@@ -1,28 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
-import {
-  Container,
-  Row,
-  Col,
-  Card,
-  CardBody,
-  CardHeader,
-  Spinner,
-  Alert,
-  Button,
-  Table,
-  Modal,
-  ModalHeader,
-  ModalBody,
-  ModalFooter,
-} from 'reactstrap';
 import { useAuth } from '../contexts/AuthContext';
+import Ic from '../components/wd/Icons';
+import Contour from '../components/wd/Contour';
 import {
   organization_by_id_endpoint,
   approve_user_endpoint,
   reject_user_endpoint,
   change_user_role_endpoint,
   delete_user_endpoint,
+  organization_add_member_endpoint,
 } from '../api/endpoints';
 
 const ROLE_OPTIONS = [
@@ -30,6 +17,33 @@ const ROLE_OPTIONS = [
   { value: 1, label: 'Admin' },
   { value: 2, label: 'Reviewer' },
 ];
+
+const roleClass = (role) => {
+  if (Number(role) === 1) return 'admin';
+  if (Number(role) === 2) return 'reviewer';
+  return '';
+};
+
+// Best-effort contribution count from whatever the API exposes per member.
+const contributionsOf = (m = {}) =>
+  Number(
+    m.contributions ??
+      m.datasets_count ??
+      m.contributions_count ??
+      m.dataset_count ??
+      m.datasets ??
+      0
+  ) || 0;
+
+const initials = (name = '') =>
+  name
+    .trim()
+    .split(/\s+/)
+    .map((w) => w[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join('')
+    .toUpperCase() || 'OR';
 
 const Organization = () => {
   const [searchParams] = useSearchParams();
@@ -45,6 +59,8 @@ const Organization = () => {
   const [roleDraft, setRoleDraft] = useState(0);
   const [membersActionLoading, setMembersActionLoading] = useState(false);
   const [membersModalError, setMembersModalError] = useState(null);
+  const [addMemberEmail, setAddMemberEmail] = useState('');
+  const [addMemberError, setAddMemberError] = useState(null);
 
   const orgIdFromQuery = searchParams.get('id');
 
@@ -71,10 +87,7 @@ const Organization = () => {
         return;
       }
 
-      let url = organization_by_id_endpoint(organizationId);
-      if (isAuthenticated && user?.apikey) {
-        url += `?apikey=${encodeURIComponent(user.apikey)}`;
-      }
+      const url = organization_by_id_endpoint(organizationId);
 
       const response = await fetch(url, {
         method: 'GET',
@@ -146,8 +159,40 @@ const Organization = () => {
   const isOrgAdmin =
     isAuthenticated &&
     user &&
-    Number(user.role) === 1 &&
-    String(user.organization) === String(organization?.id);
+    (Boolean(user.is_superuser) ||
+      (Number(user.role) === 1 &&
+        String(user.organization) === String(organization?.id)));
+
+  const handleAddMember = async (e) => {
+    e.preventDefault();
+    if (!organization?.id || !addMemberEmail.trim()) return;
+    try {
+      setMembersActionLoading(true);
+      setAddMemberError(null);
+      const response = await fetch(
+        organization_add_member_endpoint(organization.id),
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: addMemberEmail.trim(),
+            role: 0,
+            approve_now: Boolean(user?.is_superuser),
+          }),
+        }
+      );
+      if (!response.ok) {
+        throw new Error(await parseApiError(response, 'Failed to add member.'));
+      }
+      setAddMemberEmail('');
+      await fetchOrganization();
+    } catch (err) {
+      setAddMemberError(err.message || 'Failed to add member.');
+    } finally {
+      setMembersActionLoading(false);
+    }
+  };
 
   const handleApproveMember = async () => {
     if (!selectedMember) return;
@@ -233,93 +278,6 @@ const Organization = () => {
     }
   };
 
-  if (authLoading) {
-    return (
-      <Container className="py-5">
-        <Row className="justify-content-center">
-          <Col md="auto">
-            <div className="text-center">
-              <Spinner color="primary" size="lg" />
-              <p className="mt-3">Loading...</p>
-            </div>
-          </Col>
-        </Row>
-      </Container>
-    );
-  }
-
-  if (loading) {
-    return (
-      <Container className="py-5">
-        <Row className="justify-content-center">
-          <Col md="auto">
-            <div className="text-center">
-              <Spinner color="primary" size="lg" />
-              <p className="mt-3">Loading organization details...</p>
-            </div>
-          </Col>
-        </Row>
-      </Container>
-    );
-  }
-
-  if (error) {
-    return (
-      <Container className="py-5">
-        <Row className="justify-content-center">
-          <Col md="8">
-            <Alert color="danger">
-              <h4 className="alert-heading">Error</h4>
-              <p>{error}</p>
-              <hr />
-              <div className="d-flex gap-2">
-                <Button color="primary" onClick={() => window.location.reload()}>
-                  Try Again
-                </Button>
-                <Button color="secondary" onClick={() => navigate('/')}>
-                  Go Home
-                </Button>
-              </div>
-            </Alert>
-          </Col>
-        </Row>
-      </Container>
-    );
-  }
-
-  if (!organization) {
-    return (
-      <Container className="py-5">
-        <Row className="justify-content-center">
-          <Col md="8">
-            <Alert color="warning">
-              <h4 className="alert-heading">No Organization Found</h4>
-              <p>No organization data available.</p>
-            </Alert>
-          </Col>
-        </Row>
-      </Container>
-    );
-  }
-
-  const formatDate = (dateString) => {
-    if (!dateString) return 'N/A';
-    try {
-      return new Date(dateString).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-      });
-    } catch {
-      return dateString;
-    }
-  };
-
-  const formatArray = (arr) => {
-    if (!arr || !Array.isArray(arr) || arr.length === 0) return 'N/A';
-    return arr.join(', ');
-  };
-
   const getRoleDisplay = (role) => {
     if (role === 0) return 'Member';
     if (role === 1) return 'Admin';
@@ -327,215 +285,308 @@ const Organization = () => {
     return 'Member';
   };
 
-  return (
-    <Container className="py-5">
-      <Row>
-        <Col lg="10" className="mx-auto">
-          <div className="d-flex justify-content-between align-items-center mb-4">
-            <h2 className="mb-0">{organization.name}</h2>
-            <div className="d-flex gap-2">
-              {organization.privileges?.create && (
-                <Button color="success" onClick={() => navigate('/createorg')}>
-                  Create
-                </Button>
-              )}
-              {organization.privileges?.edit && (
-                <Button
-                  color="primary"
-                  onClick={() => {
-                    console.log('Edit organization clicked');
-                  }}
-                >
-                  Edit
-                </Button>
-              )}
-              <Button color="primary" onClick={() => navigate('/orgsearch')}>
-                Search
-              </Button>
+  if (authLoading || loading) {
+    return (
+      <div className="page">
+        <div className="wrap" style={{ padding: 'var(--s7) 0' }}>
+          <div className="empty">
+            <p>Loading organization…</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="page">
+        <div className="wrap" style={{ padding: 'var(--s7) 0' }}>
+          <div className="empty">
+            <h3 className="display">Error</h3>
+            <p>{error}</p>
+            <div className="dh-actions" style={{ marginTop: 18 }}>
+              <button className="btn btn-primary" onClick={() => window.location.reload()}>
+                Try again
+              </button>
+              <button className="btn btn-ghost" onClick={() => navigate('/')}>
+                Go home
+              </button>
             </div>
           </div>
+        </div>
+      </div>
+    );
+  }
 
-          <Card className="mb-4 shadow-sm">
-            <CardHeader className="bg-primary text-white">
-              <div className="d-flex justify-content-between align-items-start">
-                <div>
-                  <p className="mb-0 opacity-75">
-                    <i className="bi bi-building me-2"></i>
-                    Organization Details
-                  </p>
-                </div>
-                <div className="text-end">
-                  <span
-                    title={
-                      organization.private
-                        ? 'Organization can have both public and private datasets'
-                        : 'Organization can have only public datasets'
-                    }
-                    className="opacity-90"
-                    style={{ cursor: 'default' }}
-                    role="img"
-                    aria-label={
-                      organization.private
-                        ? 'Private organization'
-                        : 'Public organization'
-                    }
-                  >
-                    {organization.private ? (
-                      <i className="bi bi-lock-fill fs-4" aria-hidden="true" />
-                    ) : (
-                      <i className="bi bi-globe fs-4" aria-hidden="true" />
-                    )}
+  if (!organization) {
+    return (
+      <div className="page">
+        <div className="wrap" style={{ padding: 'var(--s7) 0' }}>
+          <div className="empty">
+            <h3 className="display">No organization found</h3>
+            <p>No organization data available.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const areas = [
+    ...(Array.isArray(organization.focus) ? organization.focus : []),
+    ...(Array.isArray(organization.roi_states) ? organization.roi_states : []),
+  ];
+  const since = organization.created_at
+    ? new Date(organization.created_at).getFullYear()
+    : null;
+  const datasetCount =
+    organization.datasets_count ?? organization.contributions;
+  const tagline = organization.org_type || organization.contact || '';
+  const maxContrib = (organization.members || []).reduce(
+    (max, m) => Math.max(max, contributionsOf(m)),
+    0
+  );
+
+  return (
+    <div className="page">
+      <section className="org-hero">
+        <Contour op={0.3} />
+        <div className="wrap org-inner">
+          <div className="org-badge">{initials(organization.name)}</div>
+          <div style={{ flex: 1 }}>
+            <Link className="back" to="/orgsearch">
+              <Ic name="chevLeft" size={16} />
+              Organizations
+            </Link>
+            <h1 className="display" style={{ marginTop: 6 }}>
+              {organization.name}
+            </h1>
+            {tagline && <p className="tagline">{tagline}</p>}
+            <div className="org-meta">
+              {datasetCount != null && (
+                <>
+                  <span>{datasetCount} datasets</span>
+                  <span className="sep"></span>
+                </>
+              )}
+              <span>{areas.length} research areas</span>
+              {since && (
+                <>
+                  <span className="sep"></span>
+                  <span>Contributing since {since}</span>
+                </>
+              )}
+            </div>
+            {areas.length > 0 && (
+              <div className="org-areas">
+                {areas.map((a, i) => (
+                  <span className="tag" key={`${a}-${i}`}>
+                    {a}
                   </span>
-                </div>
+                ))}
               </div>
-            </CardHeader>
-            <CardBody>
-              <Row>
-                <Col md="6" className="mb-3">
-                  <strong>Organization ID:</strong> {organization.id}
-                </Col>
-                <Col md="6" className="mb-3">
-                  <strong>Creator:</strong>{' '}
-                  {organization.creator_name ? (
-                    <Link
-                      to={`/profile?id=${organization.creator}`}
-                      style={{ color: '#1b75e0' }}
-                    >
-                      {organization.creator_name}
-                    </Link>
-                  ) : (
-                    'N/A'
-                  )}
-                </Col>
-                <Col md="12" className="mb-3">
-                  <strong>Description:</strong> {organization.description || 'N/A'}
-                </Col>
-                <Col md="6" className="mb-3">
-                  <strong>Organization Type:</strong> {organization.org_type || 'N/A'}
-                </Col>
-                <Col md="6" className="mb-3">
-                  <strong>Contact:</strong> {organization.contact || 'N/A'}
-                </Col>
-                <Col md="6" className="mb-3">
-                  <strong>Website:</strong>{' '}
-                  {organization.website ? (
-                    <a
-                      href={organization.website}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-decoration-none"
-                    >
-                      {organization.website}
-                      <i className="bi bi-box-arrow-up-right ms-1"></i>
-                    </a>
-                  ) : (
-                    'N/A'
-                  )}
-                </Col>
-                <Col md="6" className="mb-3">
-                  <strong>Focus:</strong> {formatArray(organization.focus)}
-                </Col>
-                <Col md="6" className="mb-3">
-                  <strong>States:</strong> {formatArray(organization.roi_states)}
-                </Col>
-                <Col md="6" className="mb-3">
-                  <strong>Created At:</strong> {formatDate(organization.created_at)}
-                </Col>
-                <Col md="6" className="mb-3">
-                  <strong>Modified At:</strong> {formatDate(organization.modified_at)}
-                </Col>
-                <Col md="6" className="mb-3">
-                  <strong>Contributions:</strong> {organization.contributions ?? 0}
-                </Col>
-              </Row>
-            </CardBody>
-          </Card>
-
-          {organization.members && organization.members.length > 0 && (
-            <div className="mb-4">
-              <div className="mb-3 d-flex flex-row flex-wrap align-items-center justify-content-between gap-2">
-                <h4 className="mb-0">Members</h4>
-                {isOrgAdmin && (
+            )}
+            <div className="org-areas" style={{ marginTop: 12 }}>
+              {organization.private ? (
+                <span className="badge lock">Private data enabled</span>
+              ) : (
+                <span className="badge public dot">Public organization</span>
+              )}
+            </div>
+            {(user?.is_superuser || organization.privileges?.edit) && (
+              <div className="org-actions">
+                {user?.is_superuser && (
                   <button
-                    type="button"
-                    className="btn btn-sm org-members-btn-primary px-3 py-2"
-                    onClick={handleOpenMembersEdit}
-                    aria-label="Edit organization members"
+                    className="btn btn-primary"
+                    onClick={() => navigate('/createorg')}
+                  >
+                    <Ic name="plus" size={15} sw={2} />
+                    Create organization
+                  </button>
+                )}
+                {organization.privileges?.edit && (
+                  <button
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      console.log('Edit organization clicked');
+                    }}
                   >
                     Edit
                   </button>
                 )}
               </div>
-              <Table borderless responsive>
-                <thead>
-                  <tr>
-                    <th></th>
-                    <th>Name</th>
-                    <th>Designation</th>
-                    <th>Email</th>
-                    <th>Contributions</th>
-                    <th>Role</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {organization.members.map((member) => (
-                    <tr key={member.id}>
-                      <td>
-                        <span
-                          title={member.verified ? 'Approved' : 'Not Approved'}
-                        >
-                          {member.verified ? (
-                            <i className="bi bi-check-circle-fill text-success"></i>
-                          ) : (
-                            <i className="bi bi-x-circle-fill text-danger"></i>
-                          )}
-                        </span>
-                      </td>
-                      <td>
-                        <Link
-                          to={`/profile?id=${member.id}`}
-                          style={{ color: '#1b75e0' }}
-                        >
-                          {member.full_name}
-                        </Link>
-                      </td>
-                      <td>{member.designation || 'N/A'}</td>
-                      <td>{member.email || 'N/A'}</td>
-                      <td>{member.contributions || 0}</td>
-                      <td>{getRoleDisplay(member.role)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </Table>
-            </div>
-          )}
+            )}
+          </div>
+        </div>
+      </section>
 
-          <Modal
-            isOpen={membersEditOpen}
-            toggle={handleCloseMembersEdit}
-            centered
-          >
-            <ModalHeader toggle={handleCloseMembersEdit}>
-              Edit members
-            </ModalHeader>
-            <ModalBody>
+      {organization.description && (
+        <section className="wrap" style={{ padding: 'var(--s6) 0 0' }}>
+          <div className="sec-label">About</div>
+          <p className="org-about">{organization.description}</p>
+        </section>
+      )}
+
+      {(organization.members?.length > 0 || isOrgAdmin) && (
+        <section className="wrap" style={{ padding: 'var(--s7) 0 var(--s8)' }}>
+          <hr className="divider" style={{ marginBottom: 'var(--s5)' }} />
+          <div className="section-head" style={{ marginBottom: 14 }}>
+            <div>
+              <div className="sec-label" style={{ marginBottom: 4 }}>
+                Members
+              </div>
+              <span className="muted" style={{ fontSize: 13.5 }}>
+                {(organization.members?.length || 0)}{' '}
+                {(organization.members?.length || 0) === 1 ? 'person' : 'people'} in
+                this organization
+              </span>
+            </div>
+            {isOrgAdmin && (
+              <button
+                className="btn btn-ghost"
+                onClick={handleOpenMembersEdit}
+                aria-label="Edit organization members"
+              >
+                <Ic name="verified" size={15} sw={2} />
+                Manage members
+              </button>
+            )}
+          </div>
+          {isOrgAdmin && (
+            <form
+              onSubmit={handleAddMember}
+              style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16, alignItems: 'flex-end' }}
+            >
+              <div className="field" style={{ flex: '1 1 240px', marginBottom: 0 }}>
+                <label htmlFor="add-org-member-email">Add member by email</label>
+                <input
+                  id="add-org-member-email"
+                  type="email"
+                  value={addMemberEmail}
+                  onChange={(e) => setAddMemberEmail(e.target.value)}
+                  placeholder="member@example.com"
+                  disabled={membersActionLoading}
+                  required
+                />
+              </div>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={membersActionLoading || !addMemberEmail.trim()}
+              >
+                Add member
+              </button>
+            </form>
+          )}
+          {addMemberError && (
+            <p className="muted" style={{ color: 'var(--danger, #c0392b)', marginBottom: 12 }}>
+              {addMemberError}
+            </p>
+          )}
+          {(() => {
+            const members = organization.members || [];
+            const topId =
+              maxContrib > 0
+                ? members.reduce(
+                    (best, m) =>
+                      contributionsOf(m) > contributionsOf(best) ? m : best,
+                    members[0]
+                  )?.id
+                : null;
+            return (
+              <div className="member-grid">
+                {members.map((member, i) => {
+                  const isTop = member.id === topId;
+                  const contribs = contributionsOf(member);
+                  const roleLabel = getRoleDisplay(member.role);
+                  return (
+                    <div
+                      className={'member-card' + (isTop ? ' top' : '')}
+                      key={member.id}
+                      style={{ animationDelay: `${Math.min(i * 55, 400)}ms` }}
+                    >
+                      <div className="m-av">{initials(member.full_name)}</div>
+                      <div className="m-body">
+                        <div className="m-name">
+                          <Link to={`/profile?id=${member.id}`}>
+                            {member.full_name}
+                          </Link>
+                          {isTop && (
+                            <span className="badge top">
+                              <Ic name="trophy" size={12} sw={2} />
+                              Top contributor
+                            </span>
+                          )}
+                          {member.verified === false && (
+                            <span className="badge pending">Pending</span>
+                          )}
+                        </div>
+                        {member.designation && (
+                          <div className="m-desig">{member.designation}</div>
+                        )}
+                        {member.email && (
+                          <div className="m-mail" title={member.email}>
+                            <Ic name="mail" size={13} sw={2} />
+                            <span>{member.email}</span>
+                          </div>
+                        )}
+                        <div className="m-meta">
+                          <span className={'role-badge ' + roleClass(member.role)}>
+                            {Number(member.role) === 1 && (
+                              <Ic name="star" size={11} sw={2} />
+                            )}
+                            {roleLabel}
+                          </span>
+                          {contribs > 0 && (
+                            <span className="contrib-count">
+                              <b>{contribs.toLocaleString('en-IN')}</b>{' '}
+                              {contribs === 1 ? 'dataset' : 'datasets'}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+          {(!organization.members || organization.members.length === 0) && (
+            <p className="muted">No members yet.</p>
+          )}
+        </section>
+      )}
+
+      {membersEditOpen && (
+        <div
+          className="cmdk-overlay show"
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) handleCloseMembersEdit();
+          }}
+        >
+          <div className="modal-card">
+            <div className="modal-head">
+              <h3>Edit members</h3>
+              <p>Approve, update or remove organization members.</p>
+            </div>
+            <div className="modal-body">
               {membersModalError && (
-                <Alert color="danger" className="mb-3">
+                <p className="muted" style={{ color: 'var(--danger, #c0392b)' }}>
                   {membersModalError}
-                </Alert>
+                </p>
               )}
               {organization.members && organization.members.length > 0 ? (
                 <>
-                  <div className="mb-3 d-flex flex-column flex-sm-row align-items-sm-center justify-content-sm-between gap-2">
-                    <span className="fw-bold">Select:</span>
+                  <div className="field">
+                    <label htmlFor="org-member-select">Select member</label>
                     <select
                       id="org-member-select"
-                      className="form-select w-100"
-                      style={{ maxWidth: '20rem' }}
                       value={selectedMemberId || ''}
                       onChange={handleSelectMemberChange}
                       aria-label="Select organization member"
                       disabled={membersActionLoading}
+                      style={{ width: '100%' }}
                     >
                       {organization.members.map((m) => (
                         <option key={m.id} value={m.id}>
@@ -546,48 +597,57 @@ const Organization = () => {
                   </div>
                   {selectedMember && (
                     <>
-                      <div className="mb-2 d-flex flex-column flex-sm-row justify-content-sm-between gap-1">
-                        <span className="fw-bold">Name:</span>
-                        <span className="text-sm-end">{selectedMember.full_name}</span>
+                      <div className="field-row">
+                        <div className="field">
+                          <label>Name</label>
+                          <input value={selectedMember.full_name} readOnly />
+                        </div>
+                        <div className="field">
+                          <label>Email</label>
+                          <input
+                            value={selectedMember.email || 'N/A'}
+                            readOnly
+                          />
+                        </div>
                       </div>
-                      <div className="mb-2 d-flex flex-column flex-sm-row justify-content-sm-between gap-1">
-                        <span className="fw-bold">Email:</span>
-                        <span className="text-sm-end text-break">
-                          {selectedMember.email || 'N/A'}
-                        </span>
+                      <div className="field-row">
+                        <div className="field">
+                          <label>Designation</label>
+                          <input
+                            value={selectedMember.designation || 'N/A'}
+                            readOnly
+                          />
+                        </div>
+                        <div className="field">
+                          <label htmlFor="org-member-role">Role</label>
+                          <select
+                            id="org-member-role"
+                            value={roleDraft}
+                            onChange={(e) => setRoleDraft(Number(e.target.value))}
+                            aria-label="Member role"
+                            disabled={membersActionLoading}
+                            style={{ width: '100%' }}
+                          >
+                            {ROLE_OPTIONS.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
-                      <div className="mb-4 d-flex flex-column flex-sm-row justify-content-sm-between gap-1">
-                        <span className="fw-bold">Designation:</span>
-                        <span className="text-sm-end">
-                          {selectedMember.designation || 'N/A'}
-                        </span>
-                      </div>
-                      <div className="mb-4 d-flex flex-column flex-sm-row align-items-sm-center justify-content-sm-between gap-2">
-                        <span className="fw-bold">Role:</span>
-                        <select
-                          id="org-member-role"
-                          className="form-select w-100"
-                          style={{ maxWidth: '20rem' }}
-                          value={roleDraft}
-                          onChange={(e) =>
-                            setRoleDraft(Number(e.target.value))
-                          }
-                          aria-label="Member role"
-                          disabled={membersActionLoading}
-                        >
-                          {ROLE_OPTIONS.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="mt-2 d-flex flex-wrap gap-2">
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          gap: 8,
+                          marginTop: 6,
+                        }}
+                      >
                         {selectedMember.verified === false ? (
                           <>
                             <button
-                              type="button"
-                              className="btn btn-sm org-members-btn-primary px-3 py-2"
+                              className="btn btn-primary"
                               onClick={handleApproveMember}
                               disabled={membersActionLoading}
                               aria-label="Approve member"
@@ -595,8 +655,7 @@ const Organization = () => {
                               Approve
                             </button>
                             <button
-                              type="button"
-                              className="btn btn-sm org-members-btn-danger px-3 py-2"
+                              className="btn btn-ghost"
                               onClick={handleRejectMember}
                               disabled={membersActionLoading}
                               aria-label="Reject member"
@@ -607,8 +666,7 @@ const Organization = () => {
                         ) : (
                           <>
                             <button
-                              type="button"
-                              className="btn btn-sm org-members-btn-primary px-3 py-2"
+                              className="btn btn-primary"
                               onClick={handleChangeMemberRole}
                               disabled={membersActionLoading}
                               aria-label="Change member role"
@@ -616,8 +674,7 @@ const Organization = () => {
                               Change
                             </button>
                             <button
-                              type="button"
-                              className="btn btn-sm org-members-btn-danger px-3 py-2"
+                              className="btn btn-ghost"
                               onClick={handleDeleteMember}
                               disabled={membersActionLoading}
                               aria-label="Delete member"
@@ -631,18 +688,22 @@ const Organization = () => {
                   )}
                 </>
               ) : (
-                <p className="mb-0 text-muted">No members to edit.</p>
+                <p className="muted">No members to edit.</p>
               )}
-            </ModalBody>
-            <ModalFooter>
-              <Button color="secondary" onClick={handleCloseMembersEdit}>
+            </div>
+            <div className="modal-foot">
+              <button
+                className="btn btn-ghost"
+                onClick={handleCloseMembersEdit}
+                disabled={membersActionLoading}
+              >
                 Close
-              </Button>
-            </ModalFooter>
-          </Modal>
-        </Col>
-      </Row>
-    </Container>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 };
 

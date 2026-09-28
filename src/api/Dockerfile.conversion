@@ -1,0 +1,51 @@
+# Stage 1: Builder
+FROM python:3.13-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    libffi-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir uv
+
+WORKDIR /app
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --extra visualization
+
+# Stage 2: Runtime — isolated from the API so conversion faults stay here
+FROM python:3.13-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    libreoffice-writer \
+    libreoffice-calc \
+    libreoffice-impress \
+    gdal-bin \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir uv
+
+RUN useradd -m -u 1000 appuser && mkdir -p /app && chown -R appuser:appuser /app
+
+WORKDIR /app
+
+COPY --chown=appuser:appuser --from=builder /app/.venv /app/.venv
+
+COPY --chown=appuser:appuser core/ ./core/
+COPY --chown=appuser:appuser db/ ./db/
+COPY --chown=appuser:appuser models/ ./models/
+COPY --chown=appuser:appuser services/ ./services/
+COPY --chown=appuser:appuser tasks/ ./tasks/
+COPY --chown=appuser:appuser utils/ ./utils/
+COPY --chown=appuser:appuser __init__.py ./
+COPY --chown=appuser:appuser celery_worker.py ./
+COPY --chown=appuser:appuser celery_cpu_worker.py ./
+
+ENV PYTHONPATH=/app
+
+USER appuser
+
+CMD ["uv", "run", "celery", "-A", "celery_cpu_worker", "worker", "--loglevel=info", "-P", "prefork", "-Q", "cpu", "--concurrency=1", "-B"]

@@ -1,13 +1,17 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import { signin_endpoint } from "../api/endpoints";
+import { login_options_endpoint, signin_endpoint } from "../api/endpoints";
+import { BrandLockup } from "../branding";
+
+const BrandMark = () => <BrandLockup className="auth-brand" />;
 
 function SignIn() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [googleEnabled, setGoogleEnabled] = useState(false);
   const { signIn, user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const formRef = useRef(null);
@@ -15,9 +19,22 @@ function SignIn() {
   // Redirect authenticated users to dashboard (single navigation; no navigate in handleSubmit)
   useEffect(() => {
     if (!authLoading && user) {
-      navigate(`/dashboard?userId=${user.id}`, { replace: true });
+      if (user.profile_complete === false) {
+        navigate("/complete-profile", { replace: true });
+      } else {
+        navigate(`/dashboard?userId=${user.id}`, { replace: true });
+      }
     }
   }, [authLoading, user, navigate]);
+
+  useEffect(() => {
+    fetch(login_options_endpoint, { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data) setGoogleEnabled(!!data.google_enabled);
+      })
+      .catch(() => {});
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -40,7 +57,13 @@ function SignIn() {
       });
 
       if (!response.ok) {
-        setError("Sign in failed. Please check your credentials.");
+        if (response.status === 502 || response.status === 503 || response.status === 504) {
+          setError(
+            "The API is not running. Start the backend (Docker compose on port 8000), then try again."
+          );
+        } else {
+          setError("Sign in failed. Please check your credentials.");
+        }
         setLoading(false);
         return;
       }
@@ -78,94 +101,90 @@ function SignIn() {
 
   if (authLoading) {
     return (
-      <div className="bg-wave">
-        <section className="container py-5">
-          <div className="row justify-content-center">
-            <div className="col-12 text-center">
-              <div className="spinner-border" role="status" aria-label="Checking session">
-                <span className="visually-hidden">Checking session...</span>
-              </div>
-            </div>
-          </div>
-        </section>
+      <div className="page auth-screen">
+        <BrandMark />
+        <div className="auth-card">
+          <div className="empty" style={{ padding: "20px 0" }}><p>Checking session…</p></div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-wave">
-      <section className="container py-5">
-        <div className="row justify-content-center">
-          <div className="col-12 col-sm-10 col-md-8 col-lg-5">
-            <div className="card auth-card p-4 p-md-5">
-              <h2 className="mb-3 text-center auth-title">Sign In</h2>
-              <p className="text-muted text-center mb-4">Welcome back! Please sign in to continue.</p>
-              <form ref={formRef} onSubmit={handleSubmit} method="post">
-                {error && (
-                  <div className="alert alert-danger" role="alert">
-                    {error}
-                  </div>
-                )}
-                <div className="mb-3">
-                  <label htmlFor="email" className="form-label">Email</label>
-                  <input
-                    id="email"
-                    name="email"
-                    type="email"
-                    className="form-control"
-                    placeholder="Enter your email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    autoComplete="username"
-                    required
-                    disabled={loading}
-                  />
-                </div>
-                <div className="mb-3">
-                  <label htmlFor="password" className="form-label">Password</label>
-                  <input
-                    id="password"
-                    name="password"
-                    type="password"
-                    className="form-control"
-                    placeholder="Enter your password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    autoComplete="current-password"
-                    required
-                    disabled={loading}
-                  />
-                </div>
-                <button
-                  type="submit"
-                  className="btn btn-primary w-100 auth-submit-btn"
-                  disabled={loading}
-                >
-                  {loading ? (
-                    <>
-                      <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                      Signing In...
-                    </>
-                  ) : (
-                    "Sign In"
-                  )}
-                </button>
-              </form>
+    <div className="page auth-screen">
+      <BrandMark />
+      <div className="auth-card">
+        <h1 className="display">Sign in</h1>
+        <p className="auth-sub">Access your workspace on the Data Portal.</p>
 
-              <div className="text-center mt-3">
-                <Link to="/forgot-password" className="text-muted text-decoration-none">
-                  Forgot password?
-                </Link>
-              </div>
-
-              <div className="text-center mt-4">
-                <div className="text-muted mb-2">Don&apos;t have an account yet</div>
-                <Link to="/signup" className="btn btn-outline-primary w-100">Sign Up</Link>
-              </div>
-            </div>
+        {error && (
+          <div
+            className="auth-note"
+            role="alert"
+            style={{ background: "#faf3e4", borderColor: "#ecdcb8", color: "#9a6b12" }}
+          >
+            {error}
           </div>
+        )}
+
+        <form ref={formRef} onSubmit={handleSubmit} method="post">
+          <div className="field">
+            <label htmlFor="email">Email</label>
+            <input
+              id="email"
+              name="email"
+              type="email"
+              placeholder="you@ifmr.ac.in"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="username"
+              required
+              disabled={loading}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="password">Password</label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              placeholder="••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+              disabled={loading}
+            />
+          </div>
+          <button
+            type="submit"
+            className="btn btn-primary"
+            style={{ width: "100%", marginTop: 4 }}
+            disabled={loading}
+          >
+            {loading ? "Signing in…" : "Sign in"}
+          </button>
+        </form>
+
+        {googleEnabled && (
+          <>
+            <div className="auth-or">or</div>
+            <a
+              className="gbtn"
+              href="/api/auth/google"
+            >
+              Sign in with Google
+            </a>
+          </>
+        )}
+
+        <div className="auth-foot">
+          <Link to="/forgot-password">Forgot password?</Link>
         </div>
-      </section>
+        <div className="auth-foot" style={{ marginTop: 6 }}>
+          New here? <Link to="/signup">Create an account</Link>
+        </div>
+      </div>
     </div>
   );
 }

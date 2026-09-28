@@ -99,10 +99,6 @@ class File(Base):
         default=0,
         nullable=False,
     )
-    value: Mapped[Optional[str]] = mapped_column(
-        String(length=10),
-        nullable=True,
-    )
     # New fields
     temporal_from: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True),

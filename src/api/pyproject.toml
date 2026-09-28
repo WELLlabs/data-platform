@@ -18,9 +18,15 @@ dependencies = [
     "python-dotenv>=1.1.1",
     "passlib[bcrypt]>=1.7.4",
     "httpx>=0.28.1",
+    "boto3>=1.35.0",
     "bleach>=6.3.0",
     "celery[redis]>=5.6.2",
     "brevo-python>=1.2.0",
     "gevent>=25.9.1",
     "flower>=2.0.1",
+]
+
+[project.optional-dependencies]
+visualization = [
+    "duckdb>=1.2.0",
 ]

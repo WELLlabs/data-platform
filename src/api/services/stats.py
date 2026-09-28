@@ -10,9 +10,9 @@ from core.config import settings
 from db.session import get_session
 from fastapi import Depends
 from models.dataset import Dataset
+from models.file import File
 from models.organization import Organization
 from models.user import User
-from models.user_contribution import UserContribution
 from redis.asyncio import Redis
 from schemas.stats import HomepageStatsResponse, TopContributorItem, TopOrganizationItem
 from services.auth import get_redis
@@ -21,9 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-CACHE_KEY_TOTAL = "stats:total_open_datasets"
-CACHE_KEY_CONTRIBUTORS = "stats:top_contributors"
-CACHE_KEY_ORGANIZATIONS = "stats:top_organizations"
+CACHE_KEY_TOTAL = "stats:total_datasets"
+CACHE_KEY_FILE_SIZE = "stats:total_file_size"
+CACHE_KEY_CONTRIBUTORS = "stats:top_contributors:v2"
+CACHE_KEY_ORGANIZATIONS = "stats:top_organizations:v2"
 
 
 class StatsService:
@@ -73,7 +74,7 @@ class StatsService:
         return deserialize(fresh)
 
     async def get_total_open_datasets(self) -> int:
-        """Count public approved datasets; cached under CACHE_KEY_TOTAL."""
+        """Count all datasets; cached under CACHE_KEY_TOTAL."""
 
         def deserialize(raw: Any) -> int:
             if isinstance(raw, bool):
@@ -81,19 +82,31 @@ class StatsService:
             return int(raw)
 
         async def compute() -> int:
-            stmt = (
-                select(func.count())
-                .select_from(Dataset)
-                .where(
-                    Dataset.private.is_(False),
-                    Dataset.approved.is_(True),
-                )
-            )
+            stmt = select(func.count()).select_from(Dataset)
             result = await self.session.execute(stmt)
             return int(result.scalar_one())
 
         return await self._cached_or_compute(
             CACHE_KEY_TOTAL,
+            compute,
+            deserialize,
+        )
+
+    async def get_total_file_size(self) -> int:
+        """Sum of all file sizes in bytes; cached under CACHE_KEY_FILE_SIZE."""
+
+        def deserialize(raw: Any) -> int:
+            if isinstance(raw, bool):
+                raise ValueError("unexpected bool")
+            return int(raw)
+
+        async def compute() -> int:
+            stmt = select(func.coalesce(func.sum(File.file_size), 0))
+            result = await self.session.execute(stmt)
+            return int(result.scalar_one())
+
+        return await self._cached_or_compute(
+            CACHE_KEY_FILE_SIZE,
             compute,
             deserialize,
         )
@@ -107,14 +120,19 @@ class StatsService:
             return [TopContributorItem(**item) for item in raw]
 
         async def compute() -> list[dict[str, Any]]:
+            # Rank contributors by the actual number of datasets each user has
+            # submitted (counted from the datasets table), so the leaderboard
+            # always reflects reality and includes everyone who has published.
+            contrib_count = func.count(Dataset.dataset_id).label("contributions")
             stmt = (
                 select(
-                    UserContribution.user_id,
+                    Dataset.creator.label("user_id"),
                     User.full_name,
-                    UserContribution.contributions,
+                    contrib_count,
                 )
-                .join(User, User.id == UserContribution.user_id)
-                .order_by(desc(UserContribution.contributions))
+                .join(User, User.id == Dataset.creator)
+                .group_by(Dataset.creator, User.full_name)
+                .order_by(desc(contrib_count))
                 .limit(self._limit)
             )
             result = await self.session.execute(stmt)
@@ -123,7 +141,7 @@ class StatsService:
                 {
                     "user_id": row[0],
                     "full_name": row[1],
-                    "contributions": row[2],
+                    "contributions": int(row[2]),
                 }
                 for row in rows
             ]
@@ -143,22 +161,18 @@ class StatsService:
             return [TopOrganizationItem(**item) for item in raw]
 
         async def compute() -> list[dict[str, Any]]:
-            sum_per_org = (
-                select(
-                    UserContribution.organization_id.label("org_id"),
-                    func.sum(UserContribution.contributions).label("contrib_sum"),
-                )
-                .group_by(UserContribution.organization_id)
-                .subquery()
-            )
+            # Rank organizations by the actual number of datasets published
+            # under each org (counted from the datasets table).
+            contrib_count = func.count(Dataset.dataset_id).label("contributions")
             stmt = (
                 select(
-                    sum_per_org.c.org_id,
+                    Dataset.organization.label("org_id"),
                     Organization.name,
-                    sum_per_org.c.contrib_sum,
+                    contrib_count,
                 )
-                .join(Organization, Organization.id == sum_per_org.c.org_id)
-                .order_by(desc(sum_per_org.c.contrib_sum))
+                .join(Organization, Organization.id == Dataset.organization)
+                .group_by(Dataset.organization, Organization.name)
+                .order_by(desc(contrib_count))
                 .limit(self._limit)
             )
             result = await self.session.execute(stmt)
@@ -181,10 +195,12 @@ class StatsService:
     async def get_homepage_stats(self) -> HomepageStatsResponse:
         """Full homepage payload; each subsection uses its own Redis key when possible."""
         total = await self.get_total_open_datasets()
+        file_size = await self.get_total_file_size()
         contributors = await self.get_top_contributors()
         organizations = await self.get_top_organizations()
         return HomepageStatsResponse(
             total_open_datasets=total,
+            total_file_size=file_size,
             top_contributors=contributors,
             top_organizations=organizations,
         )

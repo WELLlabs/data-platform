@@ -1,24 +1,38 @@
 import React, { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import Ic from "../components/wd/Icons";
+import Contour from "../components/wd/Contour";
+import TagMultiSelect from "../components/wd/TagMultiSelect";
+import { useToast } from "../components/wd/Toast";
+import { useBranding } from "../branding";
+import { dsLink } from "../components/wd/DatasetItems";
 import {
   approve_dataset_endpoint,
   dataset_info_endpoint,
   download_url_endpoint,
+  download_dataset_endpoint,
   delete_dataset_endpoint,
   delete_file_endpoint,
   edit_dataset_endpoint,
   edit_file_endpoint,
   organization_by_id_endpoint,
-  transfer_dataset_endpoint,
+  dataset_owners_endpoint,
+  list_organizations_endpoint,
 } from "../api/endpoints";
+import {
+  AVAILABILITY_OPTIONS,
+  AVAILABILITY_PUBLIC,
+  availabilityLabel,
+  parseAvailability,
+} from "../constants/availability";
 
 const initialDatasetEdit = {
   showModal: false,
   title: "",
   description: "",
-  isPrivate: false,
-  tags: "",
+  availability: AVAILABILITY_PUBLIC,
+  tags: [],
   error: "",
   submitting: false,
 };
@@ -31,8 +45,8 @@ function datasetEditReducer(state, action) {
         showModal: true,
         title: action.payload.title ?? "",
         description: action.payload.description ?? "",
-        isPrivate: action.payload.isPrivate ?? false,
-        tags: action.payload.tags ?? "",
+        availability: action.payload.availability ?? AVAILABILITY_PUBLIC,
+        tags: action.payload.tags ?? [],
         error: "",
       };
     case "CLOSE":
@@ -59,7 +73,6 @@ const initialFileEdit = {
   groundtruthed: false,
   permissions: "CC0: Public Domain",
   duration: 0,
-  value: "low",
   temporalFrom: "",
   temporalTo: "",
   geography: "",
@@ -82,7 +95,6 @@ function fileEditReducer(state, action) {
         groundtruthed: action.payload.groundtruthed ?? false,
         permissions: action.payload.permissions ?? "CC0: Public Domain",
         duration: action.payload.duration ?? 0,
-        value: action.payload.value ?? "low",
         temporalFrom: action.payload.temporalFrom ?? "",
         temporalTo: action.payload.temporalTo ?? "",
         geography: action.payload.geography ?? "",
@@ -104,6 +116,8 @@ function DatasetInfo() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { user } = useAuth();
+  const toast = useToast();
+  const { productName } = useBranding();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [dataset, setDataset] = useState(null);
@@ -114,15 +128,19 @@ function DatasetInfo() {
     delete_file: false,
     add_file: false,
     approval: false,
-    transfer: false,
+    manage_owners: false,
   });
-  const [showTransferModal, setShowTransferModal] = useState(false);
-  const [transferMembers, setTransferMembers] = useState([]);
-  const [transferSelectedUserId, setTransferSelectedUserId] = useState("");
-  const [transferFetchError, setTransferFetchError] = useState("");
-  const [transferLoadingOrg, setTransferLoadingOrg] = useState(false);
-  const [transferSubmitting, setTransferSubmitting] = useState(false);
+  const [showOwnersModal, setShowOwnersModal] = useState(false);
+  const [ownerMembers, setOwnerMembers] = useState([]);
+  const [ownerOrgs, setOwnerOrgs] = useState([]);
+  const [ownerSelectedOrgId, setOwnerSelectedOrgId] = useState("");
+  const [ownerSelectedUserId, setOwnerSelectedUserId] = useState("");
+  const [ownerFetchError, setOwnerFetchError] = useState("");
+  const [ownerLoadingOrg, setOwnerLoadingOrg] = useState(false);
+  const [ownerSubmitting, setOwnerSubmitting] = useState(false);
   const [downloadingFileId, setDownloadingFileId] = useState(null);
+  const [downloadingDataset, setDownloadingDataset] = useState(false);
+  const downloadingDatasetRef = useRef(false);
   const [downloadError, setDownloadError] = useState("");
   const [showDatasetDeleteModal, setShowDatasetDeleteModal] = useState(false);
   const [showFileDeleteModal, setShowFileDeleteModal] = useState(false);
@@ -131,6 +149,12 @@ function DatasetInfo() {
   const [approvingDataset, setApprovingDataset] = useState(false);
   const [deletingFileId, setDeletingFileId] = useState(null);
   const [deleteError, setDeleteError] = useState("");
+  const [orgPrivate, setOrgPrivate] = useState(false);
+
+  // Presentational-only UI state (accordions, read-more, copy feedback)
+  const [openFiles, setOpenFiles] = useState({});
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [citeCopied, setCiteCopied] = useState(false);
 
   // Dataset edit modal state
   const [datasetEdit, dispatchDatasetEdit] = useReducer(
@@ -141,9 +165,9 @@ function DatasetInfo() {
   const editDatasetModalRef = useRef(null);
   const editDatasetTitleInputRef = useRef(null);
   const previousActiveElementRef = useRef(null);
-  const transferModalDialogRef = useRef(null);
-  const transferMemberSelectRef = useRef(null);
-  const transferPreviousActiveElementRef = useRef(null);
+  const ownersModalDialogRef = useRef(null);
+  const ownerMemberSelectRef = useRef(null);
+  const ownersPreviousActiveElementRef = useRef(null);
 
   // File edit modal state
   const [fileEdit, dispatchFileEdit] = useReducer(
@@ -163,7 +187,6 @@ function DatasetInfo() {
       setLoading(true);
       setError("");
       const params = new URLSearchParams({ dataset_id: datasetId });
-      if (user?.apikey) params.set("apikey", user.apikey);
       const response = await fetch(
         `${dataset_info_endpoint}?${params.toString()}`,
         { credentials: "include" }
@@ -190,6 +213,24 @@ function DatasetInfo() {
       const data = await response.json();
       setDataset(data.dataset);
       setFiles(data.files || []);
+      const orgId = data.dataset?.organization;
+      if (orgId) {
+        try {
+          const orgResp = await fetch(organization_by_id_endpoint(orgId), {
+            credentials: "include",
+          });
+          if (orgResp.ok) {
+            const orgData = await orgResp.json();
+            setOrgPrivate(Boolean(orgData.private));
+          } else {
+            setOrgPrivate(false);
+          }
+        } catch {
+          setOrgPrivate(false);
+        }
+      } else {
+        setOrgPrivate(false);
+      }
       setPrivileges(
         data.privileges ?? {
           edit: false,
@@ -197,7 +238,7 @@ function DatasetInfo() {
           delete_file: false,
           add_file: false,
           approval: false,
-          transfer: false,
+          manage_owners: false,
         }
       );
     } catch (err) {
@@ -206,7 +247,7 @@ function DatasetInfo() {
     } finally {
       setLoading(false);
     }
-  }, [searchParams, navigate, user?.apikey]);
+  }, [searchParams, navigate]);
 
   useEffect(() => {
     fetchDatasetInfo();
@@ -219,6 +260,21 @@ function DatasetInfo() {
       return date.toLocaleString();
     } catch {
       return dateString;
+    }
+  };
+
+  const formatDateShort = (dateString) => {
+    if (!dateString) return "";
+    try {
+      const date = new Date(dateString);
+      if (isNaN(date.getTime())) return "";
+      return date.toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
+    } catch {
+      return "";
     }
   };
 
@@ -242,6 +298,99 @@ function DatasetInfo() {
       return `${y}-${m}-${d}T${h}:${min}`;
     } catch {
       return "";
+    }
+  };
+
+  const fileType = (fmt) => {
+    const s = (fmt || "").toLowerCase();
+    if (s.includes("csv") || s.includes("tsv")) return "csv";
+    if (s.includes("xls") || s.includes("excel") || s.includes("sheet")) return "excel";
+    if (s.includes("geojson")) return "geojson";
+    if (s.includes("json")) return "geojson";
+    if (s.includes("pdf") || s.includes("doc")) return "pdf";
+    if (
+      s.includes("png") ||
+      s.includes("jpg") ||
+      s.includes("jpeg") ||
+      s.includes("gif") ||
+      s.includes("webp") ||
+      s.includes("svg") ||
+      s.includes("tif") ||
+      s.includes("tiff")
+    )
+      return "image";
+    if (
+      s.includes("gpkg") ||
+      s.includes("shp") ||
+      s.includes("kml") ||
+      s.includes("zip") ||
+      s.includes("geo")
+    )
+      return "geo";
+    return "";
+  };
+
+  const fileLabel = (fmt) => {
+    const s = (fmt || "").toString().toLowerCase();
+    if (s.includes("geojson")) return "GEO";
+    if (s.includes("json")) return "JSON";
+    if (s.includes("csv")) return "CSV";
+    if (s.includes("tsv")) return "TSV";
+    if (s.includes("xlsx") || s.includes("xls") || s.includes("excel") || s.includes("sheet"))
+      return "XLS";
+    if (s.includes("pdf")) return "PDF";
+    if (s.includes("png")) return "PNG";
+    if (s.includes("jpg") || s.includes("jpeg")) return "JPG";
+    if (s.includes("tif")) return "TIF";
+    if (s.includes("gpkg")) return "GPKG";
+    if (s.includes("shp")) return "SHP";
+    return (
+      (fmt || "DAT").toString().replace(/[^a-z0-9]/gi, "").slice(0, 4).toUpperCase() || "DAT"
+    );
+  };
+
+  const scrollToSec = (id) => {
+    const el = document.getElementById("sec-" + id);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const toggleFile = (id) => {
+    setOpenFiles((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const previewExcluded = (file) => {
+    const name = (file?.file_name || "").toLowerCase();
+    const fmt = (file?.file_format || "").toLowerCase();
+    const ext = name.includes(".") ? name.split(".").pop() : "";
+    const excel = new Set(["xlsx", "xls", "xlsm", "xlsb", "xlt", "xltx", "xltm"]);
+    const geo = new Set([
+      "geojson", "gpkg", "geopackage", "geoparquet", "fgb", "flatgeobuf",
+      "pmtiles", "mbtiles", "tif", "tiff", "geotiff", "cog", "shp", "shx",
+      "prj", "cpg", "kml", "kmz", "gml", "topojson", "wkt",
+    ]);
+    if (excel.has(ext) || excel.has(fmt) || geo.has(ext) || geo.has(fmt)) return true;
+    if (fmt.includes("excel") || fmt.includes("spreadsheetml")) return true;
+    if (/geojson|geo\+json|geopackage|geoparquet|geotiff|flatgeobuf|shapefile|pmtiles/.test(fmt)) {
+      return true;
+    }
+    return false;
+  };
+
+  const canPreview = (file) => Boolean(file?.viewer) && !previewExcluded(file);
+
+  const handlePreview = (file) => {
+    if (!file || !file.file_id || !canPreview(file)) return;
+    const params = new URLSearchParams({
+      file_id: file.file_id,
+      title: file.file_title || file.file_name || "File preview",
+      format: file.file_format || "",
+      name: file.file_name || "",
+    });
+    if (dataset?.dataset_id) params.set("dataset_id", dataset.dataset_id);
+    try {
+      window.open(`/file-preview?${params.toString()}`, "_blank", "noopener,noreferrer");
+    } catch (e) {
+      console.error("Preview open failed", e);
     }
   };
 
@@ -374,9 +523,79 @@ function DatasetInfo() {
     }
   };
 
+  const handleDownloadDataset = async () => {
+    if (!dataset?.dataset_id || downloadingDatasetRef.current) return;
+    if (!files.length) {
+      setDownloadError("This dataset has no files to download.");
+      return;
+    }
+    downloadingDatasetRef.current = true;
+    setDownloadingDataset(true);
+    setDownloadError("");
+    try {
+      const params = new URLSearchParams({ dataset_id: dataset.dataset_id });
+      const response = await fetch(`${download_dataset_endpoint}?${params.toString()}`, {
+        method: "GET",
+        credentials: "include",
+      });
+      if (!response.ok) {
+        let errorMessage = "Failed to download dataset";
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.detail || errorData.message || errorMessage;
+        } catch {
+          errorMessage = response.statusText || errorMessage;
+        }
+        if (response.status === 403) {
+          errorMessage =
+            errorMessage ||
+            "Download permission is not granted. You may need to sign in or use a different account.";
+        }
+        throw new Error(errorMessage);
+      }
+      setFiles((prev) =>
+        prev.map((file) => ({ ...file, downloads: (file.downloads ?? 0) + 1 }))
+      );
+      setDataset((prev) =>
+        prev
+          ? { ...prev, downloads: (prev.downloads ?? 0) + files.length }
+          : prev
+      );
+      const blob = await response.blob();
+      const header = response.headers.get("Content-Disposition") || "";
+      const starred = /filename\*=UTF-8''([^;]+)/i.exec(header);
+      const plain = /filename="([^"]+)"/i.exec(header);
+      const filename = starred
+        ? decodeURIComponent(starred[1])
+        : plain
+          ? plain[1]
+          : "dataset.zip";
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+      setDownloadError("");
+    } catch (err) {
+      console.error("Dataset download error:", err);
+      const errorMessage =
+        err instanceof TypeError && err.message.includes("fetch")
+          ? "Network error. Please check your connection and try again."
+          : err.message || "Failed to download dataset. Please try again.";
+      setDownloadError(errorMessage);
+      setTimeout(() => setDownloadError(""), 5000);
+    } finally {
+      downloadingDatasetRef.current = false;
+      setDownloadingDataset(false);
+    }
+  };
+
   const handleDeleteDataset = async () => {
-    if (!user?.apikey || !dataset?.dataset_id) {
-      setDeleteError("Missing user authentication or dataset information.");
+    if (!dataset?.dataset_id) {
+      setDeleteError("Missing dataset information.");
       return;
     }
 
@@ -386,7 +605,6 @@ function DatasetInfo() {
     try {
       const params = new URLSearchParams({
         dataset_id: dataset.dataset_id,
-        apikey: user.apikey,
       });
 
       const response = await fetch(
@@ -465,80 +683,111 @@ function DatasetInfo() {
     }
   };
 
-  const roleLabelForTransfer = (role) => {
+  const roleLabelForOwner = (role) => {
     if (role === 0) return "Member";
     if (role === 1) return "Admin";
     if (role === 2) return "Reviewer";
     return "Member";
   };
 
-  const handleOpenTransferModal = async () => {
+  const loadOwnerMembersForOrg = async (orgId) => {
+    const response = await fetch(organization_by_id_endpoint(orgId), {
+      credentials: "include",
+    });
+    if (!response.ok) {
+      let msg = "Failed to load organization members.";
+      try {
+        const errBody = await response.json();
+        if (errBody?.detail) msg = errBody.detail;
+      } catch {
+        msg = response.statusText || msg;
+      }
+      throw new Error(msg);
+    }
+    const orgData = await response.json();
+    return Array.isArray(orgData.members) ? orgData.members : [];
+  };
+
+  const handleOpenOwnersModal = async () => {
     if (!dataset?.organization) {
       setDeleteError("Missing organization for this dataset.");
       return;
     }
-    setShowTransferModal(true);
-    setTransferMembers([]);
-    setTransferSelectedUserId("");
-    setTransferFetchError("");
-    setTransferLoadingOrg(true);
+    setShowOwnersModal(true);
+    setOwnerMembers([]);
+    setOwnerOrgs([]);
+    setOwnerSelectedUserId("");
+    setOwnerFetchError("");
+    setOwnerSelectedOrgId(String(dataset.organization));
+    setOwnerLoadingOrg(true);
     try {
-      const params = new URLSearchParams();
-      if (user?.apikey) params.set("apikey", user.apikey);
-      const qs = params.toString();
-      const base = organization_by_id_endpoint(dataset.organization);
-      const url = qs ? `${base}?${qs}` : base;
-      const response = await fetch(url, { credentials: "include" });
-      if (!response.ok) {
-        let msg = "Failed to load organization members.";
-        try {
-          const errBody = await response.json();
-          if (errBody?.detail) msg = errBody.detail;
-        } catch {
-          msg = response.statusText || msg;
+      if (user?.is_superuser) {
+        const listResp = await fetch(list_organizations_endpoint, {
+          credentials: "include",
+        });
+        if (listResp.ok) {
+          const listData = await listResp.json();
+          setOwnerOrgs(Array.isArray(listData?.items) ? listData.items : []);
         }
-        setTransferFetchError(msg);
-        return;
       }
-      const orgData = await response.json();
-      const members = Array.isArray(orgData.members) ? orgData.members : [];
-      setTransferMembers(members);
+      const members = await loadOwnerMembersForOrg(dataset.organization);
+      setOwnerMembers(members);
     } catch (err) {
       console.error("Error loading organization:", err);
-      setTransferFetchError(err.message || "Failed to load organization members.");
+      setOwnerFetchError(err.message || "Failed to load organization members.");
     } finally {
-      setTransferLoadingOrg(false);
+      setOwnerLoadingOrg(false);
     }
   };
 
-  const handleCloseTransferModal = useCallback(() => {
-    setShowTransferModal(false);
-    setTransferMembers([]);
-    setTransferSelectedUserId("");
-    setTransferFetchError("");
-  }, []);
-
-  const handleSubmitTransfer = async () => {
-    if (!dataset?.dataset_id || !transferSelectedUserId) {
-      setTransferFetchError("Please select a member to transfer to.");
+  const handleOwnerOrgChange = async (orgId) => {
+    setOwnerSelectedOrgId(orgId);
+    setOwnerSelectedUserId("");
+    setOwnerFetchError("");
+    if (!orgId) {
+      setOwnerMembers([]);
       return;
     }
-    setTransferSubmitting(true);
-    setTransferFetchError("");
+    setOwnerLoadingOrg(true);
     try {
-      const params = new URLSearchParams({
-        dataset_id: dataset.dataset_id,
-        user_id: transferSelectedUserId,
+      const members = await loadOwnerMembersForOrg(orgId);
+      setOwnerMembers(members);
+    } catch (err) {
+      setOwnerMembers([]);
+      setOwnerFetchError(err.message || "Failed to load organization members.");
+    } finally {
+      setOwnerLoadingOrg(false);
+    }
+  };
+
+  const handleCloseOwnersModal = useCallback(() => {
+    setShowOwnersModal(false);
+    setOwnerMembers([]);
+    setOwnerOrgs([]);
+    setOwnerSelectedOrgId("");
+    setOwnerSelectedUserId("");
+    setOwnerFetchError("");
+  }, []);
+
+  const handleAddOwner = async () => {
+    if (!dataset?.dataset_id || !ownerSelectedUserId) {
+      setOwnerFetchError("Please select a member to add as owner.");
+      return;
+    }
+    setOwnerSubmitting(true);
+    setOwnerFetchError("");
+    try {
+      const response = await fetch(dataset_owners_endpoint, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dataset_id: dataset.dataset_id,
+          user_id: ownerSelectedUserId,
+        }),
       });
-      const response = await fetch(
-        `${transfer_dataset_endpoint}?${params.toString()}`,
-        {
-          method: "POST",
-          credentials: "include",
-        }
-      );
       if (!response.ok) {
-        let errorMessage = "Failed to transfer dataset.";
+        let errorMessage = "Failed to add owner.";
         try {
           const errorData = await response.json();
           errorMessage = errorData.detail || errorData.message || errorMessage;
@@ -547,19 +796,54 @@ function DatasetInfo() {
         }
         throw new Error(errorMessage);
       }
-      handleCloseTransferModal();
+      setOwnerSelectedUserId("");
       await fetchDatasetInfo();
     } catch (err) {
-      console.error("Error transferring dataset:", err);
-      setTransferFetchError(err.message || "Transfer failed. Please try again.");
+      console.error("Error adding owner:", err);
+      setOwnerFetchError(err.message || "Could not add owner.");
     } finally {
-      setTransferSubmitting(false);
+      setOwnerSubmitting(false);
+    }
+  };
+
+  const handleRemoveOwner = async (userId) => {
+    if (!dataset?.dataset_id || !userId) return;
+    setOwnerSubmitting(true);
+    setOwnerFetchError("");
+    try {
+      const params = new URLSearchParams({
+        dataset_id: dataset.dataset_id,
+        user_id: userId,
+      });
+      const response = await fetch(
+        `${dataset_owners_endpoint}?${params.toString()}`,
+        {
+          method: "DELETE",
+          credentials: "include",
+        }
+      );
+      if (!response.ok) {
+        let errorMessage = "Failed to remove owner.";
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.detail || errorData.message || errorMessage;
+        } catch {
+          errorMessage = response.statusText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+      await fetchDatasetInfo();
+    } catch (err) {
+      console.error("Error removing owner:", err);
+      setOwnerFetchError(err.message || "Could not remove owner.");
+    } finally {
+      setOwnerSubmitting(false);
     }
   };
 
   const handleDeleteFile = async () => {
-    if (!user?.apikey || !fileToDelete?.file_id) {
-      setDeleteError("Missing user authentication or file information.");
+    if (!fileToDelete?.file_id) {
+      setDeleteError("Missing file information.");
       return;
     }
 
@@ -569,7 +853,6 @@ function DatasetInfo() {
     try {
       const params = new URLSearchParams({
         file_id: fileToDelete.file_id,
-        apikey: user.apikey,
       });
 
       const response = await fetch(
@@ -618,11 +901,9 @@ function DatasetInfo() {
       payload: {
         title: dataset.dataset_title || "",
         description: dataset.dataset_description || "",
-        isPrivate: Boolean(dataset.private),
+        availability: parseAvailability(dataset.availability),
         tags:
-          dataset.tags && Array.isArray(dataset.tags)
-            ? dataset.tags.join(", ")
-            : "",
+          dataset.tags && Array.isArray(dataset.tags) ? dataset.tags : [],
       },
     });
   };
@@ -669,40 +950,38 @@ function DatasetInfo() {
     };
   }, [showDatasetEditModal]);
 
-  // Transfer modal: focus management (select when ready, else close button)
   useEffect(() => {
-    if (!showTransferModal) return;
+    if (!showOwnersModal) return;
     const timer = requestAnimationFrame(() => {
       const canFocusSelect =
-        !transferLoadingOrg &&
-        transferMembers.length > 0 &&
-        transferMemberSelectRef.current;
+        !ownerLoadingOrg &&
+        ownerMembers.length > 0 &&
+        ownerMemberSelectRef.current;
       if (canFocusSelect) {
-        transferMemberSelectRef.current?.focus();
+        ownerMemberSelectRef.current?.focus();
       } else {
         const closeBtn =
-          transferModalDialogRef.current?.querySelector(".btn-close");
+          ownersModalDialogRef.current?.querySelector(".btn-close");
         closeBtn?.focus();
       }
     });
     return () => cancelAnimationFrame(timer);
-  }, [showTransferModal, transferLoadingOrg, transferMembers.length]);
+  }, [showOwnersModal, ownerLoadingOrg, ownerMembers.length]);
 
-  // Transfer modal: Escape + Tab focus trap (aligned with dataset edit modal)
   useEffect(() => {
-    if (!showTransferModal) return;
-    transferPreviousActiveElementRef.current = document.activeElement;
+    if (!showOwnersModal) return;
+    ownersPreviousActiveElementRef.current = document.activeElement;
     const handleKeyDown = (e) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        handleCloseTransferModal();
+        handleCloseOwnersModal();
         return;
       }
-      if (e.key !== "Tab" || !transferModalDialogRef.current) return;
+      if (e.key !== "Tab" || !ownersModalDialogRef.current) return;
       const focusableSelector =
         'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
       const focusables = [
-        ...transferModalDialogRef.current.querySelectorAll(focusableSelector),
+        ...ownersModalDialogRef.current.querySelectorAll(focusableSelector),
       ].filter((el) => el.offsetParent !== null);
       const len = focusables.length;
       if (len === 0) return;
@@ -720,24 +999,17 @@ function DatasetInfo() {
     document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
-      transferPreviousActiveElementRef.current?.focus?.();
+      ownersPreviousActiveElementRef.current?.focus?.();
     };
-  }, [showTransferModal, handleCloseTransferModal]);
-
-  const processTagsForSubmit = (tagsText) => {
-    if (!tagsText || !String(tagsText).trim()) return [];
-    return tagsText
-      .split(",")
-      .map((tag) => tag.trim())
-      .filter((tag) => tag.length > 0)
-      .map((tag) => tag.replace(/\s+/g, "-"));
-  };
+  }, [showOwnersModal, handleCloseOwnersModal]);
 
   const handleEditDatasetSubmit = async (e) => {
     e.preventDefault();
     dispatchDatasetEdit({ type: "SET_ERROR", error: "" });
     const titleTrimmed = datasetEdit.title.trim();
-    const tagsArray = processTagsForSubmit(datasetEdit.tags);
+    const tagsArray = (Array.isArray(datasetEdit.tags) ? datasetEdit.tags : [])
+      .map((tag) => String(tag).trim())
+      .filter((tag) => tag.length > 0);
     if (!titleTrimmed) {
       dispatchDatasetEdit({ type: "SET_ERROR", error: "Dataset title is required." });
       return;
@@ -752,7 +1024,7 @@ function DatasetInfo() {
         dataset_id: dataset.dataset_id,
         dataset_title: titleTrimmed,
         dataset_description: datasetEdit.description.trim() || null,
-        private: datasetEdit.isPrivate,
+        availability: orgPrivate ? datasetEdit.availability : AVAILABILITY_PUBLIC,
         tags: tagsArray,
       };
       const response = await fetch(edit_dataset_endpoint, {
@@ -804,10 +1076,6 @@ function DatasetInfo() {
           file.duration !== undefined && file.duration !== null
             ? Number(file.duration)
             : 0,
-        value:
-          file.value && ["high", "medium", "low"].includes(file.value)
-            ? file.value
-            : "low",
         temporalFrom: formatToDatetimeLocal(file.temporal_from),
         temporalTo: formatToDatetimeLocal(file.temporal_to),
         geography: file.geography || "",
@@ -848,7 +1116,6 @@ function DatasetInfo() {
         groundtruthed: fileEdit.groundtruthed,
         permissions: fileEdit.permissions.trim() || null,
         duration: Math.max(0, parseInt(fileEdit.duration, 10) || 0),
-        value: fileEdit.value || null,
         temporal_from: fromStr ? new Date(fromStr).toISOString() : null,
         temporal_to: toStr ? new Date(toStr).toISOString() : null,
         geography: fileEdit.geography.trim() || null,
@@ -884,9 +1151,11 @@ function DatasetInfo() {
 
   if (loading) {
     return (
-      <div className="container py-5 text-center">
-        <div className="spinner-border" role="status">
-          <span className="visually-hidden">Loading...</span>
+      <div className="page">
+        <div className="wrap" style={{ padding: "80px 0" }}>
+          <div className="empty">
+            <p>Loading…</p>
+          </div>
         </div>
       </div>
     );
@@ -894,9 +1163,15 @@ function DatasetInfo() {
 
   if (error) {
     return (
-      <div className="container py-5">
-        <div className="alert alert-danger" role="alert">
-          {error}
+      <div className="page">
+        <div className="wrap" style={{ padding: "80px 0" }}>
+          <div className="empty">
+            <h3 className="display">Unable to load dataset</h3>
+            <p>{error}</p>
+            <Link className="btn btn-ghost" to="/datasets">
+              Back to datasets
+            </Link>
+          </div>
         </div>
       </div>
     );
@@ -904,238 +1179,955 @@ function DatasetInfo() {
 
   if (!dataset) {
     return (
-      <div className="container py-5">
-        <div className="alert alert-warning" role="alert">
-          No dataset information available.
+      <div className="page">
+        <div className="wrap" style={{ padding: "80px 0" }}>
+          <div className="empty">
+            <h3 className="display">No dataset information available.</h3>
+            <Link className="btn btn-ghost" to="/datasets">
+              Back to datasets
+            </Link>
+          </div>
         </div>
       </div>
     );
   }
 
+  // --- Derived presentation values (from whatever the API provides) ---
+  const orgName = dataset.organization_name || dataset.organization || "";
+  const availabilityText = availabilityLabel(dataset.availability);
+  const isPublic = parseAvailability(dataset.availability) === AVAILABILITY_PUBLIC;
+  const geoVal = files.map((f) => f.geography).find(Boolean) || "";
+  const licenseVal = files.map((f) => f.permissions).find(Boolean) || "";
+  const timeVal = formatDateShort(dataset.created_at);
+  const description = dataset.dataset_description || "";
+  const isLongDesc = description.length > 320;
+  const tagsList =
+    dataset.tags && Array.isArray(dataset.tags) ? dataset.tags : [];
+
+  const citeText =
+    files.map((f) => f.cite_as).find(Boolean) ||
+    `${orgName || "Unknown source"} (${
+      dataset.created_at ? new Date(dataset.created_at).getFullYear() : new Date().getFullYear()
+    }). ${dataset.dataset_title || "Untitled dataset"} [Dataset]. ${productName}.${
+      licenseVal ? " " + licenseVal + "." : ""
+    }`;
+
+  // Provenance is built from any file-level source/provenance info.
+  const provSteps = files
+    .filter((f) => f.source || f.provenance)
+    .map((f) => ({
+      title: f.file_title || "File",
+      meta: f.source || "",
+      detail: f.provenance || "",
+    }));
+  const hasProvenance = provSteps.length > 0;
+
+  const copyCitation = () => {
+    try {
+      if (navigator.clipboard) navigator.clipboard.writeText(citeText);
+    } catch {
+      // ignore clipboard failures
+    }
+    setCiteCopied(true);
+    toast("Citation copied to clipboard");
+    setTimeout(() => setCiteCopied(false), 1900);
+  };
+
+  const datasetId = searchParams.get("dataset_id");
+
   return (
-    <div className="container py-5">
-      <div className="d-flex justify-content-between align-items-center mb-4">
-        <div className="d-flex align-items-center gap-2 flex-wrap">
-          <h2 className="mb-0">Dataset Information</h2>
-          <span
-            className={`badge ${dataset.private ? "text-bg-secondary" : "text-bg-success"}`}
-            aria-label={
-              dataset.private ? "This dataset is private" : "This dataset is public"
-            }
-          >
-            {dataset.private ? "Private" : "Public"}
-          </span>
-        </div>
-        <div className="d-flex gap-2">
-          {privileges.transfer && (
-            <button
-              type="button"
-              className="btn text-white"
-              style={{ backgroundColor: "#0d6efd", borderColor: "#0d6efd" }}
-              onMouseEnter={(event) => {
-                event.currentTarget.style.backgroundColor = "#0b5ed7";
-                event.currentTarget.style.borderColor = "#0b5ed7";
-              }}
-              onMouseLeave={(event) => {
-                event.currentTarget.style.backgroundColor = "#0d6efd";
-                event.currentTarget.style.borderColor = "#0d6efd";
-              }}
-              onClick={handleOpenTransferModal}
-              aria-label="Transfer dataset ownership"
-            >
-              Transfer
-            </button>
-          )}
-          {privileges.approval && (
-            <button
-              type="button"
-              className="btn text-white"
-              style={{ backgroundColor: "#0d6efd", borderColor: "#0d6efd" }}
-              onMouseEnter={(event) => {
-                event.currentTarget.style.backgroundColor = "#0b5ed7";
-                event.currentTarget.style.borderColor = "#0b5ed7";
-              }}
-              onMouseLeave={(event) => {
-                event.currentTarget.style.backgroundColor = "#0d6efd";
-                event.currentTarget.style.borderColor = "#0d6efd";
-              }}
-              onClick={handleApproveDataset}
-              disabled={approvingDataset}
-              aria-label="Approve dataset"
-            >
-              {approvingDataset ? "Approving..." : "Approve"}
-            </button>
-          )}
-          {privileges.edit && (
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={openDatasetEditModal}
-              aria-label="Edit dataset"
-            >
-              <i className="bi bi-pencil"></i> Edit
-            </button>
-          )}
-          {privileges.delete_dataset && (
-            <button
-              type="button"
-              className="btn btn-danger"
-              onClick={() => setShowDatasetDeleteModal(true)}
-              disabled={deletingDataset}
-              aria-label="Delete dataset"
-            >
-              <i className="bi bi-trash"></i> Delete
-            </button>
-          )}
-        </div>
-      </div>
-
-      {deleteError && (
-        <div className="alert alert-danger alert-dismissible fade show" role="alert">
-          {deleteError}
-          <button
-            type="button"
-            className="btn-close"
-            onClick={() => setDeleteError("")}
-            aria-label="Close"
-          ></button>
-        </div>
-      )}
-
-      {/* Transfer dataset modal */}
-      {showTransferModal && (
-        <div
-          className="modal show d-block"
-          tabIndex="-1"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="transfer-dataset-modal-title"
-          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
-        >
-          <div
-            className="modal-dialog modal-dialog-scrollable"
-            ref={transferModalDialogRef}
-          >
-            <div className="modal-content">
-              <div className="modal-header">
-                <h5 id="transfer-dataset-modal-title" className="modal-title">
-                  Transfer dataset
-                </h5>
-                <button
-                  type="button"
-                  className="btn-close"
-                  onClick={handleCloseTransferModal}
-                  aria-label="Close transfer dialog"
-                />
-              </div>
-              <div className="modal-body">
-                {transferLoadingOrg && (
-                  <div className="text-center py-3" role="status">
-                    <div className="spinner-border spinner-border-sm" aria-hidden="true" />
-                    <span className="visually-hidden">Loading members</span>
-                  </div>
-                )}
-                {transferFetchError && (
-                  <div className="alert alert-danger" role="alert">
-                    {transferFetchError}
-                  </div>
-                )}
-                {!transferLoadingOrg && !transferFetchError && transferMembers.length === 0 && (
-                  <p className="text-muted mb-0">No members found for this organization.</p>
-                )}
-                {!transferLoadingOrg && transferMembers.length > 0 && (
+    <div className="page">
+      <section className="detail-hero" style={{ position: "relative" }}>
+        <Contour op={0.35} />
+        <div className="wrap dh-inner">
+          <Link className="back" to="/datasets">
+            <Ic name="chevLeft" size={16} sw={2} />
+            Datasets
+          </Link>
+          <div className="dh-grid">
+            <div>
+              {/* <div className="folder-id">
+                <span className="folder-glyph">
+                  <Ic name="folder" size={26} sw={1.7} />
+                </span>
+                <div className="folder-id-text">
+                  <span className="folder-eyebrow">Dataset folder</span>
+                  <span className="folder-count">
+                    {files.length} {files.length === 1 ? "file" : "files"} inside
+                  </span>
+                </div>
+              </div> */}
+              <h1 className="dh-title">{dataset.dataset_title || "Untitled dataset"}</h1>
+              {/* {description && <p className="dh-desc">{description}</p>} */}
+              <div className="dh-facts">
+                {orgName && (
                   <>
-                    <div className="row mb-3 align-items-center">
-                      <div className="col-sm-4">
-                        <label htmlFor="transfer-member-select" className="col-form-label">
-                          Transfer to:{" "}
-                        </label>
-                      </div>
-                      <div className="col-sm-8">
-                        <select
-                          id="transfer-member-select"
-                          ref={transferMemberSelectRef}
-                          className="form-select"
-                          value={transferSelectedUserId}
-                          onChange={(e) => setTransferSelectedUserId(e.target.value)}
-                          aria-label="Select member to transfer dataset to"
-                        >
-                          <option value="">Select a member…</option>
-                          {transferMembers.map((m) => (
-                            <option key={m.id} value={m.id}>
-                              {m.full_name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                    {(() => {
-                      const sel = transferMembers.find(
-                        (m) =>
-                          String(m.id) === String(transferSelectedUserId)
-                      );
-                      return (
-                        <>
-                          <div className="row mb-2">
-                            <div className="col-sm-4">
-                              <span className="fw-semibold">Name: </span>
-                            </div>
-                            <div className="col-sm-8">
-                              {sel ? sel.full_name : "—"}
-                            </div>
-                          </div>
-                          <div className="row mb-2">
-                            <div className="col-sm-4">
-                              <span className="fw-semibold">Email: </span>
-                            </div>
-                            <div className="col-sm-8">{sel ? sel.email : "—"}</div>
-                          </div>
-                          <div className="row mb-2">
-                            <div className="col-sm-4">
-                              <span className="fw-semibold">Designation: </span>
-                            </div>
-                            <div className="col-sm-8">
-                              {sel?.designation != null && sel.designation !== ""
-                                ? sel.designation
-                                : "—"}
-                            </div>
-                          </div>
-                          <div className="row mb-4">
-                            <div className="col-sm-4">
-                              <span className="fw-semibold">Role: </span>
-                            </div>
-                            <div className="col-sm-8">
-                              {sel ? roleLabelForTransfer(sel.role) : "—"}
-                            </div>
-                          </div>
-                        </>
-                      );
-                    })()}
-                    <div className="mt-4 pt-2">
-                      <button
-                        type="button"
-                        className="btn text-white"
-                        style={{ backgroundColor: "#0d6efd", borderColor: "#0d6efd" }}
-                        onMouseEnter={(event) => {
-                          event.currentTarget.style.backgroundColor = "#0b5ed7";
-                          event.currentTarget.style.borderColor = "#0b5ed7";
-                        }}
-                        onMouseLeave={(event) => {
-                          event.currentTarget.style.backgroundColor = "#0d6efd";
-                          event.currentTarget.style.borderColor = "#0d6efd";
-                        }}
-                        onClick={handleSubmitTransfer}
-                        disabled={
-                          transferSubmitting || !transferSelectedUserId
-                        }
-                        aria-label="Submit dataset transfer"
-                      >
-                        {transferSubmitting ? "Submitting…" : "Submit"}
-                      </button>
-                    </div>
+                    <span className="who">{orgName}</span>
+                  </>
+                )}
+                {geoVal && (
+                  <>
+                    <span className="sep"></span>
+                    <span>{geoVal}</span>
+                  </>
+                )}
+                {timeVal && (
+                  <>
+                    <span className="sep"></span>
+                    <span>{timeVal}</span>
                   </>
                 )}
               </div>
+              <div className="dh-badges">
+                {isPublic ? (
+                  <span className="badge public dot">Public</span>
+                ) : (
+                  <span className="badge lock">
+                    <Ic name="lock" size={13} sw={2} />
+                    {availabilityText}
+                  </span>
+                )}
+                {dataset.approved ? (
+                  <span className="badge approved">
+                    <Ic name="check" size={13} sw={2.4} />
+                    Approved
+                  </span>
+                ) : (
+                  <span className="badge pending">Pending</span>
+                )}
+              </div>
+              {tagsList.length > 0 && (
+                <div className="dh-tags mb-4">
+                  {tagsList.map((t) => (
+                    <Link
+                      className="tag"
+                      key={t}
+                      to={`/search?tags=${encodeURIComponent(t)}`}
+                      title={`Explore datasets tagged “${t}”`}
+                    >
+                      {t}
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="dh-actions">
+              <button
+                className="btn btn-primary"
+                onClick={handleDownloadDataset}
+                disabled={downloadingDataset || files.length === 0}
+              >
+                <Ic name="dl" size={16} sw={2} />
+                {downloadingDataset ? "Preparing zip…" : "Download dataset"}
+              </button>
+              <button className="btn btn-ghost" onClick={() => scrollToSec("usage")}>
+                <Ic name="cite" size={16} sw={2} />
+                Cite
+              </button>
+              {privileges.manage_owners && (
+                <button className="btn btn-ghost" onClick={handleOpenOwnersModal}>
+                  <Ic name="link" size={16} sw={2} />
+                  Manage owners
+                </button>
+              )}
+              {privileges.approval && (
+                <button
+                  className="btn btn-ghost"
+                  onClick={handleApproveDataset}
+                  disabled={approvingDataset}
+                >
+                  <Ic name="check" size={16} sw={2} />
+                  {approvingDataset ? "Approving…" : "Approve"}
+                </button>
+              )}
+              {privileges.edit && (
+                <button className="btn btn-ghost" onClick={openDatasetEditModal}>
+                  Edit
+                </button>
+              )}
+              {privileges.delete_dataset && (
+                <button
+                  className="btn btn-ghost"
+                  style={{ color: "#b3402f", borderColor: "#e6c9c2" }}
+                  onClick={() => setShowDatasetDeleteModal(true)}
+                  disabled={deletingDataset}
+                >
+                  Delete dataset
+                </button>
+              )}
+              <div className="meta-mini">
+                {(dataset.downloads ?? 0).toLocaleString()} downloads
+                {timeVal ? ` · Updated ${timeVal}` : ""}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {(deleteError || downloadError) && (
+        <div className="wrap" style={{ paddingTop: "16px" }}>
+          {deleteError && (
+            <div className="attn attn-card warn" role="alert" style={{ marginBottom: "10px" }}>
+              <span>{deleteError}</span>
+              <button
+                className="btn btn-quiet"
+                onClick={() => setDeleteError("")}
+                aria-label="Dismiss"
+              >
+                <Ic name="close" size={15} sw={2} />
+              </button>
+            </div>
+          )}
+          {downloadError && (
+            <div className="attn attn-card warn" role="alert">
+              <span>{downloadError}</span>
+              <button
+                className="btn btn-quiet"
+                onClick={() => setDownloadError("")}
+                aria-label="Dismiss"
+              >
+                <Ic name="close" size={15} sw={2} />
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="wrap">
+        <div className="detail-body">
+          <div className="detail-main">
+            <section className="sec" id="sec-overview">
+              <div className="sec-label">About this dataset</div>
+              <div className="prose">
+                {description ? (
+                  isLongDesc ? (
+                    <>
+                      <p>{description.slice(0, 320)}</p>
+                      <div className={"about-extra" + (aboutOpen ? " show" : "")}>
+                        <p>{description.slice(320)}</p>
+                      </div>
+                      <button
+                        className="readmore"
+                        onClick={() => setAboutOpen((v) => !v)}
+                      >
+                        {aboutOpen ? "Read less ↑" : "Read more ↓"}
+                      </button>
+                    </>
+                  ) : (
+                    <p>{description}</p>
+                  )
+                ) : (
+                  <p className="muted">No description provided for this dataset.</p>
+                )}
+                <div className="mgroups" style={{ marginTop: "22px" }}>
+                  <div className="mgroup">
+                    <div className="mgl">Creator</div>
+                    <div className="mgv">
+                      {dataset.creator ? (
+                        <Link to={`/profile?id=${encodeURIComponent(dataset.creator)}`}>
+                          {dataset.creator_name || dataset.creator}
+                        </Link>
+                      ) : (
+                        dataset.creator_name || "N/A"
+                      )}
+                    </div>
+                  </div>
+                  <div className="mgroup">
+                    <div className="mgl">Owners</div>
+                    <div className="mgv">
+                      {Array.isArray(dataset.owners) && dataset.owners.length > 0
+                        ? dataset.owners.map((o, idx) => (
+                            <span key={o.user_id}>
+                              {idx > 0 ? ", " : ""}
+                              <Link to={`/profile?id=${encodeURIComponent(o.user_id)}`}>
+                                {o.full_name || o.user_id}
+                              </Link>
+                            </span>
+                          ))
+                        : "—"}
+                    </div>
+                  </div>
+                  <div className="mgroup">
+                    <div className="mgl">Organization</div>
+                    <div className="mgv">
+                      {dataset.organization ? (
+                        <Link
+                          to={`/organisation?id=${encodeURIComponent(
+                            dataset.organization
+                          )}`}
+                        >
+                          {orgName || "N/A"}
+                        </Link>
+                      ) : (
+                        orgName || "N/A"
+                      )}
+                    </div>
+                  </div>
+                  <div className="mgroup">
+                    <div className="mgl">Created</div>
+                    <div className="mgv">{formatDate(dataset.created_at)}</div>
+                  </div>
+                  {dataset.approved_by && (
+                    <div className="mgroup">
+                      <div className="mgl">Approved by</div>
+                      <div className="mgv">
+                        <Link
+                          to={`/profile?id=${encodeURIComponent(dataset.approved_by)}`}
+                        >
+                          {dataset.approver_name || dataset.approved_by}
+                        </Link>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </section>
+
+            <section className="sec" id="sec-files">
+              <div className="sec-label">Inside this folder</div>
+              <div className="files-head">
+                <h2
+                  className="display"
+                  style={{
+                    fontFamily: "var(--display)",
+                    fontSize: "26px",
+                    fontWeight: 450,
+                    color: "var(--navy)",
+                  }}
+                >
+                  Files
+                </h2>
+                <div className="files-head-right">
+                  <span className="muted files-hint">
+                    {files.length} {files.length === 1 ? "file" : "files"} · click a file
+                    to open its full details
+                  </span>
+                  {privileges.add_file && (
+                    <button
+                      className="btn btn-ghost"
+                      style={{ padding: "7px 13px" }}
+                      onClick={() => {
+                        if (datasetId) {
+                          navigate(`/add-file?dataset_id=${datasetId}`);
+                        }
+                      }}
+                    >
+                      <Ic name="plus" size={15} sw={2} />
+                      Add file
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {files.length === 0 ? (
+                <div className="empty" style={{ padding: "48px 0" }}>
+                  <div className="eic">
+                    <Ic name="folder" size={26} sw={1.6} />
+                  </div>
+                  <h3 className="display">This folder is empty</h3>
+                  <p>No files have been added to this dataset yet.</p>
+                  {privileges.add_file && (
+                    <button
+                      className="btn btn-primary"
+                      onClick={() =>
+                        datasetId && navigate(`/add-file?dataset_id=${datasetId}`)
+                      }
+                    >
+                      <Ic name="plus" size={15} sw={2} />
+                      Add the first file
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="fcards">
+                  {files.map((file) => {
+                    const t = fileType(file.file_format);
+                    const isOpen = !!openFiles[file.file_id];
+                    const temporal =
+                      file.temporal_from || file.temporal_to
+                        ? `${
+                            file.temporal_from
+                              ? formatDateShort(file.temporal_from)
+                              : "…"
+                          } – ${
+                            file.temporal_to
+                              ? formatDateShort(file.temporal_to)
+                              : "…"
+                          }`
+                        : "";
+                    const gt = Boolean(file.groundtruthed);
+                    return (
+                      <div
+                        key={file.file_id}
+                        className={"fcard" + (isOpen ? " open" : "")}
+                      >
+                        <div className="fcard-head">
+                          <button
+                            className="fcard-toggle"
+                            onClick={() => toggleFile(file.file_id)}
+                            aria-expanded={isOpen}
+                          >
+                            <span className={"fcard-ic" + (t ? " " + t : "")}>
+                              {fileLabel(file.file_format)}
+                            </span>
+                            <span className="fcard-main">
+                              <span className="fcard-title">
+                                {file.file_title || "Untitled file"}
+                              </span>
+                              <span
+                                className="fcard-sub"
+                                title={file.file_name || ""}
+                              >
+                                {file.file_name || "—"}
+                              </span>
+                            </span>
+                            <span className="fcard-specs">
+                              <span className="fmt-chip">
+                                {(file.file_format || "DATA")
+                                  .toString()
+                                  .toUpperCase()}
+                              </span>
+                              <span className="fcard-size">
+                                {formatFileSize(file.file_size)}
+                              </span>
+                              {gt && (
+                                <span className="gt-pill on" title="Groundtruthed">
+                                  <Ic name="verified" size={13} sw={2} />
+                                  Groundtruthed
+                                </span>
+                              )}
+                            </span>
+                            <span className="fcard-chev">
+                              <Ic name="chev" size={18} sw={2} />
+                            </span>
+                          </button>
+                          <div className="fcard-quick">
+                            {canPreview(file) && (
+                              <button
+                                className="fbtn"
+                                onClick={() => handlePreview(file)}
+                                title="Preview file"
+                                aria-label="Preview file"
+                              >
+                                <Ic name="eye" size={16} sw={2} />
+                              </button>
+                            )}
+                            <button
+                              className="fbtn primary"
+                              onClick={() => handleDownload(file)}
+                              disabled={downloadingFileId === file.file_id}
+                              title="Download file"
+                              aria-label="Download file"
+                            >
+                              <Ic name="dl" size={16} sw={2} />
+                            </button>
+                            {privileges.edit && (
+                              <button
+                                className="fbtn"
+                                onClick={() => openFileEditModal(file)}
+                                title="Edit file"
+                                aria-label="Edit file"
+                              >
+                                <Ic name="edit" size={15} sw={2} />
+                              </button>
+                            )}
+                            {privileges.delete_file && (
+                              <button
+                                className="fbtn danger"
+                                onClick={() => openFileDeleteModal(file)}
+                                disabled={deletingFileId === file.file_id}
+                                title="Delete file"
+                                aria-label="Delete file"
+                              >
+                                <Ic name="trash" size={15} sw={2} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        <div className="fcard-body">
+                          <div className="fcard-body-inner">
+                            <div className="fcard-body-pad">
+                              {file.file_description && (
+                                <p className="fcard-desc">
+                                  {file.file_description}
+                                </p>
+                              )}
+                              <div className="fmeta">
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="file" size={12} sw={2} />
+                                    File name
+                                  </div>
+                                  <div className="fmv mono">
+                                    {file.file_name || "—"}
+                                  </div>
+                                </div>
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="fmt" size={12} sw={2} />
+                                    Format
+                                  </div>
+                                  <div className="fmv mono">
+                                    {(file.file_format || "N/A")
+                                      .toString()
+                                      .toUpperCase()}
+                                  </div>
+                                </div>
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="dl" size={12} sw={2} />
+                                    Size
+                                  </div>
+                                  <div className="fmv">
+                                    {formatFileSize(file.file_size)}
+                                  </div>
+                                </div>
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="org" size={12} sw={2} />
+                                    Provenance
+                                  </div>
+                                  <div className="fmv">{file.provenance || "—"}</div>
+                                </div>
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="link" size={12} sw={2} />
+                                    Source
+                                  </div>
+                                  <div className="fmv">{file.source || "—"}</div>
+                                </div>
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="lic" size={12} sw={2} />
+                                    Permissions
+                                  </div>
+                                  <div className="fmv">
+                                    {file.permissions || "—"}
+                                  </div>
+                                </div>
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="verified" size={12} sw={2} />
+                                    Groundtruthed
+                                  </div>
+                                  <div className="fmv">
+                                    <span
+                                      className={"gt-pill" + (gt ? " on" : "")}
+                                    >
+                                      <Ic
+                                        name={gt ? "verified" : "close"}
+                                        size={13}
+                                        sw={2}
+                                      />
+                                      {gt ? "Yes" : "No"}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="clock" size={12} sw={2} />
+                                    Duration
+                                  </div>
+                                  <div className="fmv">
+                                    {file.duration
+                                      ? `${file.duration} ${
+                                          Number(file.duration) === 1
+                                            ? "year"
+                                            : "years"
+                                        }`
+                                      : "—"}
+                                  </div>
+                                </div>
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="cal" size={12} sw={2} />
+                                    Temporal coverage
+                                  </div>
+                                  <div className="fmv">{temporal || "—"}</div>
+                                </div>
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="loc" size={12} sw={2} />
+                                    Geographical extent
+                                  </div>
+                                  <div className="fmv">{file.geography || "—"}</div>
+                                </div>
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="cal" size={12} sw={2} />
+                                    Added
+                                  </div>
+                                  <div className="fmv">
+                                    {formatDateShort(file.created_at) || "N/A"}
+                                  </div>
+                                </div>
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="dl" size={12} sw={2} />
+                                    Downloads
+                                  </div>
+                                  <div className="fmv">
+                                    {(file.downloads ?? 0).toLocaleString("en-IN")}
+                                  </div>
+                                </div>
+                                {canPreview(file) && (
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="file" size={12} sw={2} />
+                                    Cloud-native file
+                                  </div>
+                                  <div className="fmv">
+                                    <span className="cloud-native-status">
+                                      <span
+                                        className={
+                                          "cloud-native-dot" +
+                                          (file.cloud_native_available ? " on" : "")
+                                        }
+                                        title={
+                                          file.cloud_native_available
+                                            ? "Cloud-native file available"
+                                            : "Cloud-native file not available yet"
+                                        }
+                                      />
+                                      {file.cloud_native_available
+                                        ? "Available"
+                                        : file.cloud_native_status === "processing"
+                                          ? "Processing"
+                                          : "Not generated"}
+                                    </span>
+                                  </div>
+                                </div>
+                                )}
+                                {file.cite_as && (
+                                  <div className="fm wide">
+                                    <div className="fml">
+                                      <Ic name="cite" size={12} sw={2} />
+                                      Cite as
+                                    </div>
+                                    <div className="fmv cite">{file.cite_as}</div>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="fcard-actions">
+                                <button
+                                  className="btn btn-primary"
+                                  onClick={() => handleDownload(file)}
+                                  disabled={downloadingFileId === file.file_id}
+                                >
+                                  <Ic name="dl" size={16} sw={2} />
+                                  {downloadingFileId === file.file_id
+                                    ? "Downloading…"
+                                    : "Download file"}
+                                </button>
+                                {privileges.edit && (
+                                  <button
+                                    className="btn btn-ghost"
+                                    onClick={() => openFileEditModal(file)}
+                                  >
+                                    <Ic name="edit" size={15} sw={2} />
+                                    Edit
+                                  </button>
+                                )}
+                                {privileges.delete_file && (
+                                  <button
+                                    className="btn btn-ghost danger"
+                                    onClick={() => openFileDeleteModal(file)}
+                                    disabled={deletingFileId === file.file_id}
+                                  >
+                                    <Ic name="trash" size={15} sw={2} />
+                                    Delete
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+
+            {/* {hasProvenance && (
+              <section className="sec" id="sec-provenance">
+                <div className="sec-label">How it was produced</div>
+                <h2 className="display">Provenance</h2>
+                <div className="prov">
+                  {provSteps.map((s, i) => (
+                    <div className="prov-step" key={i}>
+                      <div className="prov-rail">
+                        <div className="prov-dot">
+                          <Ic name="file" size={16} sw={1.8} />
+                        </div>
+                        <div className="prov-line"></div>
+                      </div>
+                      <div className="prov-body">
+                        <b>{s.title}</b>
+                        {s.meta && <div className="pm">{s.meta}</div>}
+                        {s.detail && <p>{s.detail}</p>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            <section className="sec" id="sec-usage">
+              <div className="sec-label">How can I use this data?</div>
+              <h2 className="display">Usage &amp; citation</h2>
+              <div className="usage-lead">
+                <span className="license-chip">
+                  <Ic name="lic" size={15} sw={2} />
+                  {licenseVal || "License not specified"}
+                </span>
+                <span className="muted" style={{ fontSize: "14px" }}>
+                  {isPublic
+                    ? "Publicly available for use with attribution"
+                    : "Access controlled — request permission to reuse"}
+                </span>
+              </div>
+              <div className="usage-grid">
+                <div className="ubox">
+                  <h4>What you can do</h4>
+                  <p>
+                    Reuse and adapt this dataset in line with its license
+                    {licenseVal ? ` (${licenseVal})` : ""}. Give appropriate credit
+                    to {orgName || "the source organization"} and indicate any changes
+                    you make.
+                  </p>
+                </div>
+                <div className="ubox">
+                  <h4>Attribution</h4>
+                  <p>
+                    Cite {orgName || "the source organization"} as the source and link
+                    back to this dataset. A ready-to-use citation is below.
+                  </p>
+                </div>
+              </div>
+              <h4
+                style={{
+                  fontSize: "11px",
+                  letterSpacing: ".14em",
+                  textTransform: "uppercase",
+                  color: "var(--faint)",
+                  marginBottom: "12px",
+                }}
+              >
+                Cite this dataset
+              </h4>
+              <div className="cite-block">
+                <div className="ct">{citeText}</div>
+                <button
+                  className={"copy-btn" + (citeCopied ? " done" : "")}
+                  onClick={copyCitation}
+                >
+                  <Ic name={citeCopied ? "check" : "cite"} size={15} sw={2} />
+                  <span>{citeCopied ? "Copied" : "Copy citation"}</span>
+                </button>
+              </div>
+            </section> */}
+          </div>
+
+          <aside>
+            <div className="rail">
+              <div className="rail-card">
+                <h4>Details</h4>
+                <div className="rrow">
+                  <span className="k">Source</span>
+                  {dataset.organization ? (
+                    <Link
+                      className="v"
+                      style={{ color: "var(--blue)" }}
+                      to={`/organisation?id=${encodeURIComponent(dataset.organization)}`}
+                    >
+                      {orgName || "N/A"}
+                    </Link>
+                  ) : (
+                    <span className="v">{orgName || "N/A"}</span>
+                  )}
+                </div>
+                <div className="rrow">
+                  <span className="k">Owners</span>
+                  <span className="v">
+                    {Array.isArray(dataset.owners) && dataset.owners.length > 0
+                      ? dataset.owners
+                          .map((o) => o.full_name || o.user_id)
+                          .join(", ")
+                      : dataset.creator_name || dataset.creator || "N/A"}
+                  </span>
+                </div>
+                <div className="rrow">
+                  <span className="k">Availability</span>
+                  <span className="v">{availabilityText}</span>
+                </div>
+                <div className="rrow">
+                  <span className="k">Status</span>
+                  <span className="v">{dataset.approved ? "Approved" : "Pending"}</span>
+                </div>
+                {/* <div className="rrow">
+                  <span className="k">License</span>
+                  <span className="v mono">{licenseVal || "N/A"}</span>
+                </div> */}
+                <div className="rrow">
+                  <span className="k">Files</span>
+                  <span className="v mono">{files.length}</span>
+                </div>
+                <div className="rrow">
+                  <span className="k">Downloads</span>
+                  <span className="v mono">
+                    {(dataset.downloads ?? 0).toLocaleString()}
+                  </span>
+                </div>
+                <div className="rrow">
+                  <span className="k">Updated</span>
+                  <span className="v">{timeVal || "N/A"}</span>
+                </div>
+              </div>
+              <button
+                className="btn btn-primary"
+                onClick={handleDownloadDataset}
+                disabled={downloadingDataset || files.length === 0}
+                style={{ width: "100%" }}
+              >
+                <Ic name="dl" size={16} sw={2} />
+                {downloadingDataset ? "Preparing zip…" : "Download"}
+              </button>
+            </div>
+          </aside>
+        </div>
+      </div>
+
+      {showOwnersModal && (
+        <div
+          className="cmdk-overlay show"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="manage-owners-modal-title"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) handleCloseOwnersModal();
+          }}
+        >
+          <div className="modal-card" ref={ownersModalDialogRef}>
+            <div className="modal-head">
+              <h3 id="manage-owners-modal-title">Manage owners</h3>
+              <p>Add or remove owners. The original creator cannot be removed.</p>
+              <button
+                className="btn-close btn btn-quiet"
+                onClick={handleCloseOwnersModal}
+                aria-label="Close owners dialog"
+                style={{ position: "absolute", top: "16px", right: "16px" }}
+              >
+                <Ic name="close" size={16} sw={2} />
+              </button>
+            </div>
+            <div className="modal-body">
+              {ownerLoadingOrg && (
+                <div className="empty" role="status">
+                  <p>Loading members…</p>
+                </div>
+              )}
+              {ownerFetchError && (
+                <div className="attn attn-card warn" role="alert" style={{ marginBottom: "14px" }}>
+                  <span>{ownerFetchError}</span>
+                </div>
+              )}
+              <div className="mgroups" style={{ marginBottom: "16px" }}>
+                {(dataset.owners || []).map((o) => {
+                  const isCreator = String(o.user_id) === String(dataset.creator);
+                  return (
+                    <div className="mgroup" key={o.user_id}>
+                      <div className="mgl">{isCreator ? "Creator" : "Owner"}</div>
+                      <div className="mgv" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <span>{o.full_name || o.user_id}</span>
+                        {!isCreator && (
+                          <button
+                            type="button"
+                            className="btn btn-quiet"
+                            disabled={ownerSubmitting}
+                            onClick={() => handleRemoveOwner(o.user_id)}
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {!ownerLoadingOrg && user?.is_superuser && ownerOrgs.length > 0 && (
+                <div className="field">
+                  <label htmlFor="owner-org-select">Organization</label>
+                  <select
+                    id="owner-org-select"
+                    value={ownerSelectedOrgId}
+                    onChange={(e) => handleOwnerOrgChange(e.target.value)}
+                    style={{ width: "100%" }}
+                  >
+                    {ownerOrgs.map((org) => (
+                      <option key={org.id} value={org.id}>
+                        {org.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {!ownerLoadingOrg && ownerMembers.length > 0 && (
+                <>
+                  <div className="field">
+                    <label htmlFor="owner-member-select">Add owner</label>
+                    <select
+                      id="owner-member-select"
+                      ref={ownerMemberSelectRef}
+                      value={ownerSelectedUserId}
+                      onChange={(e) => setOwnerSelectedUserId(e.target.value)}
+                      style={{ width: "100%" }}
+                    >
+                      <option value="">Select a member…</option>
+                      {ownerMembers
+                        .filter(
+                          (m) =>
+                            !(dataset.owners || []).some(
+                              (o) => String(o.user_id) === String(m.id)
+                            )
+                        )
+                        .map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.full_name} ({roleLabelForOwner(m.role)})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </>
+              )}
+              {!ownerLoadingOrg &&
+                ownerMembers.filter(
+                  (m) =>
+                    !(dataset.owners || []).some(
+                      (o) => String(o.user_id) === String(m.id)
+                    )
+                ).length === 0 && (
+                  <p className="muted">
+                    No members in this organization to add as owners. Add people
+                    to the organization first.
+                  </p>
+                )}
+            </div>
+            <div className="modal-foot">
+              <button className="btn btn-ghost" onClick={handleCloseOwnersModal}>
+                Close
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={handleAddOwner}
+                disabled={
+                  ownerSubmitting ||
+                  !ownerSelectedUserId ||
+                  ownerLoadingOrg
+                }
+              >
+                {ownerSubmitting ? "Saving…" : "Add owner"}
+              </button>
             </div>
           </div>
         </div>
@@ -1144,122 +2136,125 @@ function DatasetInfo() {
       {/* Dataset Edit Modal */}
       {showDatasetEditModal && (
         <div
-          className="modal show d-block"
-          tabIndex="-1"
+          className="cmdk-overlay show"
           role="dialog"
           aria-modal="true"
           aria-labelledby="edit-dataset-modal-title"
-          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget)
+              dispatchDatasetEdit({ type: "CLOSE" });
+          }}
         >
-          <div className="modal-dialog" ref={editDatasetModalRef}>
-            <div className="modal-content">
-              <div className="modal-header">
-                <h5 id="edit-dataset-modal-title" className="modal-title">Edit Dataset</h5>
+          <div className="modal-card" ref={editDatasetModalRef}>
+            <form onSubmit={handleEditDatasetSubmit}>
+              <div className="modal-head">
+                <h3 id="edit-dataset-modal-title">Edit dataset</h3>
+                <p>Update the title, description, availability and tags.</p>
+              </div>
+              <div className="modal-body">
+                {datasetEdit.error && (
+                  <div className="attn attn-card warn" role="alert" style={{ marginBottom: "14px" }}>
+                    <span>{datasetEdit.error}</span>
+                  </div>
+                )}
+                <div className="field">
+                  <label htmlFor="edit-dataset-title">
+                    Dataset title <span style={{ color: "#b3402f" }}>(required)</span>
+                  </label>
+                  <input
+                    id="edit-dataset-title"
+                    ref={editDatasetTitleInputRef}
+                    type="text"
+                    value={datasetEdit.title}
+                    onChange={(e) =>
+                      dispatchDatasetEdit({
+                        type: "SET_FIELD",
+                        field: "title",
+                        value: e.target.value,
+                      })
+                    }
+                    required
+                    aria-required="true"
+                  />
+                </div>
+                <div className="field">
+                  <label>Dataset description</label>
+                  <textarea
+                    rows={4}
+                    value={datasetEdit.description}
+                    onChange={(e) =>
+                      dispatchDatasetEdit({
+                        type: "SET_FIELD",
+                        field: "description",
+                        value: e.target.value,
+                      })
+                    }
+                    style={{ width: "100%" }}
+                  />
+                </div>
+                <div className="field">
+                  <label>Availability</label>
+                  <select
+                    value={String(datasetEdit.availability)}
+                    onChange={(e) =>
+                      dispatchDatasetEdit({
+                        type: "SET_FIELD",
+                        field: "availability",
+                        value: Number(e.target.value),
+                      })
+                    }
+                    disabled={!orgPrivate}
+                    style={{ width: "100%" }}
+                  >
+                    {AVAILABILITY_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={String(opt.value)}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                  {!orgPrivate && (
+                    <span className="hint">
+                      Availability is locked to Public because this organization
+                      does not have private data enabled.
+                    </span>
+                  )}
+                </div>
+                <div className="field">
+                  <label>
+                    Tags{" "}
+                    <span style={{ color: "#b3402f" }}>(required)</span>
+                  </label>
+                  <TagMultiSelect
+                    value={Array.isArray(datasetEdit.tags) ? datasetEdit.tags : []}
+                    onChange={(next) =>
+                      dispatchDatasetEdit({
+                        type: "SET_FIELD",
+                        field: "tags",
+                        value: next,
+                      })
+                    }
+                    disabled={datasetEdit.submitting}
+                  />
+                </div>
+              </div>
+              <div className="modal-foot">
                 <button
                   type="button"
-                  className="btn-close"
+                  className="btn btn-ghost"
                   onClick={() => dispatchDatasetEdit({ type: "CLOSE" })}
-                  aria-label="Close"
-                />
+                  disabled={datasetEdit.submitting}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={datasetEdit.submitting}
+                >
+                  {datasetEdit.submitting ? "Submitting…" : "Submit"}
+                </button>
               </div>
-              <form onSubmit={handleEditDatasetSubmit}>
-                <div className="modal-body">
-                  {datasetEdit.error && (
-                    <div className="alert alert-danger" role="alert">
-                      {datasetEdit.error}
-                    </div>
-                  )}
-                  <div className="mb-3">
-                    <label className="form-label" htmlFor="edit-dataset-title">
-                      Dataset Title <span style={{ color: "red" }}>(required)</span>
-                    </label>
-                    <input
-                      id="edit-dataset-title"
-                      ref={editDatasetTitleInputRef}
-                      type="text"
-                      className="form-control"
-                      value={datasetEdit.title}
-                      onChange={(e) =>
-                        dispatchDatasetEdit({
-                          type: "SET_FIELD",
-                          field: "title",
-                          value: e.target.value,
-                        })
-                      }
-                      required
-                      aria-required="true"
-                    />
-                  </div>
-                  <div className="mb-3">
-                    <label className="form-label">Dataset Description</label>
-                    <textarea
-                      className="form-control"
-                      rows={4}
-                      value={datasetEdit.description}
-                      onChange={(e) =>
-                        dispatchDatasetEdit({
-                          type: "SET_FIELD",
-                          field: "description",
-                          value: e.target.value,
-                        })
-                      }
-                    />
-                  </div>
-                  <div className="mb-3">
-                    <label className="form-label">Availability</label>
-                    <select
-                      className="form-select"
-                      value={datasetEdit.isPrivate ? "private" : "public"}
-                      onChange={(e) =>
-                        dispatchDatasetEdit({
-                          type: "SET_FIELD",
-                          field: "isPrivate",
-                          value: e.target.value === "private",
-                        })
-                      }
-                    >
-                      <option value="public">Public</option>
-                      <option value="private">Private</option>
-                    </select>
-                  </div>
-                  <div className="mb-3">
-                    <label className="form-label">
-                      Tags (keywords separated by comma){" "}
-                      <span style={{ color: "red" }}>(required)</span>
-                    </label>
-                    <input
-                      type="text"
-                      className="form-control"
-                      value={datasetEdit.tags}
-                      onChange={(e) =>
-                        dispatchDatasetEdit({
-                          type: "SET_FIELD",
-                          field: "tags",
-                          value: e.target.value,
-                        })
-                      }
-                    />
-                  </div>
-                </div>
-                <div className="modal-footer">
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={() => dispatchDatasetEdit({ type: "CLOSE" })}
-                    disabled={datasetEdit.submitting}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="btn btn-primary"
-                    disabled={datasetEdit.submitting}
-                  >
-                    {datasetEdit.submitting ? "Submitting..." : "Submit"}
-                  </button>
-                </div>
-              </form>
-            </div>
+            </form>
           </div>
         </div>
       )}
@@ -1267,57 +2262,40 @@ function DatasetInfo() {
       {/* Dataset Delete Confirmation Modal */}
       {showDatasetDeleteModal && (
         <div
-          className="modal show d-block"
-          tabIndex="-1"
-          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+          className="cmdk-overlay show"
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowDatasetDeleteModal(false);
+          }}
         >
-          <div className="modal-dialog">
-            <div className="modal-content">
-              <div className="modal-header">
-                <h5 className="modal-title">Confirm Dataset Deletion</h5>
-                <button
-                  type="button"
-                  className="btn-close"
-                  onClick={() => setShowDatasetDeleteModal(false)}
-                  aria-label="Close"
-                ></button>
-              </div>
-              <div className="modal-body">
-                <p>
-                  Are you sure you want to delete this dataset? This action will
-                  permanently delete the dataset and all associated files. This
-                  action cannot be undone.
-                </p>
-              </div>
-              <div className="modal-footer">
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => setShowDatasetDeleteModal(false)}
-                  disabled={deletingDataset}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-danger"
-                  onClick={handleDeleteDataset}
-                  disabled={deletingDataset}
-                >
-                  {deletingDataset ? (
-                    <>
-                      <span
-                        className="spinner-border spinner-border-sm me-2"
-                        role="status"
-                        aria-hidden="true"
-                      ></span>
-                      Deleting...
-                    </>
-                  ) : (
-                    "Delete Dataset"
-                  )}
-                </button>
-              </div>
+          <div className="modal-card">
+            <div className="modal-head">
+              <h3>Confirm dataset deletion</h3>
+              <p>This action cannot be undone.</p>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: "14px", color: "var(--ink-soft)", lineHeight: 1.55 }}>
+                Are you sure you want to delete this dataset? This will permanently
+                delete the dataset and all associated files.
+              </p>
+            </div>
+            <div className="modal-foot">
+              <button
+                className="btn btn-ghost"
+                onClick={() => setShowDatasetDeleteModal(false)}
+                disabled={deletingDataset}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                style={{ background: "#b3402f", borderColor: "#b3402f" }}
+                onClick={handleDeleteDataset}
+                disabled={deletingDataset}
+              >
+                {deletingDataset ? "Deleting…" : "Delete dataset"}
+              </button>
             </div>
           </div>
         </div>
@@ -1326,62 +2304,45 @@ function DatasetInfo() {
       {/* File Delete Confirmation Modal */}
       {showFileDeleteModal && fileToDelete && (
         <div
-          className="modal show d-block"
-          tabIndex="-1"
-          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+          className="cmdk-overlay show"
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowFileDeleteModal(false);
+              setFileToDelete(null);
+            }
+          }}
         >
-          <div className="modal-dialog">
-            <div className="modal-content">
-              <div className="modal-header">
-                <h5 className="modal-title">Confirm File Deletion</h5>
-                <button
-                  type="button"
-                  className="btn-close"
-                  onClick={() => {
-                    setShowFileDeleteModal(false);
-                    setFileToDelete(null);
-                  }}
-                  aria-label="Close"
-                ></button>
-              </div>
-              <div className="modal-body">
-                <p>
-                  Are you sure you want to delete the file "{fileToDelete.file_title}"?
-                  This action cannot be undone.
-                </p>
-              </div>
-              <div className="modal-footer">
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => {
-                    setShowFileDeleteModal(false);
-                    setFileToDelete(null);
-                  }}
-                  disabled={deletingFileId === fileToDelete.file_id}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-danger"
-                  onClick={handleDeleteFile}
-                  disabled={deletingFileId === fileToDelete.file_id}
-                >
-                  {deletingFileId === fileToDelete.file_id ? (
-                    <>
-                      <span
-                        className="spinner-border spinner-border-sm me-2"
-                        role="status"
-                        aria-hidden="true"
-                      ></span>
-                      Deleting...
-                    </>
-                  ) : (
-                    "Delete File"
-                  )}
-                </button>
-              </div>
+          <div className="modal-card">
+            <div className="modal-head">
+              <h3>Confirm file deletion</h3>
+              <p>This action cannot be undone.</p>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: "14px", color: "var(--ink-soft)", lineHeight: 1.55 }}>
+                Are you sure you want to delete the file "{fileToDelete.file_title}"?
+              </p>
+            </div>
+            <div className="modal-foot">
+              <button
+                className="btn btn-ghost"
+                onClick={() => {
+                  setShowFileDeleteModal(false);
+                  setFileToDelete(null);
+                }}
+                disabled={deletingFileId === fileToDelete.file_id}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                style={{ background: "#b3402f", borderColor: "#b3402f" }}
+                onClick={handleDeleteFile}
+                disabled={deletingFileId === fileToDelete.file_id}
+              >
+                {deletingFileId === fileToDelete.file_id ? "Deleting…" : "Delete file"}
+              </button>
             </div>
           </div>
         </div>
@@ -1390,224 +2351,190 @@ function DatasetInfo() {
       {/* File Edit Modal */}
       {showFileEditModal && fileToEdit && (
         <div
-          className="modal show d-block"
-          tabIndex="-1"
-          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+          className="cmdk-overlay show"
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) dispatchFileEdit({ type: "CLOSE" });
+          }}
         >
-          <div className="modal-dialog modal-lg modal-dialog-scrollable">
-            <div className="modal-content">
-              <div className="modal-header">
-                <h5 className="modal-title">Edit File</h5>
-                <button
-                  type="button"
-                  className="btn-close"
-                  onClick={() => dispatchFileEdit({ type: "CLOSE" })}
-                  aria-label="Close"
-                />
+          <div className="modal-card" style={{ maxWidth: "640px" }}>
+            <form onSubmit={handleEditFileSubmit}>
+              <div className="modal-head">
+                <h3>Edit file</h3>
+                <p>Update metadata for {fileToEdit.file_title || "this file"}.</p>
               </div>
-              <form onSubmit={handleEditFileSubmit}>
-                <div
-                  className="modal-body"
-                  style={{ maxHeight: "60vh", overflowY: "auto" }}
-                >
-                  {fileEdit.error && (
-                    <div className="alert alert-danger" role="alert">
-                      {fileEdit.error}
-                    </div>
-                  )}
-                  <div className="mb-3">
-                    <label className="form-label">
-                      File Title <span style={{ color: "red" }}>(required)</span>
+              <div className="modal-body" style={{ maxHeight: "60vh", overflowY: "auto" }}>
+                {fileEdit.error && (
+                  <div className="attn attn-card warn" role="alert" style={{ marginBottom: "14px" }}>
+                    <span>{fileEdit.error}</span>
+                  </div>
+                )}
+                <div className="field">
+                  <label>
+                    File title <span style={{ color: "#b3402f" }}>(required)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={fileEdit.title}
+                    onChange={(e) =>
+                      dispatchFileEdit({
+                        type: "SET_FIELD",
+                        field: "title",
+                        value: e.target.value,
+                      })
+                    }
+                    required
+                  />
+                </div>
+                <div className="field">
+                  <label>File description</label>
+                  <textarea
+                    rows={3}
+                    value={fileEdit.description}
+                    onChange={(e) =>
+                      dispatchFileEdit({
+                        type: "SET_FIELD",
+                        field: "description",
+                        value: e.target.value,
+                      })
+                    }
+                    style={{ width: "100%" }}
+                  />
+                </div>
+                <div className="field">
+                  <label>Provenance</label>
+                  <input
+                    type="text"
+                    value={fileEdit.provenance}
+                    onChange={(e) =>
+                      dispatchFileEdit({
+                        type: "SET_FIELD",
+                        field: "provenance",
+                        value: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+                <div className="field">
+                  <label>Source</label>
+                  <input
+                    type="text"
+                    value={fileEdit.source}
+                    onChange={(e) =>
+                      dispatchFileEdit({
+                        type: "SET_FIELD",
+                        field: "source",
+                        value: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+                <div className="field">
+                  <label>Cite as</label>
+                  <textarea
+                    rows={2}
+                    value={fileEdit.citeAs}
+                    onChange={(e) =>
+                      dispatchFileEdit({
+                        type: "SET_FIELD",
+                        field: "citeAs",
+                        value: e.target.value,
+                      })
+                    }
+                    style={{ width: "100%" }}
+                  />
+                </div>
+                <div className="field">
+                  <label>Groundtruthed</label>
+                  <div style={{ display: "flex", gap: "18px", alignItems: "center" }}>
+                    <label style={{ display: "flex", gap: "6px", alignItems: "center", fontWeight: 400 }}>
+                      <input
+                        type="radio"
+                        name="fileEditGroundtruthed"
+                        id="fileEdit_gt_no"
+                        checked={!fileEdit.groundtruthed}
+                        onChange={() =>
+                          dispatchFileEdit({
+                            type: "SET_FIELD",
+                            field: "groundtruthed",
+                            value: false,
+                          })
+                        }
+                      />
+                      No
                     </label>
-                    <input
-                      type="text"
-                      className="form-control"
-                      value={fileEdit.title}
-                      onChange={(e) =>
-                        dispatchFileEdit({
-                          type: "SET_FIELD",
-                          field: "title",
-                          value: e.target.value,
-                        })
-                      }
-                      required
-                    />
+                    <label style={{ display: "flex", gap: "6px", alignItems: "center", fontWeight: 400 }}>
+                      <input
+                        type="radio"
+                        name="fileEditGroundtruthed"
+                        id="fileEdit_gt_yes"
+                        checked={fileEdit.groundtruthed}
+                        onChange={() =>
+                          dispatchFileEdit({
+                            type: "SET_FIELD",
+                            field: "groundtruthed",
+                            value: true,
+                          })
+                        }
+                      />
+                      Yes
+                    </label>
                   </div>
-                  <div className="mb-3">
-                    <label className="form-label">File Description</label>
-                    <textarea
-                      className="form-control"
-                      rows={3}
-                      value={fileEdit.description}
-                      onChange={(e) =>
-                        dispatchFileEdit({
-                          type: "SET_FIELD",
-                          field: "description",
-                          value: e.target.value,
-                        })
-                      }
-                    />
-                  </div>
-                  <div className="mb-3">
-                    <label className="form-label">Provenance</label>
-                    <input
-                      type="text"
-                      className="form-control"
-                      value={fileEdit.provenance}
-                      onChange={(e) =>
-                        dispatchFileEdit({
-                          type: "SET_FIELD",
-                          field: "provenance",
-                          value: e.target.value,
-                        })
-                      }
-                    />
-                  </div>
-                  <div className="mb-3">
-                    <label className="form-label">Source</label>
-                    <input
-                      type="text"
-                      className="form-control"
-                      value={fileEdit.source}
-                      onChange={(e) =>
-                        dispatchFileEdit({
-                          type: "SET_FIELD",
-                          field: "source",
-                          value: e.target.value,
-                        })
-                      }
-                    />
-                  </div>
-                  <div className="mb-3">
-                    <label className="form-label">Cite As</label>
-                    <textarea
-                      className="form-control"
-                      rows={2}
-                      value={fileEdit.citeAs}
-                      onChange={(e) =>
-                        dispatchFileEdit({
-                          type: "SET_FIELD",
-                          field: "citeAs",
-                          value: e.target.value,
-                        })
-                      }
-                    />
-                  </div>
-                  <div className="mb-3">
-                    <label className="form-label me-3">Groundtruthed</label>
-                    <div>
-                      <div className="form-check form-check-inline">
-                        <input
-                          className="form-check-input"
-                          type="radio"
-                          name="fileEditGroundtruthed"
-                          id="fileEdit_gt_no"
-                          checked={!fileEdit.groundtruthed}
-                          onChange={() =>
-                            dispatchFileEdit({
-                              type: "SET_FIELD",
-                              field: "groundtruthed",
-                              value: false,
-                            })
-                          }
-                        />
-                        <label className="form-check-label" htmlFor="fileEdit_gt_no">
-                          No
-                        </label>
-                      </div>
-                      <div className="form-check form-check-inline">
-                        <input
-                          className="form-check-input"
-                          type="radio"
-                          name="fileEditGroundtruthed"
-                          id="fileEdit_gt_yes"
-                          checked={fileEdit.groundtruthed}
-                          onChange={() =>
-                            dispatchFileEdit({
-                              type: "SET_FIELD",
-                              field: "groundtruthed",
-                              value: true,
-                            })
-                          }
-                        />
-                        <label className="form-check-label" htmlFor="fileEdit_gt_yes">
-                          Yes
-                        </label>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="mb-3">
-                    <label className="form-label">Permissions</label>
-                    <select
-                      className="form-select"
-                      value={fileEdit.permissions}
-                      onChange={(e) =>
-                        dispatchFileEdit({
-                          type: "SET_FIELD",
-                          field: "permissions",
-                          value: e.target.value,
-                        })
-                      }
-                    >
-                      <option value="CC0: Public Domain">CC0: Public Domain</option>
-                      <option value="CC BY: Attribution">CC BY: Attribution</option>
-                      <option value="CC BY-SA: Attribution-ShareAlike">
-                        CC BY-SA: Attribution-ShareAlike
-                      </option>
-                      <option value="CC BY-NC: Attribution-NonCommercial">
-                        CC BY-NC: Attribution-NonCommercial
-                      </option>
-                      <option value="CC BY-NC-SA: Attribution-NonCommercial-ShareAlike">
-                        CC BY-NC-SA: Attribution-NonCommercial-ShareAlike
-                      </option>
-                      <option value="CC BY-ND: Attribution-NoDerivatives">
-                        CC BY-ND: Attribution-NoDerivatives
-                      </option>
-                      <option value="CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives">
-                        CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives
-                      </option>
-                    </select>
-                  </div>
-                  <div className="mb-3">
-                    <label className="form-label">Duration</label>
-                    <input
-                      type="number"
-                      className="form-control"
-                      value={fileEdit.duration}
-                      onChange={(e) => {
-                        const val = parseInt(e.target.value, 10) || 0;
-                        dispatchFileEdit({
-                          type: "SET_FIELD",
-                          field: "duration",
-                          value: Math.max(0, val),
-                        });
-                      }}
-                      min={0}
-                    />
-                  </div>
-                  <div className="mb-3">
-                    <label className="form-label">Value</label>
-                    <select
-                      className="form-select"
-                      value={fileEdit.value}
-                      onChange={(e) =>
-                        dispatchFileEdit({
-                          type: "SET_FIELD",
-                          field: "value",
-                          value: e.target.value,
-                        })
-                      }
-                    >
-                      <option value="high">high</option>
-                      <option value="medium">medium</option>
-                      <option value="low">low</option>
-                    </select>
-                  </div>
-                  <div className="mb-3">
-                    <label className="form-label">Temporal Coverage From</label>
+                </div>
+                <div className="field">
+                  <label>Permissions</label>
+                  <select
+                    value={fileEdit.permissions}
+                    onChange={(e) =>
+                      dispatchFileEdit({
+                        type: "SET_FIELD",
+                        field: "permissions",
+                        value: e.target.value,
+                      })
+                    }
+                    style={{ width: "100%" }}
+                  >
+                    <option value="CC0: Public Domain">CC0: Public Domain</option>
+                    <option value="CC BY: Attribution">CC BY: Attribution</option>
+                    <option value="CC BY-SA: Attribution-ShareAlike">
+                      CC BY-SA: Attribution-ShareAlike
+                    </option>
+                    <option value="CC BY-NC: Attribution-NonCommercial">
+                      CC BY-NC: Attribution-NonCommercial
+                    </option>
+                    <option value="CC BY-NC-SA: Attribution-NonCommercial-ShareAlike">
+                      CC BY-NC-SA: Attribution-NonCommercial-ShareAlike
+                    </option>
+                    <option value="CC BY-ND: Attribution-NoDerivatives">
+                      CC BY-ND: Attribution-NoDerivatives
+                    </option>
+                    <option value="CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives">
+                      CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives
+                    </option>
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Duration</label>
+                  <input
+                    type="number"
+                    value={fileEdit.duration}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value, 10) || 0;
+                      dispatchFileEdit({
+                        type: "SET_FIELD",
+                        field: "duration",
+                        value: Math.max(0, val),
+                      });
+                    }}
+                    min={0}
+                  />
+                </div>
+                <div className="field-row">
+                  <div className="field">
+                    <label>Temporal coverage from</label>
                     <input
                       type="datetime-local"
-                      className="form-control"
                       value={fileEdit.temporalFrom}
                       onChange={(e) =>
                         dispatchFileEdit({
@@ -1618,11 +2545,10 @@ function DatasetInfo() {
                       }
                     />
                   </div>
-                  <div className="mb-3">
-                    <label className="form-label">Temporal Coverage To</label>
+                  <div className="field">
+                    <label>Temporal coverage to</label>
                     <input
                       type="datetime-local"
-                      className="form-control"
                       value={fileEdit.temporalTo}
                       onChange={(e) =>
                         dispatchFileEdit({
@@ -1633,329 +2559,42 @@ function DatasetInfo() {
                       }
                     />
                   </div>
-                  <div className="mb-3">
-                    <label className="form-label">Geographical Extent</label>
-                    <textarea
-                      className="form-control"
-                      rows={3}
-                      value={fileEdit.geography}
-                      onChange={(e) =>
-                        dispatchFileEdit({
-                          type: "SET_FIELD",
-                          field: "geography",
-                          value: e.target.value,
-                        })
-                      }
-                    />
-                  </div>
                 </div>
-                <div className="modal-footer">
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={() => dispatchFileEdit({ type: "CLOSE" })}
-                    disabled={fileEdit.submitting}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="btn btn-primary"
-                    disabled={fileEdit.submitting}
-                  >
-                    {fileEdit.submitting ? "Submitting..." : "Submit"}
-                  </button>
+                <div className="field">
+                  <label>Geographical extent</label>
+                  <textarea
+                    rows={3}
+                    value={fileEdit.geography}
+                    onChange={(e) =>
+                      dispatchFileEdit({
+                        type: "SET_FIELD",
+                        field: "geography",
+                        value: e.target.value,
+                      })
+                    }
+                    style={{ width: "100%" }}
+                  />
                 </div>
-              </form>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="card mb-4">
-        <div className="card-body">
-          <div className="row mb-3">
-            <div className="col-md-3">
-              <strong>Title:</strong>
-            </div>
-            <div className="col-md-9">{dataset.dataset_title || "N/A"}</div>
-          </div>
-
-          <div className="row mb-3">
-            <div className="col-md-3">
-              <strong>Description:</strong>
-            </div>
-            <div className="col-md-9">{dataset.dataset_description || "N/A"}</div>
-          </div>
-
-          <div className="row mb-3">
-            <div className="col-md-3">
-              <strong>Creator:</strong>
-            </div>
-            <div className="col-md-9">
-              {dataset.creator ? (
-                <Link to={`/profile?id=${encodeURIComponent(dataset.creator)}`}>
-                  {dataset.creator_name || dataset.creator || "N/A"}
-                </Link>
-              ) : (
-                dataset.creator_name || "N/A"
-              )}
-            </div>
-          </div>
-
-          <div className="row mb-3">
-            <div className="col-md-3">
-              <strong>Created At:</strong>
-            </div>
-            <div className="col-md-9">{formatDate(dataset.created_at)}</div>
-          </div>
-
-          <div className="row mb-3">
-            <div className="col-md-3">
-              <strong>Organization:</strong>
-            </div>
-            <div className="col-md-9">
-              {dataset.organization ? (
-                <Link
-                  to={`/organisation?id=${encodeURIComponent(dataset.organization)}`}
+              </div>
+              <div className="modal-foot">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => dispatchFileEdit({ type: "CLOSE" })}
+                  disabled={fileEdit.submitting}
                 >
-                  {dataset.organization_name || dataset.organization || "N/A"}
-                </Link>
-              ) : (
-                dataset.organization_name || "N/A"
-              )}
-            </div>
-          </div>
-
-          <div className="row mb-3">
-            <div className="col-md-3">
-              <strong>Tags:</strong>
-            </div>
-            <div className="col-md-9">
-              {dataset.tags && Array.isArray(dataset.tags) && dataset.tags.length > 0
-                ? dataset.tags.join(", ")
-                : "N/A"}
-            </div>
-          </div>
-
-          <div className="row mb-3">
-            <div className="col-md-3">
-              <strong>Total Downloads:</strong>
-            </div>
-            <div className="col-md-9">{dataset.downloads ?? "N/A"}</div>
-          </div>
-
-          <div className="row mb-3">
-            <div className="col-md-3">
-              <strong>Approved:</strong>
-            </div>
-            <div className="col-md-9">
-              {dataset.approved ? (
-                <span className="badge bg-success">Yes</span>
-              ) : (
-                <span className="badge bg-warning text-dark">No</span>
-              )}
-            </div>
-          </div>
-
-          {dataset.approved_by && (
-            <div className="row mb-3">
-              <div className="col-md-3">
-                <strong>Approved By:</strong>
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={fileEdit.submitting}
+                >
+                  {fileEdit.submitting ? "Submitting…" : "Submit"}
+                </button>
               </div>
-              <div className="col-md-9">
-                <Link to={`/profile?id=${encodeURIComponent(dataset.approved_by)}`}>
-                  {dataset.approver_name || dataset.approved_by}
-                </Link>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="d-flex justify-content-between align-items-center mb-4">
-        <h3 className="mb-0">Files</h3>
-        {privileges.add_file && (
-          <button
-            className="btn"
-            style={{ backgroundColor: "#1b75e0", color: "#fff" }}
-            onClick={() => {
-              const datasetId = searchParams.get("dataset_id");
-              if (datasetId) {
-                navigate(`/add-file?dataset_id=${datasetId}`);
-              }
-            }}
-          >
-            <i className="bi bi-plus"></i> Add file
-          </button>
-        )}
-      </div>
-
-      {downloadError && (
-        <div className="alert alert-danger alert-dismissible fade show" role="alert">
-          {downloadError}
-          <button
-            type="button"
-            className="btn-close"
-            onClick={() => setDownloadError("")}
-            aria-label="Close"
-          ></button>
-        </div>
-      )}
-
-      {files.length === 0 ? (
-        <div className="alert alert-info" role="alert">
-          No files associated with this dataset.
-        </div>
-      ) : (
-        <div className="row">
-          {files.map((file) => (
-            <div key={file.file_id} className="col-md-6 col-lg-4 mb-4">
-              <div className="card h-100">
-                <div className="card-body">
-                  <h5 className="card-title">{file.file_title || "N/A"}</h5>
-                  <p className="card-text">
-                    <small className="text-muted">
-                      <strong>Description:</strong> {file.file_description || "N/A"}
-                    </small>
-                  </p>
-                  <div className="mb-2">
-                    <small className="text-muted">
-                      <strong>Size:</strong> {formatFileSize(file.file_size)}
-                    </small>
-                  </div>
-                  <div className="mb-2">
-                    <small className="text-muted">
-                      <strong>Format:</strong> {file.file_format || "N/A"}
-                    </small>
-                  </div>
-                  <div className="mb-2">
-                    <small className="text-muted">
-                      <strong>Created At:</strong> {formatDate(file.created_at)}
-                    </small>
-                  </div>
-                  <div className="mb-3">
-                    <small className="text-muted">
-                      <strong>Downloads:</strong> {file.downloads ?? "N/A"}
-                    </small>
-                  </div>
-                  {file.provenance && (
-                    <div className="mb-2">
-                      <small className="text-muted">
-                        <strong>Provenance:</strong> {file.provenance}
-                      </small>
-                    </div>
-                  )}
-                  {file.source && (
-                    <div className="mb-2">
-                      <small className="text-muted">
-                        <strong>Source:</strong> {file.source}
-                      </small>
-                    </div>
-                  )}
-                  {file.cite_as && (
-                    <div className="mb-2">
-                      <small className="text-muted">
-                        <strong>Cite As:</strong> {file.cite_as}
-                      </small>
-                    </div>
-                  )}
-                  {file.groundtruthed !== undefined && file.groundtruthed !== null && (
-                    <div className="mb-2">
-                      <small className="text-muted">
-                        <strong>Groundtruthed:</strong> {file.groundtruthed ? "Yes" : "No"}
-                      </small>
-                    </div>
-                  )}
-                  {file.permissions && (
-                    <div className="mb-2">
-                      <small className="text-muted">
-                        <strong>Permissions:</strong> {file.permissions}
-                      </small>
-                    </div>
-                  )}
-                  {file.duration !== undefined && file.duration !== null && (
-                    <div className="mb-2">
-                      <small className="text-muted">
-                        <strong>Duration (years):</strong> {file.duration}
-                      </small>
-                    </div>
-                  )}
-                  {file.value && (
-                    <div className="mb-2">
-                      <small className="text-muted">
-                        <strong>Value:</strong> {file.value}
-                      </small>
-                    </div>
-                  )}
-                  {file.temporal_from && (
-                    <div className="mb-2">
-                      <small className="text-muted">
-                        <strong>Temporal From:</strong> {formatDate(file.temporal_from)}
-                      </small>
-                    </div>
-                  )}
-                  {file.temporal_to && (
-                    <div className="mb-2">
-                      <small className="text-muted">
-                        <strong>Temporal To:</strong> {formatDate(file.temporal_to)}
-                      </small>
-                    </div>
-                  )}
-                  {file.geography && (
-                    <div className="mb-2">
-                      <small className="text-muted">
-                        <strong>Geography:</strong> {file.geography}
-                      </small>
-                    </div>
-                  )}
-                  <div className="d-flex gap-2">
-                    <button
-                      className="btn btn-sm btn-outline-primary"
-                      onClick={() => handleDownload(file)}
-                      disabled={downloadingFileId === file.file_id}
-                    >
-                      {downloadingFileId === file.file_id ? (
-                        <>
-                          <span
-                            className="spinner-border spinner-border-sm me-2"
-                            role="status"
-                            aria-hidden="true"
-                          ></span>
-                          Downloading...
-                        </>
-                      ) : (
-                        <>
-                          <i className="bi bi-arrow-down"></i> download
-                        </>
-                      )}
-                    </button>
-                    {privileges.edit && (
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-primary"
-                        onClick={() => openFileEditModal(file)}
-                        aria-label="Edit file"
-                      >
-                        <i className="bi bi-pencil"></i>
-                      </button>
-                    )}
-                    {privileges.delete_file && (
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-danger"
-                        onClick={() => openFileDeleteModal(file)}
-                        disabled={deletingFileId === file.file_id}
-                        aria-label="Delete file"
-                      >
-                        <i className="bi bi-trash"></i>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
+            </form>
+          </div>
         </div>
       )}
     </div>
@@ -1963,4 +2602,3 @@ function DatasetInfo() {
 }
 
 export default DatasetInfo;
-

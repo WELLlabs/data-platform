@@ -16,7 +16,6 @@ TTL for job keys is **`UPLOAD_JOB_CACHE_AGE_SECONDS`** (default 86400 unless ove
 |--------|---------|
 | `UPLOAD_JOBS_BACKEND` | Redis URL for keys `job:*` only |
 | `UPLOAD_JOB_CACHE_AGE_SECONDS` | Expiry (seconds) on `job:{id}`, `:events`, `:event:*`, and lock refresh |
-| `UPLOAD_APPROVAL_TEMPLATE_ID` | Brevo transactional template for `send_upload_approval` emails |
 
 ---
 
@@ -92,7 +91,7 @@ flowchart TD
 **Auth:** Session cookie.  
 **Router:** `src/api/routers/dataset.py`.
 
-**Form-style fields:** `title`, optional `description`, optional `private` (default false), `tags` (list), **`job_id`** (required).
+**Form-style fields:** `title`, optional `description`, optional `availability` (default 0), `tags` (list), **`job_id`** (required).
 
 **Behavior (`DatasetController.create_dataset`):**
 
@@ -100,7 +99,7 @@ flowchart TD
 2. Compare session user to Redis: **`creator`** and **`organization`** must match → else **403**.
 3. Duplicate **`"dataset"`** in **`job:{job_id}:events`** is detected during the atomic append (see step 7) → **409**.
 4. Resolve org via **`DatasetService.get_organization_with_private_status`** — enforces org exists / errors per service.
-5. Effective **private** flag: if org disallows private catalogs, forced to `false` without error.
+5. Effective **availability**: if org is not private, forced to `0` without error.
 6. New **`dataset_id`** = `uuid4()`. **Approval:** high-role users get `approved=True` and `approved_by`; others default unapproved.
 7. Atomically append **`"dataset"`** to **`job:{job_id}:events`**, **`SET`** **`job:{job_id}:event:dataset`**, and **`EXPIRE`** **`job:{job_id}`** (same TTL; job JSON is not rewritten) via Lua (duplicate → **409**).
 8. Payload includes (`event_id`, `type: create_dataset`, `status: pending`, dataset fields, tags, …) with TTL on the event key.
@@ -115,7 +114,7 @@ flowchart TD
 
 **Auth:** Session cookie.
 
-**Expected query parameters:** **`job_id`** (UUID), **`filename`**.
+**Expected query parameters:** **`job_id`** (UUID), **`filename`**, **`file_size`** (bytes, required).
 
 **Behavior (`UploadController.get_upload_url`):**
 
@@ -124,9 +123,9 @@ flowchart TD
 3. Sanitize **`filename`**, basename-only (no path segments).
 4. **`UploadService.check_file_exists`** — if file already present for user → **409** `File already exists`.
 5. New **`file_id`** = `uuid4()`.
-6. **`UploadService.get_presigned_upload_url`** — build same **`file_key`** as today: `{user_id}/{sanitized_basename}`.
+6. **`UploadService`** generates a presigned **`put_object`** URL, or starts a multipart upload with per-part URLs when **`file_size`** is greater than 5 GiB. The S3 **`file_key`** is `{user_id}/{sanitized_basename}`.
 7. **Insert `orphaned_s3_objects`** with `status="initiated"`, `job_id`, `file_key`, `bucket`, `file_id`.
-8. **Response:** `{ "job_id", "file_id", "presigned_upload_url" }` (URL taken from S3 handler JSON).
+8. **Response:** `{ "job_id", "file_id", "presigned_upload_url" }` for single PUT, or multipart fields (`upload_id`, `parts`, …). Presigned URLs are generated in-process by the API (boto3), not a separate S3 handler.
 
 Client uploads bytes to the presigned URL **before** calling `add_file` / `complete_upload_job`.
 
@@ -136,14 +135,14 @@ Client uploads bytes to the presigned URL **before** calling `add_file` / `compl
 
 **Auth:** Session cookie.
 
-**Form fields include:** **`job_id`**, **`file_id`** (from `/upload_url`), **`dataset_id`**, file metadata (`file_title`, `file_description`, `file_format`, temporal fields, `permissions`, `value`, etc.) — **no** `file_key` in the job-based flow; key is resolved later from `orphaned_s3_objects` at completion.
+**Form fields include:** **`job_id`**, **`file_id`** (from `/upload_url`), **`dataset_id`**, file metadata (`file_title`, `file_description`, `file_format`, temporal fields, `permissions`, etc.) — **no** `file_key` in the job-based flow; key is resolved later from `orphaned_s3_objects` at completion.
 
 **Behavior (`UploadController.add_file`):**
 
 1. **`job:{job_id}`** exists; **`creator`** matches user.
 2. If **`"dataset"`** is in **`job:{job_id}:events`** **and** **`job:{job_id}:event:dataset`** exists: require **`dataset_id`** in the form to match the staged JSON → else **400**.
 3. Otherwise (missing **`event:dataset`**, or **`"dataset"`** not in `:events`, or both): **PostgreSQL** — row for **`dataset_id`** must exist and **`creator`** must be the signed-in user → else **403** (`dataset does not exist or inadequate permission`).
-4. Validation: title, format length ≤ 50, optional provenance/source truncation with logging, permissions via allow-list, `value` ∈ {high, medium, low} or default `low`, temporal ordering, etc.
+4. Validation: title, format length ≤ 50, optional provenance/source truncation with logging, permissions via allow-list, temporal ordering, etc.
 5. Acquire **`job:{job_id}:lock`** (`SET NX EX`), compute next id `file_{max+1}`, append to **`job:{job_id}:events`**, **`EXPIRE`** **`job:{job_id}`** (refresh TTL only), release lock; retry with backoff on contention.
 6. **`SET job:{job_id}:event:{event_id}`** with full `add_file` payload, `status: pending`.
 
@@ -213,8 +212,8 @@ Async function in `src/api/services/upload_job.py`:
 
 Defined in `src/api/tasks/email.py` (`email.send_upload_approval`).
 
-- **Template:** `settings.UPLOAD_APPROVAL_TEMPLATE_ID`
-- **Args:** `email`, `title`, `name` (Brevo `params`: `title`, `name`).
+- **HTML:** `src/api/emails/upload_approval.html` (`title`, `name`)
+- **Args:** `email`, `title`, `name`.
 
 ---
 
@@ -226,7 +225,7 @@ sequenceDiagram
     participant API as API
     participant R as Redis UPLOAD_JOBS_BACKEND
     participant PG as PostgreSQL
-    participant S3 as S3 handler
+    participant S3 as AWS S3
 
     C->>API: POST complete_upload_job (job_id)
     API->>R: GET job:{job_id} (open, creator)

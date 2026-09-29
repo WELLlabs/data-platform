@@ -1236,9 +1236,13 @@ class DatasetService:
         limit: int = 10,
         offset: int = 0,
         topic: Optional[str] = None,
-    ) -> List[Dataset]:
+        return_total: bool = False,
+    ):
         """
         Get approved datasets with session-first auth precedence and pagination.
+
+        When return_total is True, returns a (datasets, total) tuple where total
+        is the number of datasets matching the same filters before pagination.
 
         If session user and apikey are both absent:
             - Returns all datasets where availability=0 AND approved=True
@@ -1316,6 +1320,13 @@ class DatasetService:
                     )
                 )
 
+            total: Optional[int] = None
+            if return_total:
+                count_query = select(func.count()).select_from(
+                    query.order_by(None).subquery()
+                )
+                total = int((await self.session.execute(count_query)).scalar_one() or 0)
+
             # Apply pagination
             query = query.limit(limit).offset(offset)
 
@@ -1331,6 +1342,8 @@ class DatasetService:
                 offset,
             )
 
+            if return_total:
+                return datasets, total
             return datasets
 
         except HTTPException:

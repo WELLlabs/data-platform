@@ -6,9 +6,25 @@ import Contour from "../components/wd/Contour";
 import Ic from "../components/wd/Icons";
 import { useCmdk } from "../components/wd/CommandPalette";
 import { DatasetRow, DatasetCard, normalize, useOrganizationNames } from "../components/wd/DatasetItems";
+import Pagination, { PAGE_SIZE_OPTIONS } from "../components/wd/Pagination";
 import { AVAILABILITY_OPTIONS, availabilityLabel, parseAvailability } from "../constants/availability";
 
-const LIMIT = 10;
+
+async function countDatasets(topic) {
+  const STEP = 50;
+  let count = 0;
+  for (let i = 0; i < 40; i++) {
+    const params = new URLSearchParams({ limit: String(STEP), offset: String(i * STEP) });
+    if (topic) params.set("topic", topic);
+    const res = await fetch(`${datasets_endpoint}?${params.toString()}`, { credentials: "include" });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const arr = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : [];
+    count += arr.length;
+    if (arr.length < STEP) return count;
+  }
+  return null;
+}
 
 export default function Datasets() {
   const navigate = useNavigate();
@@ -20,7 +36,9 @@ export default function Datasets() {
   const [datasets, setDatasets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(PAGE_SIZE_OPTIONS[0]);
   const [hasMore, setHasMore] = useState(true);
+  const [total, setTotal] = useState(null);
 
   const [view, setView] = useState("list");
   const [filters, setFilters] = useState({ availability: [], org: [] });
@@ -36,28 +54,41 @@ export default function Datasets() {
     (async () => {
       setLoading(true);
       try {
-        const offset = (page - 1) * LIMIT;
+        const offset = (page - 1) * pageSize;
         const params = new URLSearchParams({
-          limit: String(LIMIT),
+          limit: String(pageSize),
           offset: String(offset),
+          with_meta: "true",
         });
         if (topic) params.set("topic", topic);
         const res = await fetch(`${datasets_endpoint}?${params.toString()}`, { credentials: "include" });
         if (!res.ok) throw new Error("fetch");
         const data = await res.json();
         if (!active) return;
-        const arr = Array.isArray(data) ? data : [];
-        setHasMore(arr.length === LIMIT);
+        // with_meta=true returns {items, total, ...}; older APIs return a plain list
+        const arr = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : [];
+        const t = Number.isFinite(Number(data?.total))
+          ? Number(data.total)
+          : parseInt(res.headers.get("X-Total-Count"), 10);
+        let knownTotal = Number.isFinite(t) ? t : null;
+        if (knownTotal == null) {
+          // Fallback for an API that does not report a total yet: count the
+          // visible datasets by walking the list in pages of 50.
+          knownTotal = await countDatasets(topic);
+          if (!active) return;
+        }
+        setTotal(knownTotal);
+        setHasMore(knownTotal != null ? page * pageSize < knownTotal : arr.length === pageSize);
         if (arr.length === 0 && page > 1) return; // keep previous page
         setDatasets(arr);
       } catch {
-        if (active) { setDatasets([]); setHasMore(false); }
+        if (active) { setDatasets([]); setHasMore(false); setTotal(null); }
       } finally {
         if (active) setLoading(false);
       }
     })();
     return () => { active = false; };
-  }, [page, topic]);
+  }, [page, pageSize, topic]);
 
   // client-side facets from the current page
   const orgOptions = useMemo(() => {
@@ -78,6 +109,12 @@ export default function Datasets() {
       return true;
     });
   }, [datasets, filters, isAuthenticated, orgNames]);
+
+  const totalPages = total != null ? Math.max(1, Math.ceil(total / pageSize)) : null;
+  const goTo = (p) => {
+    setPage(p);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   const toggle = (group, val) => {
     setFilters((f) => {
@@ -134,7 +171,17 @@ export default function Datasets() {
 
         <div>
           <div className="results-bar">
-            <span className="count"><b>{shown.length}</b> dataset{shown.length !== 1 ? "s" : ""}{" "}<span style={{ fontSize: 12 }}>· page {page}</span></span>
+            <span className="count">
+              <b>{total ?? shown.length}</b> dataset{(total ?? shown.length) !== 1 ? "s" : ""}
+              {totalPages != null && (
+                <span className="count-pages">
+                  Page {page} of {totalPages} · {pageSize} per page
+                  {totalPages - page > 0
+                    ? ` · ${totalPages - page} more page${totalPages - page === 1 ? "" : "s"}`
+                    : " · last page"}
+                </span>
+              )}
+            </span>
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
               {isAuthenticated && (
                 <button className="btn btn-primary" onClick={() => navigate("/create-dataset")}>
@@ -191,11 +238,17 @@ export default function Datasets() {
             <div className="explore-grid">{shown.map((d) => <DatasetCard key={normalize(d).id} dataset={d} />)}</div>
           )}
 
-          <div className="pagination">
-            <button onClick={() => { if (page > 1) { setPage(page - 1); setHasMore(true); } }} disabled={page === 1 || loading} aria-label="Previous">‹</button>
-            <button className="active">{page}</button>
-            <button onClick={() => { if (hasMore) setPage(page + 1); }} disabled={!hasMore || loading} aria-label="Next">›</button>
-          </div>
+          <Pagination
+            page={page}
+            pageSize={pageSize}
+            total={total}
+            hasMore={hasMore}
+            loading={loading}
+            itemsOnPage={datasets.length}
+            noun="dataset"
+            onPageChange={goTo}
+            onPageSizeChange={(n) => { setPageSize(n); setPage(1); }}
+          />
         </div>
       </div></div>
     </div>

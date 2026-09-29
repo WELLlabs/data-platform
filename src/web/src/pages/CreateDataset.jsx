@@ -173,7 +173,7 @@ function CreateDataset() {
             source: "",
             permissions: "CC0: Public Domain",
             citeAs: "",
-            groundtruthed: "",
+            groundtruthed: "no",
             temporalFrom: "",
             temporalTo: "",
             duration: 0,
@@ -296,18 +296,12 @@ function CreateDataset() {
     const fileMissing = (item) => {
         const missing = [];
         if (!item.title.trim()) missing.push("File title");
-        if (item.groundtruthed !== "yes" && item.groundtruthed !== "no")
-            missing.push("Groundtruthed");
         if (
             item.duration === "" ||
             item.duration === null ||
             isNaN(Number(item.duration))
         )
             missing.push("Duration (years)");
-        if (!item.temporalFrom) missing.push("Temporal coverage from");
-        if (!item.temporalTo) missing.push("Temporal coverage to");
-        if (!String(item.geography || "").trim())
-            missing.push("Geographical extent");
         return missing;
     };
 
@@ -1071,7 +1065,12 @@ function CreateDataset() {
                                                             </div>
                                                             <div className="field">
                                                                 <label>
-                                                                    Groundtruthed
+                                                                    Groundtruthed{" "}
+                                                                    <span className="opt">
+                                                                        (optional,
+                                                                        defaults to
+                                                                        No)
+                                                                    </span>
                                                                 </label>
                                                                 <div className="seg">
                                                                     <button
@@ -1147,7 +1146,10 @@ function CreateDataset() {
                                                             <div className="field">
                                                                 <label>
                                                                     Temporal
-                                                                    coverage from
+                                                                    coverage from{" "}
+                                                                    <span className="opt">
+                                                                        (optional)
+                                                                    </span>
                                                                 </label>
                                                                 <input
                                                                     type="datetime-local"
@@ -1172,7 +1174,10 @@ function CreateDataset() {
                                                             <div className="field">
                                                                 <label>
                                                                     Temporal
-                                                                    coverage to
+                                                                    coverage to{" "}
+                                                                    <span className="opt">
+                                                                        (optional)
+                                                                    </span>
                                                                 </label>
                                                                 <input
                                                                     type="datetime-local"
@@ -1197,7 +1202,10 @@ function CreateDataset() {
                                                             <div className="field">
                                                                 <label>
                                                                     Geographical
-                                                                    extent
+                                                                    extent{" "}
+                                                                    <span className="opt">
+                                                                        (optional)
+                                                                    </span>
                                                                 </label>
                                                                 <input
                                                                     type="text"

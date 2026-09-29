@@ -38,6 +38,8 @@ COPY --chown=appuser:appuser --from=builder /app/.venv /app/.venv
 # Copy necessary application files for Flower
 COPY --chown=appuser:appuser core/ ./core/
 COPY --chown=appuser:appuser tasks/ ./tasks/
+COPY --chown=appuser:appuser emails/ ./emails/
+COPY --chown=appuser:appuser services/ ./services/
 COPY --chown=appuser:appuser __init__.py ./
 COPY --chown=appuser:appuser flower_entry.py ./
 

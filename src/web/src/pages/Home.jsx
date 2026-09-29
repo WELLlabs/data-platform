@@ -6,10 +6,17 @@ import Ic from "../components/wd/Icons";
 import { useCmdk } from "../components/wd/CommandPalette";
 import { availabilityLabel, isRestrictedAvailability } from "../constants/availability";
 import { orgDisplayName, useOrganizationNames, DatasetMeta, normalize } from "../components/wd/DatasetItems";
-import { RankRow } from "../components/wd/RankList";
+import { MEDAL } from "../components/wd/RankList";
 import { useBranding } from "../branding";
 
 const fmt = (v) => (typeof v === "number" ? v.toLocaleString() : v == null ? "—" : v);
+
+function initials(name) {
+  const parts = String(name || "?").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
 const dsLink = (d) => `/dataset-info?dataset_id=${encodeURIComponent(d.dataset_id)}`;
 
 function fmtBytes(n) {
@@ -157,7 +164,7 @@ export default function Home() {
               <h3 className="display">{primary.dataset_title || "Untitled dataset"}</h3>
               <p className="fd">{primary.dataset_description || "No description provided."}</p>
               <DatasetMeta d={normalize(primary, orgNames)} hideAccess />
-              <div className="frow">
+              <div className="feat-foot">
                 <span className="link-arrow">View dataset <Ic name="arrow" size={16} /></span>
               </div>
             </Link>
@@ -197,17 +204,35 @@ export default function Home() {
           <div><span className="eyebrow">Ranked</span><h2 className="section-title" style={{ marginTop: 8 }}>Top contributors</h2></div>
           <Link className="link-arrow" to="/contributors">View all <Ic name="arrow" size={16} /></Link>
         </div>
-        <div className="rank-list">
-          {contributors.slice(0, 10).map((c, i) => (
-            <RankRow
-              key={c.user_id}
-              rank={i + 1}
-              name={c.full_name || "Contributor"}
-              contributions={c.contributions}
-              delay={80 + i * 90}
-            />
-          ))}
-          {!loading && !contributors.length && <div className="empty" style={{ padding: "40px 0" }}><p>Contributor rankings are not available yet.</p></div>}
+        <div className="contrib-grid">
+          {contributors.slice(0, 12).map((c, i) => {
+            const name = c.full_name || "Contributor";
+            const count = c.contributions;
+            const m = MEDAL[i + 1];
+            return (
+              <Link
+                className={"orgcard contrib-card" + (i < 3 ? ` place-${i + 1}` : "")}
+                key={c.user_id}
+                to={`/profile?id=${encodeURIComponent(c.user_id)}`}
+              >
+                <div className="oi">{initials(name)}</div>
+                <span className="rank-chip">#{i + 1}</span>
+                <b className="contrib-name">
+                  {name}
+                  {m && (
+                    <span className={"badge place " + m.tone}>
+                      <Ic name={m.icon} size={12} sw={2} />
+                      {m.label}
+                    </span>
+                  )}
+                </b>
+                <span>
+                  {fmt(count)} contribution{count === 1 ? "" : "s"}
+                </span>
+              </Link>
+            );
+          })}
+          {!loading && !contributors.length && <div className="empty" style={{ padding: "40px 0", gridColumn: "1 / -1" }}><p>Contributor rankings are not available yet.</p></div>}
         </div>
       </section>
 

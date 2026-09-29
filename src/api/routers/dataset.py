@@ -711,6 +711,7 @@ class DatasetController:
         limit: int = 10,
         offset: int = 0,
         topic: Optional[str] = None,
+        with_meta: bool = False,
     ) -> JSONResponse:
         """
         Get datasets with optional API key filtering and pagination.
@@ -733,12 +734,13 @@ class DatasetController:
                 offset,
             )
 
-            datasets = await self.dataset_service.get_datasets(
+            datasets, total = await self.dataset_service.get_datasets(
                 current_user=current_user,
                 apikey=apikey,
                 limit=limit,
                 offset=offset,
                 topic=topic,
+                return_total=True,
             )
 
             for ds in datasets:
@@ -755,9 +757,23 @@ class DatasetController:
                 offset,
             )
 
+            # Total matching records (before limit/offset) for pagination UIs;
+            # the body stays a plain list so existing API consumers are unaffected.
+            payload = datasets_arr
+            if with_meta:
+                total_pages = max(1, -(-total // limit)) if total else 0
+                payload = {
+                    "items": datasets_arr,
+                    "total": total,
+                    "limit": limit,
+                    "offset": offset,
+                    "page": offset // limit + 1,
+                    "total_pages": total_pages,
+                }
             return JSONResponse(
-                content=jsonable_encoder(datasets_arr),
+                content=jsonable_encoder(payload),
                 status_code=status.HTTP_200_OK,
+                headers={"X-Total-Count": str(total)},
             )
 
         except HTTPException:
@@ -1436,6 +1452,13 @@ async def datasets(
         None,
         description="Filter to datasets that have at least one tag in this topic",
     ),
+    with_meta: bool = Query(
+        False,
+        description=(
+            "When true, return {items, total, limit, offset, page, total_pages} "
+            "instead of a plain list"
+        ),
+    ),
     current_user: Optional[User] = Depends(get_current_active_user_optional),
     controller: DatasetController = Depends(get_dataset_controller),
 ):
@@ -1473,6 +1496,7 @@ async def datasets(
             limit=limit,
             offset=offset,
             topic=topic,
+            with_meta=with_meta,
         )
 
     except HTTPException:

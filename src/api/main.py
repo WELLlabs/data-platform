@@ -85,7 +85,7 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["*"],
-        expose_headers=["*"],
+        expose_headers=["*", "X-Total-Count"],
     )
 
     @app.on_event("startup")

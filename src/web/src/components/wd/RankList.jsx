@@ -9,7 +9,7 @@ export const ordinal = (n) => {
 };
 
 // Medal treatment for the top three positions.
-const MEDAL = {
+export const MEDAL = {
   1: { cls: "rank-1", tone: "gold", label: "1st place", icon: "trophy" },
   2: { cls: "rank-2", tone: "silver", label: "2nd place", icon: "medal" },
   3: { cls: "rank-3", tone: "bronze", label: "3rd place", icon: "medal" },

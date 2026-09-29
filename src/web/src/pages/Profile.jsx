@@ -11,6 +11,7 @@ import {
   homepage_stats_endpoint,
 } from "../api/endpoints";
 import Ic from "../components/wd/Icons";
+import Pagination, { PAGE_SIZE_OPTIONS } from "../components/wd/Pagination";
 import Contour from "../components/wd/Contour";
 import { DatasetRow } from "../components/wd/DatasetItems";
 
@@ -49,7 +50,8 @@ function Profile() {
   const [datasetsLoading, setDatasetsLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
-  const limit = 10;
+  const [totalCount, setTotalCount] = useState(null);
+  const [limit, setLimit] = useState(PAGE_SIZE_OPTIONS[0]);
   const lastFetchedUserIdRef = useRef(null);
 
   // Edit profile modal state
@@ -191,6 +193,8 @@ function Profile() {
         }
 
         const data = await response.json();
+        const totalHeader = parseInt(response.headers.get("X-Total-Count"), 10);
+        setTotalCount(Number.isFinite(totalHeader) ? totalHeader : null);
 
         // Check if we have more data
         if (data.length === 0) {
@@ -199,7 +203,11 @@ function Profile() {
             setDatasets([]);
           }
         } else {
-          setHasMore(data.length === limit);
+          setHasMore(
+            Number.isFinite(totalHeader)
+              ? offset + data.length < totalHeader
+              : data.length === limit
+          );
           setDatasets(data || []);
         }
       } catch (error) {
@@ -246,6 +254,7 @@ function Profile() {
     profileData?.privileges?.user_datasets,
     profileData?.id,
     currentPage,
+    limit,
     searchParams,
   ]);
 
@@ -273,18 +282,6 @@ function Profile() {
     return parts.map((p) => p[0]?.toUpperCase() || "").join("") || "?";
   };
 
-  const handlePrevious = () => {
-    if (currentPage > 1) {
-      setCurrentPage(currentPage - 1);
-      setHasMore(true);
-    }
-  };
-
-  const handleNext = () => {
-    if (hasMore) {
-      setCurrentPage(currentPage + 1);
-    }
-  };
 
   const fetchEditOrganizations = async () => {
     setEditOrganizationsLoading(true);
@@ -819,23 +816,18 @@ function Profile() {
                 </div>
 
                 {/* Pagination */}
-                <div className="pagination" style={{ marginTop: 22 }}>
-                  <button
-                    className="btn btn-ghost"
-                    onClick={handlePrevious}
-                    disabled={currentPage === 1 || datasetsLoading}
-                  >
-                    <Ic name="chevLeft" size={16} />Previous
-                  </button>
-                  <span className="mono-token">{currentPage}</span>
-                  <button
-                    className="btn btn-ghost"
-                    onClick={handleNext}
-                    disabled={!hasMore || datasetsLoading}
-                  >
-                    Next<Ic name="arrow" size={16} />
-                  </button>
-                </div>
+                <Pagination
+                  className="pager-compact"
+                  page={currentPage}
+                  pageSize={limit}
+                  total={totalCount}
+                  hasMore={hasMore}
+                  loading={datasetsLoading}
+                  itemsOnPage={datasets.length}
+                  noun="dataset"
+                  onPageChange={setCurrentPage}
+                  onPageSizeChange={(n) => { setLimit(n); setCurrentPage(1); }}
+                />
               </>
             )}
           </section>

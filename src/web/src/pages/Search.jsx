@@ -9,9 +9,9 @@ import {
 } from "../api/endpoints";
 import Contour from "../components/wd/Contour";
 import Ic from "../components/wd/Icons";
+import Pagination, { PAGE_SIZE_OPTIONS } from "../components/wd/Pagination";
 import { DatasetRow } from "../components/wd/DatasetItems";
 
-const LIMIT = 10;
 
 function toggleValue(cur, value) {
   return cur.includes(value) ? cur.filter((t) => t !== value) : [...cur, value];
@@ -31,6 +31,7 @@ export default function Search() {
   const [result, setResult] = useState([]);
   const [total, setTotal] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(PAGE_SIZE_OPTIONS[0]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [hasSearched, setHasSearched] = useState(false);
@@ -101,13 +102,13 @@ export default function Search() {
     setDefaultsApplied(true);
   }, [authLoading, isAuthenticated, user?.organization]);
 
-  const runSearch = useCallback(async (page = 1) => {
+  const runSearch = useCallback(async (page = 1, size = pageSize) => {
     const q = query?.trim() ?? "";
     setLoading(true); setError("");
-    const offset = (page - 1) * LIMIT;
+    const offset = (page - 1) * size;
     const p = new URLSearchParams();
     p.set("query", q || "*");
-    p.set("limit", String(LIMIT));
+    p.set("limit", String(size));
     p.set("offset", String(offset));
     if (searchWithinOrg && orgId?.trim()) p.set("organization_id", orgId.trim());
     if (startDate?.trim()) p.set("start_date", startDate.trim() + "T00:00:00");
@@ -124,7 +125,7 @@ export default function Search() {
     } catch (err) {
       setError(err.message || "Search failed. Please try again."); setResult([]); setTotal(0);
     } finally { setLoading(false); }
-  }, [query, searchWithinOrg, orgId, startDate, endDate, selectedTags, selectedTopics]);
+  }, [query, searchWithinOrg, orgId, startDate, endDate, selectedTags, selectedTopics, pageSize]);
 
   const urlQ = params.get("q") || "";
   const urlTags = params.get("tags") || "";
@@ -176,7 +177,6 @@ export default function Search() {
     });
   }, [tags, tagQuery, tagCountByValue, selectedTags]);
 
-  const hasMore = currentPage * LIMIT < total;
 
   return (
     <div className="page">
@@ -310,24 +310,16 @@ export default function Search() {
                   />
                 ))}
               </div>
-              {total > LIMIT && (
-                <div className="pagination">
-                  <button onClick={() => currentPage > 1 && runSearch(currentPage - 1)} disabled={currentPage === 1 || loading} aria-label="Previous">‹</button>
-                  {Array.from({ length: Math.ceil(total / LIMIT) }, (_, i) => i + 1)
-                    .filter((p) => p === 1 || p === Math.ceil(total / LIMIT) || Math.abs(p - currentPage) <= 2)
-                    .reduce((acc, p, idx, arr) => {
-                      if (idx > 0 && p - arr[idx - 1] > 1) acc.push("…");
-                      acc.push(p);
-                      return acc;
-                    }, [])
-                    .map((p, i) => (
-                      p === "…"
-                        ? <span key={`gap-${i}`} className="muted" style={{ padding: "0 4px" }}>…</span>
-                        : <button key={p} className={p === currentPage ? "active" : ""} onClick={() => runSearch(p)} disabled={loading}>{p}</button>
-                    ))}
-                  <button onClick={() => hasMore && runSearch(currentPage + 1)} disabled={!hasMore || loading} aria-label="Next">›</button>
-                </div>
-              )}
+              <Pagination
+                page={currentPage}
+                pageSize={pageSize}
+                total={total}
+                loading={loading}
+                itemsOnPage={result.length}
+                noun="result"
+                onPageChange={(pg) => { runSearch(pg); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                onPageSizeChange={(n) => { setPageSize(n); runSearch(1, n); }}
+              />
             </>
           )}
         </div>

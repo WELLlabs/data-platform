@@ -288,11 +288,11 @@ export function CommandPalette({ children }) {
             />
             {loading ? <span className="cmdk-spin" aria-hidden="true" /> : <kbd>esc</kbd>}
           </div>
-          <div className="cmdk-modes" aria-hidden="true">
+          {/* <div className="cmdk-modes" aria-hidden="true">
             <span>Instant prefix</span>
             <span>Fuzzy typos</span>
             <span>Semantic meaning</span>
-          </div>
+          </div> */}
           <div className="cmdk-results" role="listbox">
             {!q.trim() && (
               <div className="cmdk-empty cmdk-idle">

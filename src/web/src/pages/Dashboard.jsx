@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { user_datasets_endpoint, user_dataset_counts_endpoint, send_verify_email_endpoint, organization_by_id_endpoint } from "../api/endpoints";
 import Ic from "../components/wd/Icons";
+import Pagination, { PAGE_SIZE_OPTIONS } from "../components/wd/Pagination";
 import Contour from "../components/wd/Contour";
 import { useToast } from "../components/wd/Toast";
 import { DatasetRow, DatasetCard } from "../components/wd/DatasetItems";
@@ -18,6 +19,7 @@ function Dashboard() {
   const [datasetsLoading, setDatasetsLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
+  const [totalCount, setTotalCount] = useState(null);
   const [verificationMessage, setVerificationMessage] = useState("");
   const [sendingVerification, setSendingVerification] = useState(false);
   const [wsTab, setWsTab] = useState("published");
@@ -31,7 +33,7 @@ function Dashboard() {
   const paramsSetRef = useRef(false);
   const lastFetchedUserIdRef = useRef(null);
   const lastFocusTimeRef = useRef(0);
-  const limit = 10;
+  const [limit, setLimit] = useState(PAGE_SIZE_OPTIONS[0]);
 
   // First useEffect: Handle authentication and URL params (runs once on mount)
   useEffect(() => {
@@ -106,14 +108,17 @@ function Dashboard() {
           });
         }
         if (Number.isFinite(total) && total >= 0) {
+          setTotalCount(total);
           setHasMore(offset + list.length < total);
         } else {
+          setTotalCount(null);
           setHasMore(list.length === limit);
         }
       } catch (error) {
         console.error("Error fetching user datasets:", error);
         setDatasets([]);
         setHasMore(false);
+        setTotalCount(null);
       } finally {
         setDatasetsLoading(false);
       }
@@ -149,7 +154,7 @@ function Dashboard() {
         })
         .catch(() => {});
     }
-  }, [user?.id, user?.organization, currentPage, wsTab]);
+  }, [user?.id, user?.organization, currentPage, wsTab, limit]);
 
   // Third useEffect: Refresh user data when window regains focus
   // This ensures user verification status is updated after email verification
@@ -192,18 +197,6 @@ function Dashboard() {
     return null; // Will redirect to signin
   }
 
-  const handlePrevious = () => {
-    if (currentPage > 1) {
-      setCurrentPage(currentPage - 1);
-      setHasMore(true); // Reset hasMore when navigating
-    }
-  };
-
-  const handleNext = () => {
-    if (hasMore) {
-      setCurrentPage(currentPage + 1);
-    }
-  };
 
   const handleSendVerificationEmail = async () => {
     if (!user?.email) return;
@@ -484,35 +477,18 @@ function Dashboard() {
           </div>
 
           {/* Pagination */}
-          {!datasetsLoading && (currentPage > 1 || hasMore) && (
-            <div
-              className="pagination"
-              style={{
-                display: "flex",
-                justifyContent: "center",
-                alignItems: "center",
-                gap: 16,
-                marginTop: 24,
-              }}
-            >
-              <button
-                className="btn btn-ghost"
-                onClick={handlePrevious}
-                disabled={currentPage === 1 || datasetsLoading}
-              >
-                <Ic name="chevLeft" size={16} />
-                Previous
-              </button>
-              <span className="mono muted">{currentPage}</span>
-              <button
-                className="btn btn-ghost"
-                onClick={handleNext}
-                disabled={!hasMore || datasetsLoading}
-              >
-                Next
-                <Ic name="arrow" size={16} />
-              </button>
-            </div>
+          {datasets.length > 0 && (
+            <Pagination
+              page={currentPage}
+              pageSize={limit}
+              total={totalCount}
+              hasMore={hasMore}
+              loading={datasetsLoading}
+              itemsOnPage={datasets.length}
+              noun="dataset"
+              onPageChange={(p) => { setCurrentPage(p); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+              onPageSizeChange={(n) => { setLimit(n); setCurrentPage(1); }}
+            />
           )}
           </div>
         </section>

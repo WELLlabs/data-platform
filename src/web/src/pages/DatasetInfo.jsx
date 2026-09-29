@@ -11,6 +11,7 @@ import {
   approve_dataset_endpoint,
   dataset_info_endpoint,
   download_url_endpoint,
+  download_dataset_endpoint,
   delete_dataset_endpoint,
   delete_file_endpoint,
   edit_dataset_endpoint,
@@ -138,6 +139,8 @@ function DatasetInfo() {
   const [ownerLoadingOrg, setOwnerLoadingOrg] = useState(false);
   const [ownerSubmitting, setOwnerSubmitting] = useState(false);
   const [downloadingFileId, setDownloadingFileId] = useState(null);
+  const [downloadingDataset, setDownloadingDataset] = useState(false);
+  const downloadingDatasetRef = useRef(false);
   const [downloadError, setDownloadError] = useState("");
   const [showDatasetDeleteModal, setShowDatasetDeleteModal] = useState(false);
   const [showFileDeleteModal, setShowFileDeleteModal] = useState(false);
@@ -355,8 +358,28 @@ function DatasetInfo() {
     setOpenFiles((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
+  const previewExcluded = (file) => {
+    const name = (file?.file_name || "").toLowerCase();
+    const fmt = (file?.file_format || "").toLowerCase();
+    const ext = name.includes(".") ? name.split(".").pop() : "";
+    const excel = new Set(["xlsx", "xls", "xlsm", "xlsb", "xlt", "xltx", "xltm"]);
+    const geo = new Set([
+      "geojson", "gpkg", "geopackage", "geoparquet", "fgb", "flatgeobuf",
+      "pmtiles", "mbtiles", "tif", "tiff", "geotiff", "cog", "shp", "shx",
+      "prj", "cpg", "kml", "kmz", "gml", "topojson", "wkt",
+    ]);
+    if (excel.has(ext) || excel.has(fmt) || geo.has(ext) || geo.has(fmt)) return true;
+    if (fmt.includes("excel") || fmt.includes("spreadsheetml")) return true;
+    if (/geojson|geo\+json|geopackage|geoparquet|geotiff|flatgeobuf|shapefile|pmtiles/.test(fmt)) {
+      return true;
+    }
+    return false;
+  };
+
+  const canPreview = (file) => Boolean(file?.viewer) && !previewExcluded(file);
+
   const handlePreview = (file) => {
-    if (!file || !file.file_id) return;
+    if (!file || !file.file_id || !canPreview(file)) return;
     const params = new URLSearchParams({
       file_id: file.file_id,
       title: file.file_title || file.file_name || "File preview",
@@ -497,6 +520,76 @@ function DatasetInfo() {
     } finally {
       // Clear downloading state
       setDownloadingFileId(null);
+    }
+  };
+
+  const handleDownloadDataset = async () => {
+    if (!dataset?.dataset_id || downloadingDatasetRef.current) return;
+    if (!files.length) {
+      setDownloadError("This dataset has no files to download.");
+      return;
+    }
+    downloadingDatasetRef.current = true;
+    setDownloadingDataset(true);
+    setDownloadError("");
+    try {
+      const params = new URLSearchParams({ dataset_id: dataset.dataset_id });
+      const response = await fetch(`${download_dataset_endpoint}?${params.toString()}`, {
+        method: "GET",
+        credentials: "include",
+      });
+      if (!response.ok) {
+        let errorMessage = "Failed to download dataset";
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.detail || errorData.message || errorMessage;
+        } catch {
+          errorMessage = response.statusText || errorMessage;
+        }
+        if (response.status === 403) {
+          errorMessage =
+            errorMessage ||
+            "Download permission is not granted. You may need to sign in or use a different account.";
+        }
+        throw new Error(errorMessage);
+      }
+      setFiles((prev) =>
+        prev.map((file) => ({ ...file, downloads: (file.downloads ?? 0) + 1 }))
+      );
+      setDataset((prev) =>
+        prev
+          ? { ...prev, downloads: (prev.downloads ?? 0) + files.length }
+          : prev
+      );
+      const blob = await response.blob();
+      const header = response.headers.get("Content-Disposition") || "";
+      const starred = /filename\*=UTF-8''([^;]+)/i.exec(header);
+      const plain = /filename="([^"]+)"/i.exec(header);
+      const filename = starred
+        ? decodeURIComponent(starred[1])
+        : plain
+          ? plain[1]
+          : "dataset.zip";
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+      setDownloadError("");
+    } catch (err) {
+      console.error("Dataset download error:", err);
+      const errorMessage =
+        err instanceof TypeError && err.message.includes("fetch")
+          ? "Network error. Please check your connection and try again."
+          : err.message || "Failed to download dataset. Please try again.";
+      setDownloadError(errorMessage);
+      setTimeout(() => setDownloadError(""), 5000);
+    } finally {
+      downloadingDatasetRef.current = false;
+      setDownloadingDataset(false);
     }
   };
 
@@ -1219,9 +1312,13 @@ function DatasetInfo() {
               )}
             </div>
             <div className="dh-actions">
-              <button className="btn btn-primary" onClick={() => scrollToSec("files")}>
+              <button
+                className="btn btn-primary"
+                onClick={handleDownloadDataset}
+                disabled={downloadingDataset || files.length === 0}
+              >
                 <Ic name="dl" size={16} sw={2} />
-                Download dataset
+                {downloadingDataset ? "Preparing zip…" : "Download dataset"}
               </button>
               <button className="btn btn-ghost" onClick={() => scrollToSec("usage")}>
                 <Ic name="cite" size={16} sw={2} />
@@ -1505,14 +1602,16 @@ function DatasetInfo() {
                             </span>
                           </button>
                           <div className="fcard-quick">
-                            <button
-                              className="fbtn"
-                              onClick={() => handlePreview(file)}
-                              title="Preview file"
-                              aria-label="Preview file"
-                            >
-                              <Ic name="eye" size={16} sw={2} />
-                            </button>
+                            {canPreview(file) && (
+                              <button
+                                className="fbtn"
+                                onClick={() => handlePreview(file)}
+                                title="Preview file"
+                                aria-label="Preview file"
+                              >
+                                <Ic name="eye" size={16} sw={2} />
+                              </button>
+                            )}
                             <button
                               className="fbtn primary"
                               onClick={() => handleDownload(file)}
@@ -1671,6 +1770,7 @@ function DatasetInfo() {
                                     {(file.downloads ?? 0).toLocaleString("en-IN")}
                                   </div>
                                 </div>
+                                {canPreview(file) && (
                                 <div className="fm">
                                   <div className="fml">
                                     <Ic name="file" size={12} sw={2} />
@@ -1697,6 +1797,7 @@ function DatasetInfo() {
                                     </span>
                                   </div>
                                 </div>
+                                )}
                                 {file.cite_as && (
                                   <div className="fm wide">
                                     <div className="fml">
@@ -1885,11 +1986,12 @@ function DatasetInfo() {
               </div>
               <button
                 className="btn btn-primary"
-                onClick={() => scrollToSec("files")}
+                onClick={handleDownloadDataset}
+                disabled={downloadingDataset || files.length === 0}
                 style={{ width: "100%" }}
               >
                 <Ic name="dl" size={16} sw={2} />
-                Download
+                {downloadingDataset ? "Preparing zip…" : "Download"}
               </button>
             </div>
           </aside>

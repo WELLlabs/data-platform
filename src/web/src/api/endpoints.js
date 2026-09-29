@@ -35,6 +35,7 @@ export const user_datasets_endpoint = "/api/user_datasets";
 export const user_dataset_counts_endpoint = "/api/user_dataset_counts";
 export const datasets_endpoint = "/api/datasets";
 export const download_url_endpoint = "/api/download_url";
+export const download_dataset_endpoint = "/api/download_dataset";
 export const access_file_endpoint = "/api/access_file";
 export const access_file_status_endpoint = "/api/access_file/status";
 export const access_file_schema_endpoint = "/api/access_file/schema";

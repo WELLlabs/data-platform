@@ -152,12 +152,19 @@ def purge_expired_converted_files() -> dict:
                 .where(ConvertedFile.last_accessed < cutoff)
             ).scalars().all()
         )
+        from models.file import File
+
         client = get_s3_client()
         for row in rows:
-            try:
-                client.delete_object(Bucket=row.bucket, Key=row.file_key)
-            except Exception:
-                logger.warning("Failed to delete expired converted key %s", row.file_key)
+            native = session.get(File, row.native_file_id)
+            shares_native_key = (
+                native is not None and row.file_key and row.file_key == native.file_key
+            )
+            if not shares_native_key and row.file_key:
+                try:
+                    client.delete_object(Bucket=row.bucket, Key=row.file_key)
+                except Exception:
+                    logger.warning("Failed to delete expired converted key %s", row.file_key)
             row.status = STATUS_REMOVED
             removed += 1
         session.commit()

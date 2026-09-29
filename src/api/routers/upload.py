@@ -7,7 +7,8 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
+from urllib.parse import quote
 from uuid import UUID, uuid4
 
 from core.config import settings
@@ -23,7 +24,7 @@ from fastapi import (
     status,
 )
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from models.dataset import Dataset
 from models.file import File
 from models.orphaned_s3_object import OrphanedS3Object
@@ -39,6 +40,7 @@ from services.upload import (
     get_upload_service,
 )
 from services.upload_completion import complete_upload_job
+from services.zip_stream import iter_stored_zip
 from services.upload_job import get_job_status
 from services.typesense_index import (
     safe_delete_file_document,
@@ -60,6 +62,32 @@ def _upload_job_ttl() -> int:
 
 async def _redis_set_json(redis: Redis, key: str, obj: Any, ttl: int) -> None:
     await redis.setex(key, ttl, json.dumps(obj, default=str))
+
+
+_ZIP32_MAX = 0xFFFFFFFF
+
+
+def _zip_arcname(file_key: str, file_id: UUID, used: set[str]) -> str:
+    raw = (file_key or "").replace("\\", "/").rsplit("/", 1)[-1]
+    raw = raw.replace("\x00", "").replace("/", "_").strip()
+    if raw in {"", ".", ".."}:
+        raw = str(file_id)
+    name = raw
+    n = 2
+    while name in used:
+        stem, dot, ext = raw.rpartition(".")
+        if dot and stem:
+            name = f"{stem} ({n}).{ext}"
+        else:
+            name = f"{raw} ({n})"
+        n += 1
+    used.add(name)
+    return name
+
+
+def _zip_download_name(title: Optional[str]) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", (title or "dataset")).strip("-._")
+    return f"{(cleaned or 'dataset')[:80]}.zip"
 
 
 ALLOWED_PERMISSIONS = [
@@ -634,6 +662,121 @@ class UploadController:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Error generating download URL",
             )
+
+    async def download_dataset_zip(
+        self,
+        dataset_id: UUID,
+        user: Optional[User],
+    ) -> StreamingResponse:
+        """Zip every file in the dataset and count a download on each file."""
+        dataset, files = await self.dataset_service.get_dataset_and_files(dataset_id)
+        if not await self.dataset_service.viewer_can_see(dataset, user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Download permission is not granted.",
+            )
+        if not files:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="This dataset has no files to download.",
+            )
+
+        used_names: set[str] = set()
+        members: list[dict[str, Any]] = []
+        total_size = 0
+        for file_record in files:
+            bucket = file_record.bucket or settings.S3_BUCKET
+            size = await asyncio.to_thread(
+                self.upload_service.object_size, bucket, file_record.file_key
+            )
+            if size is None:
+                self.logger.warning(
+                    "Skipping missing S3 object for dataset zip file_id=%s",
+                    file_record.file_id,
+                )
+                continue
+            if size > _ZIP32_MAX or total_size + size > _ZIP32_MAX:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="This dataset is too large to download as a single zip.",
+                )
+            total_size += size
+            members.append(
+                {
+                    "file_id": file_record.file_id,
+                    "dataset_id": file_record.dataset_id,
+                    "bucket": bucket,
+                    "key": file_record.file_key,
+                    "arcname": _zip_arcname(
+                        file_record.file_key, file_record.file_id, used_names
+                    ),
+                }
+            )
+
+        if not members:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No downloadable files were found for this dataset.",
+            )
+
+        try:
+            for member in members:
+                stmt = pg_insert(FileDownloadCount).values(
+                    file_id=member["file_id"],
+                    dataset_id=member["dataset_id"],
+                    downloads=1,
+                ).on_conflict_do_update(
+                    index_elements=["file_id"],
+                    set_={"downloads": FileDownloadCount.downloads + 1},
+                )
+                await self.session.execute(stmt)
+            if user is not None:
+                for member in members:
+                    self.session.add(
+                        FileDownloadLog(
+                            file_id=member["file_id"],
+                            user_id=user.id,
+                        )
+                    )
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            self.logger.exception(
+                "Error recording dataset download counts for dataset_id %s",
+                dataset_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error recording download",
+            )
+
+        await _invalidate_dataset_cache(dataset_id, self.auth_service, self.logger)
+
+        upload_service = self.upload_service
+
+        def generate() -> Iterator[bytes]:
+            def entries():
+                for member in members:
+                    yield (
+                        member["arcname"],
+                        upload_service.iter_object_chunks(member["bucket"], member["key"]),
+                    )
+
+            yield from iter_stored_zip(entries())
+
+        filename = _zip_download_name(dataset.dataset_title)
+        disposition = (
+            f'attachment; filename="{filename}"; '
+            f"filename*=UTF-8''{quote(filename)}"
+        )
+        return StreamingResponse(
+            generate(),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": disposition,
+                "Cache-Control": "no-store",
+            },
+        )
 
     async def add_file(
         self,
@@ -1249,6 +1392,21 @@ async def get_download_url(
             - 500: Internal server error
     """
     return await controller.get_download_url(file_id, apikey, user)
+
+
+@router.get("/download_dataset")
+async def download_dataset(
+    dataset_id: UUID = Query(..., description="Dataset ID whose files should be zipped"),
+    user: Optional[User] = Depends(get_current_user_optional_for_download),
+    controller: UploadController = Depends(get_upload_controller),
+):
+    """
+    Download every file in a dataset as one zip.
+
+    Uses the same visibility rules as /download_url. Each file included in the
+    zip gets one download count, and a download log row when the user is known.
+    """
+    return await controller.download_dataset_zip(dataset_id, user)
 
 
 @router.post("/add_file")

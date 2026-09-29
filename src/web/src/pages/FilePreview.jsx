@@ -12,6 +12,7 @@ const DocumentViewer = lazy(() => import("../components/visualize/DocumentViewer
 const TableChartViewer = lazy(() => import("../components/visualize/TableChartViewer"));
 const VectorMapViewer = lazy(() => import("../components/visualize/VectorMapViewer"));
 const RasterMapViewer = lazy(() => import("../components/visualize/RasterMapViewer"));
+const MediaViewer = lazy(() => import("../components/visualize/MediaViewer"));
 
 const POLL_MS = 2000;
 const TIMEOUT_MS = 90 * 1000;
@@ -214,6 +215,14 @@ export default function FilePreview() {
                   bidx={payload.bidx}
                   rescale={payload.rescale}
                   colormapName={payload.colormap_name}
+                />
+              )}
+              {(viewer === "image" || viewer === "text" || viewer === "media" || viewer === "embed") && (
+                <MediaViewer
+                  url={payload.access_url}
+                  format={payload.format}
+                  kind={viewer === "embed" ? "embed" : viewer}
+                  title={title}
                 />
               )}
               {!viewer && (

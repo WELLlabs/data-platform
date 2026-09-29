@@ -3,6 +3,12 @@
 Revision ID: 20260902_org_uuid
 Revises: 20260902_availability
 Create Date: 2026-09-02
+
+The dataset UPDATE below fires any AFTER UPDATE trigger on datasets. Production
+still has the search-sync trigger from 0e06e0766b39, which writes
+global_search_index.private. Availability drops that column. If this revision
+is resumed after availability already committed, drop that trigger before
+touching datasets. 20260925_search_index installs the replacement.
 """
 
 from typing import Sequence, Union
@@ -17,7 +23,50 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _drop_legacy_private_search_triggers() -> None:
+    """Drop search triggers that still reference global_search_index.private.
+
+    No-op when availability already dropped them, and when this database never
+    had the production trigger (fresh schema from b5c5fa9ab19a).
+    """
+    op.execute(
+        """
+        DO $drop_legacy_private_search_triggers$
+        DECLARE
+            r record;
+        BEGIN
+            FOR r IN
+                SELECT tg.tgname AS trigger_name,
+                       n.nspname AS schema_name,
+                       c.relname AS table_name
+                FROM pg_trigger tg
+                JOIN pg_class c ON c.oid = tg.tgrelid
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                JOIN pg_proc p ON p.oid = tg.tgfoid
+                JOIN pg_language l ON l.oid = p.prolang
+                WHERE NOT tg.tgisinternal
+                  AND n.nspname = 'public'
+                  AND l.lanname IN ('plpgsql', 'sql')
+                  AND pg_get_functiondef(p.oid) ILIKE '%global_search_index%'
+                  AND pg_get_functiondef(p.oid) ILIKE '%private%'
+            LOOP
+                EXECUTE format(
+                    'DROP TRIGGER %I ON %I.%I',
+                    r.trigger_name,
+                    r.schema_name,
+                    r.table_name
+                );
+            END LOOP;
+        END
+        $drop_legacy_private_search_triggers$;
+        """
+    )
+
+
 def upgrade() -> None:
+    # Availability may already be committed on production. Drop the stale
+    # search trigger before UPDATE datasets, which would otherwise fire it.
+    _drop_legacy_private_search_triggers()
     op.add_column(
         "organizations",
         sa.Column("id_uuid", postgresql.UUID(as_uuid=True), nullable=True),

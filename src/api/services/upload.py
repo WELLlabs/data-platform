@@ -6,7 +6,7 @@ import asyncio
 import logging
 import math
 import mimetypes
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 from uuid import UUID
 
 import boto3
@@ -91,6 +91,31 @@ class UploadService:
             self._raise_s3_error("head_object", e)
         except BotoCoreError as e:
             self._raise_s3_error("head_object", e)
+
+    def object_size(self, bucket: str, file_key: str) -> Optional[int]:
+        """Return the object size, or None when the key is missing."""
+        client = get_s3_client()
+        try:
+            resp = client.head_object(Bucket=bucket, Key=file_key)
+            return int(resp.get("ContentLength") or 0)
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "")
+            if code in ("404", "NoSuchKey", "NotFound"):
+                return None
+            self._raise_s3_error("head_object", e)
+        except BotoCoreError as e:
+            self._raise_s3_error("head_object", e)
+        return None
+
+    def iter_object_chunks(
+        self, bucket: str, file_key: str, chunk_size: int = 1024 * 1024
+    ) -> Iterator[bytes]:
+        client = get_s3_client()
+        body = client.get_object(Bucket=bucket, Key=file_key)["Body"]
+        try:
+            yield from body.iter_chunks(chunk_size=chunk_size)
+        finally:
+            body.close()
 
     def _delete_object_sync(self, file_key: str) -> bool:
         client = get_s3_client()

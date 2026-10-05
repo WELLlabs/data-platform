@@ -73,9 +73,9 @@ export default function Pagination({
           <>
             <span className="pager-sep">·</span>Page <b>{page}</b> of <b>{totalPages}</b>
             <span className="pager-sep">·</span>
-            {totalPages - page > 0
+            {/* {totalPages - page > 0
               ? <><b>{totalPages - page}</b> more page{totalPages - page === 1 ? "" : "s"}</>
-              : "Last page"}
+              : "Last page"} */}
           </>
         )}
       </p>

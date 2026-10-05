@@ -176,9 +176,9 @@ export default function Datasets() {
               {totalPages != null && (
                 <span className="count-pages">
                   Page {page} of {totalPages} · {pageSize} per page
-                  {totalPages - page > 0
+                  {/* {totalPages - page > 0
                     ? ` · ${totalPages - page} more page${totalPages - page === 1 ? "" : "s"}`
-                    : " · last page"}
+                    : " · last page"} */}
                 </span>
               )}
             </span>

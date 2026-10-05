@@ -388,7 +388,7 @@ function DatasetInfo() {
     });
     if (dataset?.dataset_id) params.set("dataset_id", dataset.dataset_id);
     try {
-      window.open(`/file-preview?${params.toString()}`, "_blank", "noopener,noreferrer");
+      navigate(`/file-preview?${params.toString()}`);
     } catch (e) {
       console.error("Preview open failed", e);
     }
@@ -1198,7 +1198,8 @@ function DatasetInfo() {
   const isPublic = parseAvailability(dataset.availability) === AVAILABILITY_PUBLIC;
   const geoVal = files.map((f) => f.geography).find(Boolean) || "";
   const licenseVal = files.map((f) => f.permissions).find(Boolean) || "";
-  const timeVal = formatDateShort(dataset.created_at);
+  const timeVal = formatDateShort(dataset.modified_at || dataset.created_at);
+  const timeValCreated = formatDateShort(dataset.created_at);
   const description = dataset.dataset_description || "";
   const isLongDesc = description.length > 320;
   const tagsList =
@@ -1271,10 +1272,10 @@ function DatasetInfo() {
                     <span>{geoVal}</span>
                   </>
                 )}
-                {timeVal && (
+                {timeValCreated && (
                   <>
                     <span className="sep"></span>
-                    <span>{timeVal}</span>
+                    <span>{timeValCreated}</span>
                   </>
                 )}
               </div>
@@ -1755,10 +1756,10 @@ function DatasetInfo() {
                                 <div className="fm">
                                   <div className="fml">
                                     <Ic name="cal" size={12} sw={2} />
-                                    Added
+                                    {file.modified_at ? "Updated" : "Added"}
                                   </div>
                                   <div className="fmv">
-                                    {formatDateShort(file.created_at) || "N/A"}
+                                    {formatDateShort(file.modified_at || file.created_at) || "N/A"}
                                   </div>
                                 </div>
                                 <div className="fm">

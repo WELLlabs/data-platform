@@ -1094,7 +1094,10 @@ class UploadController:
                     status_code=status.HTTP_404_NOT_FOUND,
                 )
 
-            # 4. Delete from database
+            # 4. Delete from database and mark the dataset as updated
+            dataset_row = await self.session.get(Dataset, dataset_id)
+            if dataset_row is not None:
+                dataset_row.modified_at = datetime.now(timezone.utc)
             await self.session.execute(delete(File).where(File.file_id == file_id))
             await self.session.commit()
 
@@ -1216,6 +1219,11 @@ class UploadController:
             file_record.temporal_from = temporal_from
             file_record.temporal_to = temporal_to
             file_record.geography = sanitize_input(geography)
+            now = datetime.now(timezone.utc)
+            file_record.modified_at = now
+            dataset_row = await self.session.get(Dataset, dataset_id)
+            if dataset_row is not None:
+                dataset_row.modified_at = now
 
             self.session.add(file_record)
             await self.session.commit()

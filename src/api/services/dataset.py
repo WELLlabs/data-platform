@@ -4,6 +4,7 @@ Dataset service for handling dataset and file creation.
 
 import logging
 import re
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID, uuid4
 
@@ -937,6 +938,7 @@ class DatasetService:
             dataset.availability = clamp_availability_for_org(
                 availability, organization.private
             )
+            dataset.modified_at = datetime.now(timezone.utc)
             self.session.add(dataset)
 
             normalized_tags = self._normalize_tags(tags)

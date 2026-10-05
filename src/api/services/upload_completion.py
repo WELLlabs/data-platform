@@ -316,6 +316,9 @@ async def complete_upload_job(
                     downloads=0,
                 )
             )
+            parent = await session.get(Dataset, ds_uuid)
+            if parent is not None:
+                parent.modified_at = datetime.now(timezone.utc)
             orphan.status = "completed"
             session.add(orphan)
             ev["status"] = "completed"

@@ -20,7 +20,7 @@ function SignUp() {
     const [organizations, setOrganizations] = useState([]);
     const [organizationsLoading, setOrganizationsLoading] = useState(false);
     const [organizationsError, setOrganizationsError] = useState(null);
-    const [phone, setPhone] = useState("");
+    // const [phone, setPhone] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState("");
     const [success, setSuccess] = useState("");
@@ -95,7 +95,7 @@ function SignUp() {
             password.length >= 8 &&
             passwordsMatch &&
             organization.trim().length > 0 &&
-            (!phone || (/^\d+$/.test(phone) && phone.length <= 10)) &&
+            // (!phone || (/^\d+$/.test(phone) && phone.length <= 10)) &&
             !submitting
         );
     }, [
@@ -104,16 +104,16 @@ function SignUp() {
         password,
         passwordsMatch,
         organization,
-        phone,
+        // phone,
         submitting,
     ]);
 
-    const onPhoneChange = (e) => {
-        const value = e.target.value;
-        if (value === "" || /^\d+$/.test(value)) {
-            setPhone(value.slice(0, 10));
-        }
-    };
+    // const onPhoneChange = (e) => {
+    //     const value = e.target.value;
+    //     if (value === "" || /^\d+$/.test(value)) {
+    //         setPhone(value.slice(0, 10));
+    //     }
+    // };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -129,7 +129,7 @@ function SignUp() {
                 designation: designation?.trim() || null,
                 organization: organization.trim(),
                 role: 0,
-                phone: phone ? phone.trim() : null,
+                // phone: phone ? phone.trim() : null,
             };
 
             const resp = await axios.post(signup_endpoint, payload, {
@@ -333,7 +333,7 @@ function SignUp() {
                             />
                         </div>
 
-                        <div className="field">
+                        {/* <div className="field">
                             <label htmlFor="phone">Phone</label>
                             <input
                                 id="phone"
@@ -345,7 +345,7 @@ function SignUp() {
                                 onChange={onPhoneChange}
                                 maxLength={10}
                             />
-                        </div>
+                        </div> */}
                     </div>
 
                     <button

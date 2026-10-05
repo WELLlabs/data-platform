@@ -307,12 +307,12 @@ function Profile() {
     }
   }, [showEditModal]);
 
-  const handleEditPhoneChange = (e) => {
-    const value = e.target.value;
-    if (value === "" || /^\d+$/.test(value)) {
-      setEditPhone(value.slice(0, 10));
-    }
-  };
+  // const handleEditPhoneChange = (e) => {
+  //   const value = e.target.value;
+  //   if (value === "" || /^\d+$/.test(value)) {
+  //     setEditPhone(value.slice(0, 10));
+  //   }
+  // };
 
   const editEmailValid =
     /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(editEmail.trim());
@@ -522,10 +522,10 @@ function Profile() {
             <span>Role</span>
             <span>{roleLabel}</span>
           </div>
-          <div className="rrow">
+          {/* <div className="rrow">
             <span>Phone</span>
             <span>{profileData.phone || "N/A"}</span>
-          </div>
+          </div> */}
           <div className="rrow">
             <span>Contributions</span>
             <span>{profileData.contributions ?? 0}</span>
@@ -705,7 +705,7 @@ function Profile() {
                           </span>
                         )}
                     </div>
-                    <div className="field">
+                    {/* <div className="field">
                       <label htmlFor="editPhone">Phone</label>
                       <input
                         id="editPhone"
@@ -718,7 +718,7 @@ function Profile() {
                         maxLength={10}
                         aria-label="Phone number"
                       />
-                    </div>
+                    </div> */}
                     <button
                       type="submit"
                       className="btn btn-primary"

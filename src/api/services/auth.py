@@ -26,8 +26,9 @@ from tasks.email import (
     send_verify_email,
 )
 from utils.security import (
-    email_matches_allowed_domain,
     generate_session_token,
+    organization_accepts_email,
+    registration_email_error,
     generate_unique_api_key,
     is_profile_complete,
     sanitize_input,
@@ -120,7 +121,6 @@ class AuthService:
             designation=user.designation,
             organization=user.organization,
             role=user.role,
-            phone=user.phone,
             created_at=user.created_at,
             verified=user.verified,
             contributions=contributions,
@@ -166,12 +166,13 @@ class AuthService:
                 user_data.organization,
                 user_data.role,
             )
-            if not email_matches_allowed_domain(
+            email_error = registration_email_error(
                 user_data.email, settings.ALLOWED_EMAIL_DOMAIN
-            ):
+            )
+            if email_error:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Email domain is not allowed",
+                    detail=email_error,
                 )
             # Sanitize string fields only. organization is a UUID, not HTML text.
             sanitized_data = {
@@ -199,6 +200,18 @@ class AuthService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Organisation ID is invalid",
                 )
+            org = await self.org_service.get_organization_by_id(org_id)
+            org_error = organization_accepts_email(
+                org,
+                user_data.email,
+                "password",
+                settings.ALLOWED_EMAIL_DOMAIN,
+            )
+            if org_error:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=org_error,
+                )
 
             # Hash password
             hashed_password = self.password_helper.hash(user_data.password)
@@ -215,7 +228,6 @@ class AuthService:
                 "designation": sanitized_data["designation"],
                 "organization": sanitized_data["organization"],
                 "role": user_data.role,
-                "phone": str(user_data.phone) if user_data.phone is not None else None,
                 "apikey": api_key,
                 "auth_provider": "password",
                 "is_active": True,
@@ -389,10 +401,11 @@ class AuthService:
     async def get_or_create_google_user(
         self, email: str, full_name: Optional[str]
     ) -> User:
-        if not email_matches_allowed_domain(email, settings.ALLOWED_EMAIL_DOMAIN):
+        email_error = registration_email_error(email, settings.ALLOWED_EMAIL_DOMAIN)
+        if email_error:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email domain is not allowed",
+                detail=email_error,
             )
         existing = await self.user_db.get_by_email(email)
         if existing:
@@ -412,7 +425,6 @@ class AuthService:
             "designation": None,
             "organization": None,
             "role": 0,
-            "phone": None,
             "apikey": api_key,
             "auth_provider": "google",
             "is_active": True,
@@ -439,15 +451,23 @@ class AuthService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Organisation ID is invalid",
             )
+        org = await self.org_service.get_organization_by_id(sanitized_org)
+        provider = getattr(user, "auth_provider", None) or "password"
+        org_error = organization_accepts_email(
+            org, user.email, provider, settings.ALLOWED_EMAIL_DOMAIN
+        )
+        if org_error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=org_error,
+            )
         designation = sanitize_input(payload.designation)
-        phone = str(payload.phone) if payload.phone is not None else None
         user = await self.user_db.update(
             user,
             {
                 "full_name": sanitized_name,
                 "organization": sanitized_org,
                 "designation": designation,
-                "phone": phone,
             },
         )
         try:

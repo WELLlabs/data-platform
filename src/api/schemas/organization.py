@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from typing import Dict, List, Optional
 from uuid import UUID
@@ -28,6 +29,16 @@ class OrganizationBase(BaseModel):
     roi_states: Optional[List[str]] = Field(
         None, description="ROI states (multi-select)"
     )
+    allowed_email_domains: Optional[List[str]] = Field(
+        None,
+        description="Email domains that may join. Empty means any globally allowed domain.",
+    )
+    allow_password: bool = Field(
+        default=True, description="Allow password sign-up for this organisation"
+    )
+    allow_google: bool = Field(
+        default=True, description="Allow Google sign-in for this organisation"
+    )
 
     @validator("name")
     def validate_name(cls, v):
@@ -40,6 +51,18 @@ class OrganizationBase(BaseModel):
         if v is not None and not v.strip():
             return None
         return v.strip() if v else None
+
+    @validator("allowed_email_domains", pre=True)
+    def validate_email_domains(cls, v):
+        if v is None or v == "":
+            return None
+        parts = re.split(r"[,;\s]+", v) if isinstance(v, str) else v
+        cleaned: List[str] = []
+        for item in parts or []:
+            domain = str(item).strip().lstrip("@").lower()
+            if domain and domain not in cleaned:
+                cleaned.append(domain)
+        return cleaned or None
 
     @validator("focus", "roi_states")
     def validate_arrays(cls, v):
@@ -98,6 +121,9 @@ class OrganizationUpdate(BaseModel):
     private: Optional[bool] = None
     focus: Optional[List[str]] = None
     roi_states: Optional[List[str]] = None
+    allowed_email_domains: Optional[List[str]] = None
+    allow_password: Optional[bool] = None
+    allow_google: Optional[bool] = None
 
     @validator("name")
     def validate_name(cls, v):
@@ -131,6 +157,9 @@ class OrganizationListItem(BaseModel):
     focus: Optional[List[str]] = None
     roi_states: Optional[List[str]] = None
     created_at: Optional[datetime] = None
+    allowed_email_domains: Optional[List[str]] = None
+    allow_password: bool = True
+    allow_google: bool = True
 
 
 class OrganizationListResponse(BaseModel):

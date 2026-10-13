@@ -7,6 +7,7 @@ import {
     signup_endpoint,
 } from "../api/endpoints";
 import { BrandLockup } from "../branding";
+import { emailDomain, organizationAccepts } from "../utils/orgAccess";
 
 const BrandMark = () => <BrandLockup className="auth-brand" />;
 
@@ -20,7 +21,6 @@ function SignUp() {
     const [organizations, setOrganizations] = useState([]);
     const [organizationsLoading, setOrganizationsLoading] = useState(false);
     const [organizationsError, setOrganizationsError] = useState(null);
-    // const [phone, setPhone] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState("");
     const [success, setSuccess] = useState("");
@@ -88,32 +88,42 @@ function SignUp() {
         return re.test(email.trim());
     }, [email]);
 
+    const domainAllowed = useMemo(() => {
+        if (!allowedDomains.length) return true;
+        const domain = emailDomain(email);
+        return allowedDomains.some((item) => item.toLowerCase() === domain);
+    }, [allowedDomains, email]);
+
+    const visibleOrganizations = useMemo(
+        () => organizations.filter((org) => organizationAccepts(org, email, "password")),
+        [organizations, email]
+    );
+
+    useEffect(() => {
+        if (organization && !visibleOrganizations.some((org) => String(org.id) === String(organization))) {
+            setOrganization("");
+        }
+    }, [visibleOrganizations, organization]);
+
     const canSubmit = useMemo(() => {
         return (
             fullName.trim().length > 0 &&
             emailValid &&
+            domainAllowed &&
             password.length >= 8 &&
             passwordsMatch &&
             organization.trim().length > 0 &&
-            // (!phone || (/^\d+$/.test(phone) && phone.length <= 10)) &&
             !submitting
         );
     }, [
         fullName,
         emailValid,
+        domainAllowed,
         password,
         passwordsMatch,
         organization,
-        // phone,
         submitting,
     ]);
-
-    // const onPhoneChange = (e) => {
-    //     const value = e.target.value;
-    //     if (value === "" || /^\d+$/.test(value)) {
-    //         setPhone(value.slice(0, 10));
-    //     }
-    // };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -129,7 +139,6 @@ function SignUp() {
                 designation: designation?.trim() || null,
                 organization: organization.trim(),
                 role: 0,
-                // phone: phone ? phone.trim() : null,
             };
 
             const resp = await axios.post(signup_endpoint, payload, {
@@ -229,6 +238,9 @@ function SignUp() {
                                 Please enter a valid email address
                             </span>
                         )}
+                        {email && emailValid && !domainAllowed && (
+                            <span className="err">Use an email address from an allowed domain</span>
+                        )}
                         {allowedDomains.length > 0 && (
                             <span className="muted" style={{ fontSize: 12, display: "block", marginTop: 6 }}>
                                 Sign-up is limited to {allowedDomains.join(", ")}
@@ -305,7 +317,7 @@ function SignUp() {
                                     ? "Loading…"
                                     : "Select organization"}
                             </option>
-                            {organizations.map((org) => (
+                            {visibleOrganizations.map((org) => (
                                 <option key={org.id} value={org.id}>
                                     {org.name}
                                 </option>
@@ -318,34 +330,18 @@ function SignUp() {
                         )}
                     </div>
 
-                    <div className="field-row">
-                        <div className="field">
-                            <label htmlFor="designation">Designation</label>
-                            <input
-                                id="designation"
-                                type="text"
-                                placeholder="e.g. Research Associate"
-                                value={designation}
-                                onChange={(e) =>
-                                    setDesignation(e.target.value.slice(0, 25))
-                                }
-                                maxLength={25}
-                            />
-                        </div>
-
-                        {/* <div className="field">
-                            <label htmlFor="phone">Phone</label>
-                            <input
-                                id="phone"
-                                type="tel"
-                                inputMode="numeric"
-                                pattern="[0-9]{0,10}"
-                                placeholder="10-digit number"
-                                value={phone}
-                                onChange={onPhoneChange}
-                                maxLength={10}
-                            />
-                        </div> */}
+                    <div className="field">
+                        <label htmlFor="designation">Designation</label>
+                        <input
+                            id="designation"
+                            type="text"
+                            placeholder="e.g. Research Associate"
+                            value={designation}
+                            onChange={(e) =>
+                                setDesignation(e.target.value.slice(0, 25))
+                            }
+                            maxLength={25}
+                        />
                     </div>
 
                     <button

@@ -28,6 +28,7 @@ from models.user import User
 from models.user_contribution import UserContribution
 from schemas.dataset import DatasetCreate
 from services.organization import OrganizationService, get_organization_service
+from services.review_access import metadata_edit_allowed
 from services.upload import UploadService, get_upload_service
 from services.user import UserService, get_user_service
 from sqlalchemy import delete, desc, exists, func, select, update
@@ -501,6 +502,27 @@ class DatasetService:
         if is_creator:
             return True
         return await self.is_dataset_owner(user_id, dataset_id)
+
+    async def can_edit_metadata(self, user_id: UUID, dataset_id: UUID) -> bool:
+        """Creators and owners, plus same-org approvers while a dataset is pending."""
+        if await self.can_edit_or_add_file(user_id, dataset_id):
+            return True
+        result = await self.session.execute(
+            select(Dataset).where(Dataset.dataset_id == dataset_id)
+        )
+        dataset = result.scalar_one_or_none()
+        if dataset is None:
+            return False
+        same_org = await self.user_service.check_user_belongs_to_organization_by_id(
+            user_id, dataset.organization
+        )
+        high_role = await self.user_service.check_if_high_role_by_id(user_id)
+        return metadata_edit_allowed(
+            is_creator_or_owner=False,
+            is_approved=bool(dataset.approved),
+            same_org=same_org,
+            high_role=high_role,
+        )
 
     async def list_owners(self, dataset_id: UUID) -> List[Dict[str, Any]]:
         result = await self.session.execute(

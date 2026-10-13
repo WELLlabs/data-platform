@@ -28,6 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from tasks.email import send_upload_approval
+from utils.temporal import parse_coverage_date
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,16 @@ def _parse_iso(s: Optional[str]) -> Optional[datetime]:
         return datetime.fromisoformat(s.replace("Z", "+00:00"))
     except ValueError:
         logger.warning("Invalid ISO datetime for upload job: %s", s)
+        return None
+
+
+def _parse_coverage(s: Optional[str]):
+    if not s:
+        return None
+    try:
+        return parse_coverage_date(s)
+    except ValueError:
+        logger.warning("Invalid temporal coverage date for upload job: %s", s)
         return None
 
 
@@ -286,8 +297,8 @@ async def complete_upload_job(
                     detail=f"orphaned_s3_objects row missing for file_id={fid}",
                 )
             prov, src = _truncate_prov_src(ev.get("provenance"), ev.get("source"))
-            tf = _parse_iso(ev.get("temporal_from"))
-            tt = _parse_iso(ev.get("temporal_to"))
+            tf = _parse_coverage(ev.get("temporal_from"))
+            tt = _parse_coverage(ev.get("temporal_to"))
             nf = File(
                 file_id=fid,
                 file_title=str(ev["file_title"]),

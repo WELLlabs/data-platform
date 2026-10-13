@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_ ]{0,120}$")
 _ALLOWED_AGG = {"sum", "avg", "min", "max", "count"}
 CONVERSION_STALE_SECONDS = 90
+# Matches cpu.convert_file time_limit. Do not use the shorter email-worker limit.
+CONVERSION_TASK_TIME_LIMIT = 2100
 
 
 def quote_ident(name: str) -> str:
@@ -169,7 +171,7 @@ class VisualizationService:
         if created.tzinfo is None:
             created = created.replace(tzinfo=timezone.utc)
         age = datetime.now(timezone.utc) - created
-        limit = timedelta(seconds=max(CONVERSION_STALE_SECONDS, settings.CELERY_TASK_TIME_LIMIT))
+        limit = timedelta(seconds=CONVERSION_TASK_TIME_LIMIT)
         return age > limit
 
     async def access_file(self, file_record: File, user: Optional[User]) -> dict[str, Any]:

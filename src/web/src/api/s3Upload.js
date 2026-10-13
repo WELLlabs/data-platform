@@ -54,12 +54,13 @@ async function completeMultipart({ jobId, fileId, uploadId, parts }) {
  * Request a presigned URL (or multipart part URLs) and upload the file to S3.
  * @returns {{ fileId: string, uploadData: object }}
  */
-export async function requestAndUploadFile({ jobId, file, onProgress }) {
+export async function requestAndUploadFile({ jobId, file, filename, onProgress }) {
   const params = new URLSearchParams({
     job_id: jobId,
-    filename: file.name,
+    filename: filename || file.name,
     file_size: String(file.size),
   });
+  if (file?.name) params.set("original_filename", file.name);
   const uploadResp = await fetch(`${upload_url_endpoint}?${params.toString()}`, {
     credentials: "include",
   });

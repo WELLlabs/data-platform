@@ -285,20 +285,12 @@ function DatasetInfo() {
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
   };
 
-  const formatToDatetimeLocal = (value) => {
+  const formatToDateInput = (value) => {
     if (value == null || value === "") return "";
-    try {
-      const date = new Date(value);
-      if (isNaN(date.getTime())) return "";
-      const y = date.getFullYear();
-      const m = String(date.getMonth() + 1).padStart(2, "0");
-      const d = String(date.getDate()).padStart(2, "0");
-      const h = String(date.getHours()).padStart(2, "0");
-      const min = String(date.getMinutes()).padStart(2, "0");
-      return `${y}-${m}-${d}T${h}:${min}`;
-    } catch {
-      return "";
-    }
+    const text = String(value);
+    const match = /^(\d{4}-\d{2}-\d{2})/.exec(text);
+    if (match) return match[1];
+    return "";
   };
 
   const fileType = (fmt) => {
@@ -1076,8 +1068,8 @@ function DatasetInfo() {
           file.duration !== undefined && file.duration !== null
             ? Number(file.duration)
             : 0,
-        temporalFrom: formatToDatetimeLocal(file.temporal_from),
-        temporalTo: formatToDatetimeLocal(file.temporal_to),
+        temporalFrom: formatToDateInput(file.temporal_from),
+        temporalTo: formatToDateInput(file.temporal_to),
         geography: file.geography || "",
       },
     });
@@ -1093,16 +1085,12 @@ function DatasetInfo() {
     }
     const fromStr = fileEdit.temporalFrom?.trim();
     const toStr = fileEdit.temporalTo?.trim();
-    if (fromStr && toStr) {
-      const fromDate = new Date(fromStr);
-      const toDate = new Date(toStr);
-      if (!isNaN(fromDate.getTime()) && !isNaN(toDate.getTime()) && fromDate >= toDate) {
-        dispatchFileEdit({
-          type: "SET_ERROR",
-          error: "Temporal From must be before Temporal To.",
-        });
-        return;
-      }
+    if (fromStr && toStr && fromStr > toStr) {
+      dispatchFileEdit({
+        type: "SET_ERROR",
+        error: "Temporal From must not be after Temporal To.",
+      });
+      return;
     }
     dispatchFileEdit({ type: "SET_SUBMITTING", submitting: true });
     try {
@@ -1116,8 +1104,8 @@ function DatasetInfo() {
         groundtruthed: fileEdit.groundtruthed,
         permissions: fileEdit.permissions.trim() || null,
         duration: Math.max(0, parseInt(fileEdit.duration, 10) || 0),
-        temporal_from: fromStr ? new Date(fromStr).toISOString() : null,
-        temporal_to: toStr ? new Date(toStr).toISOString() : null,
+        temporal_from: fromStr || null,
+        temporal_to: toStr || null,
         geography: fileEdit.geography.trim() || null,
       };
       const response = await fetch(edit_file_endpoint, {
@@ -1319,7 +1307,11 @@ function DatasetInfo() {
                 disabled={downloadingDataset || files.length === 0}
               >
                 <Ic name="dl" size={16} sw={2} />
-                {downloadingDataset ? "Preparing zip…" : "Download dataset"}
+                {downloadingDataset
+                  ? files.length === 1
+                    ? "Preparing download…"
+                    : "Preparing zip…"
+                  : "Download dataset"}
               </button>
               <button className="btn btn-ghost" onClick={() => scrollToSec("usage")}>
                 <Ic name="cite" size={16} sw={2} />
@@ -1992,7 +1984,11 @@ function DatasetInfo() {
                 style={{ width: "100%" }}
               >
                 <Ic name="dl" size={16} sw={2} />
-                {downloadingDataset ? "Preparing zip…" : "Download"}
+                {downloadingDataset
+                  ? files.length === 1
+                    ? "Preparing download…"
+                    : "Preparing zip…"
+                  : "Download"}
               </button>
             </div>
           </aside>
@@ -2535,7 +2531,7 @@ function DatasetInfo() {
                   <div className="field">
                     <label>Temporal coverage from</label>
                     <input
-                      type="datetime-local"
+                      type="date"
                       value={fileEdit.temporalFrom}
                       onChange={(e) =>
                         dispatchFileEdit({
@@ -2549,7 +2545,7 @@ function DatasetInfo() {
                   <div className="field">
                     <label>Temporal coverage to</label>
                     <input
-                      type="datetime-local"
+                      type="date"
                       value={fileEdit.temporalTo}
                       onChange={(e) =>
                         dispatchFileEdit({

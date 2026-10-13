@@ -75,6 +75,15 @@ input,select,textarea{font-family:inherit}
 .btn-ghost:hover{border-color:var(--muted);color:var(--navy)}
 .btn-quiet{background:transparent;color:var(--blue);padding:9px 4px}
 .btn-quiet:hover{color:var(--blue-deep)}
+.btn-remove{background:var(--paper);color:#8d3b32;border:1px solid var(--line-strong);padding:6px 12px;font-size:13px;flex:none}
+.btn-remove:hover{background:#f8eeec;border-color:#e4c8c4;color:#6f2c26}
+.btn-remove:disabled{opacity:.55;cursor:not-allowed}
+.filename-row{display:flex;align-items:center;gap:8px}
+.filename-row input{flex:1;min-width:0}
+.filename-ext{font-family:var(--mono);font-size:13px;color:var(--navy-70);background:var(--paper);border:1px solid var(--line-strong);border-radius:6px;padding:8px 10px;white-space:nowrap}
+.file-status{font-size:12.5px;margin-top:8px}
+.file-status.ok{color:var(--green)}
+.file-status.err{color:#8d3b32}
 .avatar{width:33px;height:33px;border-radius:50%;background:linear-gradient(150deg,#1769AA,#3D7658);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:500;font-size:13px;transition:var(--t)}
 .avatar:hover{box-shadow:0 0 0 3px rgba(23,105,170,.18)}
 .nav-burger{display:none;background:none;border:1px solid var(--line-strong);border-radius:var(--radius-sm);padding:8px 10px;color:var(--navy)}

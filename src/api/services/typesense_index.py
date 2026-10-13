@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import date, datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
 
@@ -115,10 +115,14 @@ def _doc_id_file(file_id: UUID) -> str:
     return f"f-{file_id}"
 
 
-def _ts(dt: Optional[datetime]) -> Optional[int]:
-    if dt is None:
+def _ts(value: Optional[datetime | date]) -> Optional[int]:
+    if value is None:
         return None
-    return int(dt.timestamp())
+    if isinstance(value, datetime):
+        return int(value.timestamp())
+    if isinstance(value, date):
+        return int(datetime(value.year, value.month, value.day, tzinfo=timezone.utc).timestamp())
+    return None
 
 
 def _file_display_name(file: Any) -> str:

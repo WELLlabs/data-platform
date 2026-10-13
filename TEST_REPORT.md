@@ -48,7 +48,7 @@ Backend, run from `src/api` (audit virtualenv at `/tmp/odpvenv`):
 
 ```bash
 python3 -m compileall -q routers services models schemas utils middleware core db tasks main.py \
-  celery_worker.py celery_cpu_worker.py flower_entry.py     # syntax check, exit 0
+  celery_worker.py celery_cpu_worker.py     # syntax check, exit 0
 
 # App import + full route enumeration + live no-DB endpoint tests via Starlette TestClient
 # (dummy env vars supplied so config loads; real .env values were not printed)

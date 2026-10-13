@@ -12,7 +12,7 @@ import { requestAndUploadFile } from "../api/s3Upload";
 import FileAccordionList from "../components/FileAccordionList";
 import HelpTooltip from "../components/HelpTooltip";
 import Ic from "../components/wd/Icons";
-import { splitFilename, storedFilename, filenameHasForbiddenChar } from "../utils/filenames";
+import { splitFilename, storedFilename } from "../utils/filenames";
 import TagMultiSelect from "../components/wd/TagMultiSelect";
 import {
     AVAILABILITY_OPTIONS,
@@ -127,13 +127,15 @@ function CreateDataset() {
 
     const toFileEntry = (f) => {
         const { basename, extension } = splitFilename(f.name);
-        const filteredName = f.name.replace(INVALID_CHARS_G, "");
+        const nameWithExt = (
+            storedFilename(basename, extension) || f.name
+        ).replace(INVALID_CHARS_G, "");
         return {
             key: `${f.name}-${f.size}-${f.lastModified}`,
             file: f,
             basename: basename.slice(0, 180),
             extension: extension.slice(0, 20),
-            title: filteredName.slice(0, 200),
+            title: nameWithExt.slice(0, 200),
             description: "",
             format: extension.replace(INVALID_CHARS_G, "").slice(0, 20),
             provenance: "",
@@ -203,22 +205,6 @@ function CreateDataset() {
                           ...item,
                           [field]: constrained(cleaned, max),
                           errors: { ...item.errors, [field]: bad },
-                      }
-                    : item
-            )
-        );
-    };
-
-    const updateBasename = (key, value) => {
-        const cleaned = value.replace(/[\\/]/g, "").slice(0, 180);
-        const bad = filenameHasForbiddenChar(cleaned);
-        setFiles((prev) =>
-            prev.map((item) =>
-                item.key === key
-                    ? {
-                          ...item,
-                          basename: cleaned,
-                          errors: { ...item.errors, basename: bad },
                       }
                     : item
             )
@@ -419,7 +405,13 @@ function CreateDataset() {
                 const addFileForm = new FormData();
                 addFileForm.append("job_id", datasetJobId);
                 addFileForm.append("file_id", fileId);
-                addFileForm.append("file_title", constrained(item.title, 200));
+                addFileForm.append(
+                    "file_title",
+                    constrained(
+                        storedFilename(item.basename, item.extension) || item.title,
+                        200
+                    )
+                );
                 addFileForm.append(
                     "file_description",
                     constrained(item.description, 1000)
@@ -776,9 +768,8 @@ function CreateDataset() {
                                     <h3>Files &amp; attribution</h3>
                                     <p>
                                         Add a file and record its attribution
-                                        and coverage. Once it has a title you
-                                        can add another. Every file keeps its
-                                        own attribution.
+                                        and coverage. Every file keeps its own
+                                        attribution.
                                     </p>
                                 </div>
                             </div>
@@ -811,13 +802,10 @@ function CreateDataset() {
                                 onRemove={removeFileEntry}
                                 onText={updateFileText}
                                 onField={updateFileEntry}
-                                onBasename={updateBasename}
                                 disabled={submitting}
                             />
 
-                            {files.length === 0 ||
-                            files[files.length - 1].title.trim() ? (
-                                <div
+                            <div
                                     className={
                                         "file-drop" +
                                         (dragging ? " drag" : "") +
@@ -858,15 +846,6 @@ function CreateDataset() {
                                         aria-label="Add files"
                                     />
                                 </div>
-                            ) : (
-                                <div className="add-hint">
-                                    <Ic name="info" size={15} sw={2} />
-                                    <span>
-                                        Add a title to the current file to add
-                                        another.
-                                    </span>
-                                </div>
-                            )}
                         </div>
                     )}
 

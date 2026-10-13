@@ -23,7 +23,6 @@ dependencies = [
     "celery[redis]>=5.6.2",
     "brevo-python>=1.2.0",
     "gevent>=25.9.1",
-    "flower>=2.0.1",
 ]
 
 [project.optional-dependencies]

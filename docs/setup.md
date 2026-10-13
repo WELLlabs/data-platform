@@ -24,7 +24,6 @@ The portal is a React frontend (`src/web`) and a FastAPI backend (`src/api`) wit
 | **redis** | Sessions, caches, Celery broker | 6379 |
 | **typesense** | Instant / fuzzy / semantic search | 8108 |
 | **email-worker** | Celery worker for email | — |
-| **flower** | Celery monitor | 5555 |
 | **titiler** | Cloud Optimized GeoTIFF tiles for raster preview | 8001 |
 
 Uploads go to **S3** via API-generated presigned URLs. Search uses **Typesense** when `TYPESENSE_HOST` is set; otherwise PostgreSQL full-text search.
@@ -89,7 +88,6 @@ The template file is `env.template` (not `.env.template`). Edit `.env` before th
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Leave blank on EC2 if the instance role can access the bucket |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` | Enables “Sign in with Google” |
 | `ALLOWED_EMAIL_DOMAIN` | Restricts signup to one or more domains (comma-separated) |
-| `FLOWER_BASIC_AUTH` | Flower login (`user:password`) |
 | Cache TTLs | See `env.template` (`SEARCH_CACHE_AGE_SECONDS`, dataset/homepage caches, etc.) |
 | `TITILER_BASE_URL` | Browser-reachable TiTiler origin. Compose publishes TiTiler on port 8001 and Nginx/CRA proxy it at `/titiler`. Use `/titiler` so raster maps work from the UI. |
 
@@ -105,7 +103,7 @@ From the **repository root**:
 docker compose -f docker-compose.dev.yml up -d --build
 ```
 
-This starts Postgres, Redis, Typesense, API, email worker, Flower, TiTiler, and the Nginx frontend.
+This starts Postgres, Redis, Typesense, API, email worker, TiTiler, and the Nginx frontend.
 
 Wait until the API is healthy:
 
@@ -160,7 +158,6 @@ Organizations use a UUID primary key. Create one in the UI (create-organization 
 |-------|-----|
 | API health | http://localhost:8000/health |
 | OpenAPI | http://localhost:8000/docs (also under `/api` when proxied) |
-| Flower | http://localhost:5555 |
 | Typesense | http://localhost:8108/health |
 | Nginx frontend | http://localhost (dev image may redirect HTTP → HTTPS) |
 
@@ -189,7 +186,7 @@ npm test
 
 ## 6. Production
 
-Production compose (`docker-compose.prod.yml`) does **not** include Postgres. Point `POSTGRES_URL` at your managed or host Postgres. Redis, Typesense, API, email worker, Flower, TiTiler, and Nginx are in the compose file. Nginx mounts Let’s Encrypt copies from the host. Nginx proxies `/titiler/` to the TiTiler service.
+Production compose (`docker-compose.prod.yml`) does **not** include Postgres. Point `POSTGRES_URL` at your managed or host Postgres. Redis, Typesense, API, email worker, TiTiler, and Nginx are in the compose file. Nginx mounts Let’s Encrypt copies from the host. Nginx proxies `/titiler/` to the TiTiler service.
 
 ### S3 IAM (EC2)
 
@@ -266,7 +263,7 @@ open-data-portal/
 | Alembic cannot connect | `POSTGRES_URL` host: `db` inside Compose, `localhost` from the host. |
 | Uploads fail | Bucket name/region, IAM or access keys, CORS on the bucket if the browser PUTs directly to S3. |
 | UI on :3000 cannot call API | Backend on 8000; CRA proxy; CORS origins include `http://localhost:3000`. |
-| No email | `EMAIL_GATEWAY_KEY` / `EMAIL_SENDER`; `email-worker` logs; Flower at :5555. |
+| No email | `EMAIL_GATEWAY_KEY` / `EMAIL_SENDER`; `email-worker` logs. |
 | HTTP frontend redirects forever | Dev/prod Nginx listens on 443 with certs; use https://localhost or the CRA app on :3000. |
 
 ---

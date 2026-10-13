@@ -1,5 +1,6 @@
 import React from "react";
 import Ic from "./wd/Icons";
+import { storedFilename } from "../utils/filenames";
 
 function fmtBytes(n) {
   if (n == null || Number.isNaN(Number(n))) return "";
@@ -36,7 +37,6 @@ export default function FileAccordionList({
   onRemove,
   onText,
   onField,
-  onBasename,
   disabled = false,
 }) {
   if (!files.length) return null;
@@ -44,7 +44,9 @@ export default function FileAccordionList({
     <div className="acc-list">
       {files.map((item) => {
         const isOpen = openKeys.has(item.key);
-        const complete = !!item.title?.trim() && !!item.basename?.trim();
+        const titled =
+          storedFilename(item.basename, item.extension) || item.file?.name || "";
+        const complete = !!titled.trim();
         return (
           <div className={"acc" + (isOpen ? " open" : "")} key={item.key}>
             <div className="acc-head">
@@ -61,10 +63,9 @@ export default function FileAccordionList({
                   {item.format ? item.format.slice(0, 4).toUpperCase() : "FILE"}
                 </span>
                 <span className="acc-name">
-                  <b>{item.title?.trim() || item.file?.name}</b>
+                  <b>{titled || item.file?.name}</b>
                   <small>
-                    {item.file?.name}
-                    {item.file?.size != null ? ` · ${fmtBytes(item.file.size)}` : ""}
+                    {item.file?.size != null ? fmtBytes(item.file.size) : ""}
                   </small>
                 </span>
               </button>
@@ -83,44 +84,14 @@ export default function FileAccordionList({
             </div>
             {isOpen && (
               <div className="acc-body">
-                <div className="field-row">
-                  <div className="field">
-                    <label>
-                      File name <span className="req">(required)</span>
-                    </label>
-                    <div className="filename-row">
-                      <input
-                        type="text"
-                        aria-label={`File name for ${item.file?.name || "file"}`}
-                        value={item.basename}
-                        onChange={(e) => onBasename(item.key, e.target.value)}
-                        required
-                        disabled={disabled}
-                      />
-                      {item.extension ? (
-                        <span className="filename-ext">.{item.extension}</span>
-                      ) : null}
-                    </div>
-                    {item.errors?.basename && (
-                      <span className="err">
-                        Enter a file name. The original extension is kept.
-                      </span>
-                    )}
-                  </div>
-                  <div className="field">
-                    <label>
-                      File title <span className="req">(required)</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={item.title}
-                      onChange={(e) => onText(item.key, "title", e.target.value, 200)}
-                      required
-                      disabled={disabled}
-                    />
-                    {item.errors?.title && invalidNote()}
-                  </div>
-                </div>
+                <input
+                  type="text"
+                  aria-label={`File title for ${item.file?.name || "file"}`}
+                  value={titled}
+                  readOnly
+                  tabIndex={-1}
+                  style={{ display: "none" }}
+                />
                 <div className="field">
                   <label>File description</label>
                   <input

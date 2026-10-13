@@ -8,7 +8,7 @@ import {
 } from "../api/endpoints";
 import { requestAndUploadFile } from "../api/s3Upload";
 import FileAccordionList from "../components/FileAccordionList";
-import { splitFilename, storedFilename, filenameHasForbiddenChar } from "../utils/filenames";
+import { splitFilename, storedFilename } from "../utils/filenames";
 
 const INVALID_CHARS = /[<>"'&;()]/;
 const INVALID_CHARS_G = /[<>"'&;()]/g;
@@ -57,13 +57,16 @@ function AddFile() {
 
   const toFileEntry = (f) => {
     const { basename, extension } = splitFilename(f.name);
-    const filteredName = f.name.replace(INVALID_CHARS_G, "");
+    const nameWithExt = (storedFilename(basename, extension) || f.name).replace(
+      INVALID_CHARS_G,
+      ""
+    );
     return {
       key: `${f.name}-${f.size}-${f.lastModified}`,
       file: f,
       basename: basename.slice(0, 180),
       extension: extension.slice(0, 20),
-      title: filteredName.slice(0, 200),
+      title: nameWithExt.slice(0, 200),
       description: "",
       format: extension.replace(INVALID_CHARS_G, "").slice(0, 20),
       provenance: "",
@@ -117,18 +120,6 @@ function AddFile() {
               [field]: constrained(cleaned, max),
               errors: { ...item.errors, [field]: bad },
             }
-          : item
-      )
-    );
-  };
-
-  const updateBasename = (key, value) => {
-    const cleaned = value.replace(/[\\/]/g, "").slice(0, 180);
-    const bad = filenameHasForbiddenChar(cleaned);
-    setFiles((prev) =>
-      prev.map((item) =>
-        item.key === key
-          ? { ...item, basename: cleaned, errors: { ...item.errors, basename: bad } }
           : item
       )
     );
@@ -237,7 +228,10 @@ function AddFile() {
           const form = new FormData();
           form.append("job_id", jobId);
           form.append("file_id", fileId);
-          form.append("file_title", constrained(item.title, 200));
+          form.append(
+            "file_title",
+            constrained(storedFilename(item.basename, item.extension) || item.title, 200)
+          );
           form.append("file_description", constrained(item.description, 1000));
           form.append("file_format", constrained(item.format, 20));
           form.append("dataset_id", datasetId);
@@ -373,7 +367,6 @@ function AddFile() {
               onRemove={removeFileEntry}
               onText={updateFileText}
               onField={updateFileEntry}
-              onBasename={updateBasename}
               disabled={submitting}
             />
 

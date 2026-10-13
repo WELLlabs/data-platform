@@ -25,14 +25,20 @@ describe("Add file page", () => {
     const second = new File(["b"], "notes.txt", { type: "text/plain" });
     fireEvent.change(input, { target: { files: [first, second] } });
 
-    expect(screen.getByLabelText(/file name for rain.csv/i)).toHaveValue("rain");
-    expect(screen.getByText(".csv")).toBeInTheDocument();
-    expect(screen.getByLabelText(/file name for notes.txt/i)).toHaveValue("notes");
+    expect(screen.queryByLabelText(/file name for/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^File name/i)).not.toBeInTheDocument();
+    const rainTitle = screen.getByLabelText(/file title for rain.csv/i, { hidden: true });
+    const notesTitle = screen.getByLabelText(/file title for notes.txt/i, { hidden: true });
+    expect(rainTitle).toHaveValue("rain.csv");
+    expect(rainTitle).toHaveAttribute("readonly");
+    expect(rainTitle).not.toBeVisible();
+    expect(notesTitle).toHaveValue("notes.txt");
+    expect(notesTitle).not.toBeVisible();
     expect(screen.getAllByText(/temporal coverage from/i).length).toBeGreaterThan(0);
     expect(screen.getAllByRole("button", { name: /remove file/i })).toHaveLength(2);
 
     fireEvent.click(screen.getAllByRole("button", { name: /remove file/i })[0]);
-    expect(screen.queryByLabelText(/file name for rain.csv/i)).not.toBeInTheDocument();
-    expect(screen.getByLabelText(/file name for notes.txt/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/file title for rain.csv/i, { hidden: true })).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/file title for notes.txt/i, { hidden: true })).toBeInTheDocument();
   });
 });

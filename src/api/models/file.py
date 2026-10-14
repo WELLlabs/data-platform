@@ -6,13 +6,14 @@ foreign key relationships and security considerations to prevent SQL injection.
 """
 
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Integer,
@@ -100,12 +101,12 @@ class File(Base):
         nullable=False,
     )
     # New fields
-    temporal_from: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True),
+    temporal_from: Mapped[Optional[date]] = mapped_column(
+        Date,
         nullable=True,
     )
-    temporal_to: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True),
+    temporal_to: Mapped[Optional[date]] = mapped_column(
+        Date,
         nullable=True,
     )
     geography: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

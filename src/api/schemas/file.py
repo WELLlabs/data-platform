@@ -2,11 +2,13 @@
 File schemas for validation and serialization.
 """
 
-from datetime import datetime, timezone
+from datetime import date
 from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, validator
+
+from utils.temporal import parse_coverage_date
 
 class MultipartPartComplete(BaseModel):
     part_number: int = Field(..., ge=1)
@@ -48,11 +50,11 @@ class FileEditRequest(BaseModel):
         None, description="Permissions (CC license type)"
     )
     duration: int = Field(default=0, ge=0, description="Duration in years")
-    temporal_from: Optional[datetime] = Field(
-        None, description="Temporal coverage start (ISO 8601)"
+    temporal_from: Optional[date] = Field(
+        None, description="Temporal coverage start (YYYY-MM-DD)"
     )
-    temporal_to: Optional[datetime] = Field(
-        None, description="Temporal coverage end (ISO 8601)"
+    temporal_to: Optional[date] = Field(
+        None, description="Temporal coverage end (YYYY-MM-DD)"
     )
     geography: Optional[str] = Field(
         None, description="Geographic coverage"
@@ -66,38 +68,21 @@ class FileEditRequest(BaseModel):
         return v.strip()
 
     @validator("temporal_from", "temporal_to", pre=True)
-    def validate_temporal_iso8601(cls, v):
-        """Parse and validate ISO 8601 datetime strings."""
-        if v is None or isinstance(v, datetime):
-            return v
-        if not isinstance(v, str):
-            raise ValueError("Temporal field must be a string or datetime")
-        if not v.strip():
+    def validate_temporal_date(cls, v):
+        """Accept a date or a legacy ISO datetime and keep the UTC calendar day."""
+        if v is None or v == "":
             return None
-        s = v.strip().replace("Z", "+00:00")
         try:
-            return datetime.fromisoformat(s)
-        except (ValueError, TypeError) as e:
-            raise ValueError(
-                f"Invalid ISO 8601 datetime: {v!r}"
-            ) from e
+            return parse_coverage_date(v)
+        except ValueError as exc:
+            raise ValueError("Temporal coverage must be a date (YYYY-MM-DD)") from exc
 
     @validator("temporal_to")
     def validate_temporal_range(cls, v, values):
-        """Ensure temporal_to is after temporal_from when both are set."""
+        """Ensure temporal_to is not before temporal_from when both are set."""
         if v is None:
             return v
         from_val = values.get("temporal_from")
-        if from_val is None:
-            return v
-
-        def to_utc(dt):
-            if dt.tzinfo is None:
-                return dt.replace(tzinfo=timezone.utc)
-            return dt.astimezone(timezone.utc)
-
-        v_utc = to_utc(v)
-        from_utc = to_utc(from_val)
-        if v_utc < from_utc:
-            raise ValueError("temporal_to must be after temporal_from")
+        if from_val is not None and v < from_val:
+            raise ValueError("temporal_to must not be before temporal_from")
         return v

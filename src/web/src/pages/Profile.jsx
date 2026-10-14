@@ -60,7 +60,6 @@ function Profile() {
   const [editEmail, setEditEmail] = useState("");
   const [editDesignation, setEditDesignation] = useState("");
   const [editOrganization, setEditOrganization] = useState("");
-  const [editPhone, setEditPhone] = useState("");
   const [editOrganizations, setEditOrganizations] = useState([]);
   const [editOrganizationsLoading, setEditOrganizationsLoading] = useState(false);
   const [editSubmitting, setEditSubmitting] = useState(false);
@@ -336,7 +335,6 @@ function Profile() {
         email: editEmail.trim(),
         designation: editDesignation.trim() || "",
         organization: editOrganization,
-        phone: editPhone.trim() || "",
       });
       const response = await fetch(edit_profile_endpoint, {
         method: "PUT",
@@ -457,7 +455,6 @@ function Profile() {
                   setEditEmail(profileData.email ?? "");
                   setEditDesignation(profileData.designation ?? "");
                   setEditOrganization(profileData.organization ?? "");
-                  setEditPhone(profileData.phone ?? "");
                   setEditError("");
                   setShowEditModal(true);
                 }}
@@ -522,10 +519,6 @@ function Profile() {
             <span>Role</span>
             <span>{roleLabel}</span>
           </div>
-          {/* <div className="rrow">
-            <span>Phone</span>
-            <span>{profileData.phone || "N/A"}</span>
-          </div> */}
           <div className="rrow">
             <span>Contributions</span>
             <span>{profileData.contributions ?? 0}</span>
@@ -705,20 +698,6 @@ function Profile() {
                           </span>
                         )}
                     </div>
-                    {/* <div className="field">
-                      <label htmlFor="editPhone">Phone</label>
-                      <input
-                        id="editPhone"
-                        type="tel"
-                        inputMode="numeric"
-                        pattern="[0-9]{0,10}"
-                        placeholder="10 digits phone number"
-                        value={editPhone}
-                        onChange={handleEditPhoneChange}
-                        maxLength={10}
-                        aria-label="Phone number"
-                      />
-                    </div> */}
                     <button
                       type="submit"
                       className="btn btn-primary"

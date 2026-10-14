@@ -15,7 +15,8 @@ const RasterMapViewer = lazy(() => import("../components/visualize/RasterMapView
 const MediaViewer = lazy(() => import("../components/visualize/MediaViewer"));
 
 const POLL_MS = 2000;
-const TIMEOUT_MS = 90 * 1000;
+// Matches the conversion worker time limit (cpu.convert_file, 2100s).
+const TIMEOUT_MS = 2100 * 1000;
 
 export default function FilePreview() {
   const location = useLocation();

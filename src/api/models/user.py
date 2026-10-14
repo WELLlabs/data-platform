@@ -30,7 +30,6 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
         String(length=20), default="password", nullable=False
     )
     role: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    phone: Mapped[Optional[str]] = mapped_column(String(length=20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

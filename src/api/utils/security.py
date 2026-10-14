@@ -62,6 +62,54 @@ def email_matches_allowed_domain(email: str, allowed_domain: Optional[str]) -> b
     return domain in allowed
 
 
+def registration_email_error(email: Optional[str], allowed_domain: Optional[str]) -> Optional[str]:
+    """Return an error when an address is malformed or outside the instance allowlist."""
+    if not email or not isinstance(email, str):
+        return "Invalid email address"
+    stripped = email.strip()
+    if stripped.count("@") != 1 or any(char.isspace() for char in stripped):
+        return "Invalid email address"
+    local, domain = stripped.split("@")
+    if not local or not domain or "." not in domain or any(char.isspace() for char in domain):
+        return "Invalid email address"
+    if not email_matches_allowed_domain(stripped, allowed_domain):
+        return "Email domain is not allowed"
+    return None
+
+
+def organization_accepts_email(
+    org: object,
+    email: Optional[str],
+    provider: str,
+    allowed_domain: Optional[str],
+) -> Optional[str]:
+    """
+    One gate for signup, Google profile completion, and email changes.
+
+    A null organisation domain list accepts any globally allowed domain.
+    allow_password and allow_google default to True when unset.
+    """
+    error = registration_email_error(email, allowed_domain)
+    if error:
+        return error
+    domain = email.strip().rsplit("@", 1)[-1].lower()
+    raw = getattr(org, "allowed_email_domains", None) or []
+    allowed = []
+    for item in raw:
+        cleaned = str(item).strip().lstrip("@").lower()
+        if cleaned and cleaned not in allowed:
+            allowed.append(cleaned)
+    if allowed and domain not in allowed:
+        return "This organisation does not accept that email domain"
+    if provider == "google" and getattr(org, "allow_google", True) is False:
+        return "This organisation does not accept Google sign-in"
+    if provider == "password" and getattr(org, "allow_password", True) is False:
+        return "This organisation does not accept password sign-up"
+    if provider not in {"google", "password"}:
+        return "This sign-in method is not allowed"
+    return None
+
+
 def is_profile_complete(user: User) -> bool:
     return bool(user.full_name and str(user.full_name).strip() and user.organization)
 

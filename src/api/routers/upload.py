@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Dict, Iterator, List, Optional
 from urllib.parse import quote
 from uuid import UUID, uuid4
@@ -40,7 +40,7 @@ from services.upload import (
     get_upload_service,
 )
 from services.upload_completion import complete_upload_job
-from services.zip_stream import iter_stored_zip
+from services.zip_stream import open_dataset_download
 from services.upload_job import get_job_status
 from services.typesense_index import (
     safe_delete_file_document,
@@ -51,7 +51,9 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from utils.filenames import FilenameError, sanitize_storage_filename
 from utils.security import mask_apikey, optional_api_key, sanitize_input
+from utils.temporal import parse_coverage_date
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -299,6 +301,7 @@ class UploadController:
         filename: str,
         user: User,
         file_size: int,
+        original_filename: Optional[str] = None,
     ) -> JSONResponse:
         """
         Get presigned upload URL for a file.
@@ -348,25 +351,17 @@ class UploadController:
                     detail="Job does not belong to this user",
                 )
 
-            sanitized_filename = sanitize_input(filename)
-            if not sanitized_filename or not sanitized_filename.strip():
+            try:
+                sanitized_filename = sanitize_storage_filename(
+                    filename, original_filename
+                )
+            except FilenameError as exc:
                 self.logger.warning(
                     "Invalid filename provided by user %s: %s", user.id, filename
                 )
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid filename",
-                )
-
-            sanitized_filename = sanitized_filename.split("/")[-1].split("\\")[-1]
-
-            if not sanitized_filename:
-                self.logger.warning(
-                    "Empty filename after sanitization for user %s", user.id
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid filename",
+                    detail=str(exc) or "Invalid filename",
                 )
 
             self.logger.info(
@@ -753,25 +748,20 @@ class UploadController:
         await _invalidate_dataset_cache(dataset_id, self.auth_service, self.logger)
 
         upload_service = self.upload_service
-
-        def generate() -> Iterator[bytes]:
-            def entries():
-                for member in members:
-                    yield (
-                        member["arcname"],
-                        upload_service.iter_object_chunks(member["bucket"], member["key"]),
-                    )
-
-            yield from iter_stored_zip(entries())
-
-        filename = _zip_download_name(dataset.dataset_title)
+        media_type, filename, body = open_dataset_download(
+            members,
+            lambda member: upload_service.iter_object_chunks(
+                member["bucket"], member["key"]
+            ),
+            _zip_download_name(dataset.dataset_title),
+        )
         disposition = (
             f'attachment; filename="{filename}"; '
             f"filename*=UTF-8''{quote(filename)}"
         )
         return StreamingResponse(
-            generate(),
-            media_type="application/zip",
+            body,
+            media_type=media_type,
             headers={
                 "Content-Disposition": disposition,
                 "Cache-Control": "no-store",
@@ -792,8 +782,8 @@ class UploadController:
         cite_as: Optional[str],
         permissions: Optional[str],
         duration: int,
-        temporal_from: Optional[datetime],
-        temporal_to: Optional[datetime],
+        temporal_from: Optional[date],
+        temporal_to: Optional[date],
         geography: Optional[str],
         user: User,
     ) -> JSONResponse:
@@ -895,7 +885,7 @@ class UploadController:
                 if temporal_to < temporal_from:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="temporal_to must be after temporal_from",
+                        detail="temporal_to must not be before temporal_from",
                     )
 
             ttl = _upload_job_ttl()
@@ -1133,8 +1123,8 @@ class UploadController:
         groundtruthed: Optional[bool],
         permissions: Optional[str],
         duration: int,
-        temporal_from: Optional[datetime],
-        temporal_to: Optional[datetime],
+        temporal_from: Optional[date],
+        temporal_to: Optional[date],
         geography: Optional[str],
         user: User,
     ) -> JSONResponse:
@@ -1166,18 +1156,18 @@ class UploadController:
                 )
 
             dataset_id = file_record.dataset_id
-            can_edit = await self.dataset_service.can_edit_or_add_file(
+            can_edit = await self.dataset_service.can_edit_metadata(
                 user.id, dataset_id
             )
             if not can_edit:
                 self.logger.warning(
-                    "Edit denied: user %s is not creator or owner of dataset %s",
+                    "Edit denied: user %s cannot edit dataset %s",
                     user.id,
                     dataset_id,
                 )
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Only a dataset owner can edit.",
+                    detail="You do not have permission to edit this file.",
                 )
 
             sanitized_title = sanitize_input(file_title)
@@ -1357,12 +1347,17 @@ async def http_job_status(
 async def get_upload_url(
     job_id: str = Query(..., description="Upload job UUID"),
     filename: str = Query(..., description="Name of the file to upload"),
+    original_filename: Optional[str] = Query(
+        None, description="Original browser file name; its extension is kept"
+    ),
     file_size: int = Query(..., description="File size in bytes"),
     user: User = Depends(get_current_active_user),
     controller: UploadController = Depends(get_upload_controller),
 ):
     """Get a presigned URL (or multipart part URLs) for uploading a file to S3."""
-    return await controller.get_upload_url(job_id, filename, user, file_size)
+    return await controller.get_upload_url(
+        job_id, filename, user, file_size, original_filename
+    )
 
 
 @router.post("/complete_multipart")
@@ -1464,30 +1459,25 @@ async def add_files(
                 detail="Invalid dataset_id UUID format",
             )
 
-        # Parse datetime strings for temporal_from and temporal_to
         parsed_temporal_from = None
         parsed_temporal_to = None
         if temporal_from:
             try:
-                parsed_temporal_from = datetime.fromisoformat(
-                    temporal_from.replace("Z", "+00:00")
-                )
-            except (ValueError, AttributeError):
+                parsed_temporal_from = parse_coverage_date(temporal_from)
+            except ValueError:
                 logger.warning("Invalid temporal_from format: %s", temporal_from)
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid temporal_from format. Use ISO format (e.g., 2024-01-01T00:00:00Z)",
+                    detail="Invalid temporal_from. Use a date (YYYY-MM-DD).",
                 )
         if temporal_to:
             try:
-                parsed_temporal_to = datetime.fromisoformat(
-                    temporal_to.replace("Z", "+00:00")
-                )
-            except (ValueError, AttributeError):
+                parsed_temporal_to = parse_coverage_date(temporal_to)
+            except ValueError:
                 logger.warning("Invalid temporal_to format: %s", temporal_to)
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid temporal_to format. Use ISO format (e.g., 2024-01-01T00:00:00Z)",
+                    detail="Invalid temporal_to. Use a date (YYYY-MM-DD).",
                 )
 
         return await controller.add_file(

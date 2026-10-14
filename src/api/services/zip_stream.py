@@ -2,13 +2,40 @@
 
 from __future__ import annotations
 
+import mimetypes
 import struct
 import zlib
-from typing import Iterable, Iterator
+from typing import Callable, Iterable, Iterator, Sequence
 
 # Local headers use a data descriptor, so sizes are written after each file.
 _LOCAL_FLAG = 0x0808  # bit 3 data descriptor, bit 11 UTF-8 names
 _VERSION = 20
+
+
+def open_dataset_download(
+    members: Sequence[dict],
+    read_chunks: Callable[[dict], Iterable[bytes]],
+    zip_filename: str,
+) -> tuple[str, str, Iterator[bytes]]:
+    """One file is returned as itself. Two or more files are a stored zip."""
+    if len(members) == 1:
+        member = members[0]
+        name = member["arcname"]
+        media = mimetypes.guess_type(name)[0] or "application/octet-stream"
+
+        def one_file() -> Iterator[bytes]:
+            yield from read_chunks(member)
+
+        return media, name, one_file()
+
+    def zipped() -> Iterator[bytes]:
+        def entries():
+            for member in members:
+                yield member["arcname"], read_chunks(member)
+
+        yield from iter_stored_zip(entries())
+
+    return "application/zip", zip_filename, zipped()
 
 
 def iter_stored_zip(entries: Iterable[tuple[str, Iterable[bytes]]]) -> Iterator[bytes]:

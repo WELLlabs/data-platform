@@ -6,6 +6,7 @@ import {
     list_organizations_endpoint,
 } from "../api/endpoints";
 import { useAuth } from "../contexts/AuthContext";
+import { organizationAccepts } from "../utils/orgAccess";
 
 function CompleteProfile() {
     const { user, verifyUser, loading: authLoading } = useAuth();
@@ -16,7 +17,6 @@ function CompleteProfile() {
     const [organizations, setOrganizations] = useState([]);
     const [organizationsLoading, setOrganizationsLoading] = useState(false);
     const [organizationsError, setOrganizationsError] = useState(null);
-    const [phone, setPhone] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState("");
 
@@ -25,7 +25,6 @@ function CompleteProfile() {
             setFullName(user.full_name || "");
             setDesignation(user.designation || "");
             setOrganization(user.organization || "");
-            setPhone(user.phone || "");
         }
     }, [user]);
 
@@ -69,13 +68,19 @@ function CompleteProfile() {
         };
     }, []);
 
+    const visibleOrganizations = useMemo(() => {
+        const provider = user?.auth_provider || "password";
+        return organizations.filter((org) =>
+            organizationAccepts(org, user?.email || "", provider)
+        );
+    }, [organizations, user]);
+
     const canSubmit = useMemo(
         () =>
             fullName.trim().length > 0 &&
             organization.trim().length > 0 &&
-            (!phone || (/^\d+$/.test(phone) && phone.length <= 10)) &&
             !submitting,
-        [fullName, organization, phone, submitting]
+        [fullName, organization, submitting]
     );
 
     const handleSubmit = async (e) => {
@@ -90,7 +95,6 @@ function CompleteProfile() {
                     full_name: fullName.trim(),
                     organization: organization.trim(),
                     designation: designation.trim() || null,
-                    phone: phone ? phone.trim() : null,
                 },
                 {
                     headers: { "Content-Type": "application/json" },
@@ -165,7 +169,7 @@ function CompleteProfile() {
                                             ? "Loading..."
                                             : "Select organization"}
                                     </option>
-                                    {organizations.map((org) => (
+                                    {visibleOrganizations.map((org) => (
                                         <option key={org.id} value={org.id}>
                                             {org.name}
                                         </option>
@@ -187,21 +191,6 @@ function CompleteProfile() {
                                         setDesignation(e.target.value.slice(0, 25))
                                     }
                                     maxLength={25}
-                                />
-                            </div>
-                            <div className="field">
-                                <label htmlFor="phone">Phone</label>
-                                <input
-                                    id="phone"
-                                    type="tel"
-                                    value={phone}
-                                    onChange={(e) => {
-                                        const value = e.target.value;
-                                        if (value === "" || /^\d+$/.test(value)) {
-                                            setPhone(value.slice(0, 10));
-                                        }
-                                    }}
-                                    maxLength={10}
                                 />
                             </div>
                             <button

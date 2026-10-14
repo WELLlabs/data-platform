@@ -9,8 +9,10 @@ import {
     organization_by_id_endpoint,
 } from "../api/endpoints";
 import { requestAndUploadFile } from "../api/s3Upload";
+import FileAccordionList from "../components/FileAccordionList";
 import HelpTooltip from "../components/HelpTooltip";
 import Ic from "../components/wd/Icons";
+import { splitFilename, storedFilename } from "../utils/filenames";
 import TagMultiSelect from "../components/wd/TagMultiSelect";
 import {
     AVAILABILITY_OPTIONS,
@@ -19,17 +21,6 @@ import {
 
 const INVALID_CHARS = /[<>"'&;()]/;
 const INVALID_CHARS_G = /[<>"'&;()]/g;
-
-const PERMISSION_OPTIONS = [
-    "CC0: Public Domain",
-    "CC BY: Attribution",
-    "CC BY-SA: Attribution-ShareAlike",
-    "CC BY-NC: Attribution-NonCommercial",
-    "CC BY-NC-SA: Attribution-NonCommercial-ShareAlike",
-    "CC BY-ND: Attribution-NoDerivatives",
-    "CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives",
-];
-
 
 // Textarea that grows to fit its content as the user types.
 function AutoTextarea({ value, minRows = 2, onChange, ...rest }) {
@@ -50,30 +41,6 @@ function AutoTextarea({ value, minRows = 2, onChange, ...rest }) {
             {...rest}
         />
     );
-}
-
-// Convert a datetime-local input value into an ISO string (or "").
-function localToIso(val) {
-    if (!val) return "";
-    const date = new Date(val);
-    return isNaN(date.getTime()) ? "" : date.toISOString();
-}
-
-// Convert a stored ISO string back into a datetime-local input value.
-function isoToLocal(iso) {
-    if (!iso) return "";
-    try {
-        const date = new Date(iso);
-        if (isNaN(date.getTime())) return "";
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, "0");
-        const day = String(date.getDate()).padStart(2, "0");
-        const hours = String(date.getHours()).padStart(2, "0");
-        const minutes = String(date.getMinutes()).padStart(2, "0");
-        return `${year}-${month}-${day}T${hours}:${minutes}`;
-    } catch {
-        return "";
-    }
 }
 
 function CreateDataset() {
@@ -98,8 +65,8 @@ function CreateDataset() {
     const [files, setFiles] = useState([]);
     const [dragging, setDragging] = useState(false);
 
-    // Accordion: key of the file whose attribution panel is expanded.
-    const [openKey, setOpenKey] = useState(null);
+    // Accordion: every newly added file starts open.
+    const [openKeys, setOpenKeys] = useState(() => new Set());
 
     // Wizard step: 1 = dataset details, 2 = attribution, coverage & files.
     const [step, setStep] = useState(1);
@@ -159,16 +126,18 @@ function CreateDataset() {
     const constrained = (v, max) => (v || "").slice(0, max);
 
     const toFileEntry = (f) => {
-        const filteredName = f.name.replace(INVALID_CHARS_G, "");
-        const parts = f.name.split(".");
-        const ext = parts.length > 1 ? parts.pop().slice(0, 20) : "";
-        const filteredFormat = ext.replace(INVALID_CHARS_G, "");
+        const { basename, extension } = splitFilename(f.name);
+        const nameWithExt = (
+            storedFilename(basename, extension) || f.name
+        ).replace(INVALID_CHARS_G, "");
         return {
             key: `${f.name}-${f.size}-${f.lastModified}`,
             file: f,
-            title: filteredName.slice(0, 200),
+            basename: basename.slice(0, 180),
+            extension: extension.slice(0, 20),
+            title: nameWithExt.slice(0, 200),
             description: "",
-            format: filteredFormat,
+            format: extension.replace(INVALID_CHARS_G, "").slice(0, 20),
             provenance: "",
             source: "",
             permissions: "CC0: Public Domain",
@@ -179,24 +148,26 @@ function CreateDataset() {
             duration: 0,
             geography: "",
             errors: {},
+            status: "",
+            statusMessage: "",
         };
     };
 
     const addFiles = (picked) => {
         if (!picked.length) return;
-        let lastAdded = null;
+        const incoming = picked.map((f) => toFileEntry(f));
         setFiles((prev) => {
             const next = [...prev];
-            picked.forEach((f) => {
-                const entry = toFileEntry(f);
-                if (!next.some((x) => x.key === entry.key)) {
-                    next.push(entry);
-                    lastAdded = entry.key;
-                }
+            incoming.forEach((entry) => {
+                if (!next.some((x) => x.key === entry.key)) next.push(entry);
             });
             return next;
         });
-        if (lastAdded) setOpenKey(lastAdded);
+        setOpenKeys((prev) => {
+            const next = new Set(prev);
+            incoming.forEach((entry) => next.add(entry.key));
+            return next;
+        });
     };
 
     const handleFileChange = (e) => {
@@ -242,12 +213,20 @@ function CreateDataset() {
 
     const removeFileEntry = (key) => {
         setFiles((prev) => prev.filter((item) => item.key !== key));
-        setOpenKey((k) => (k === key ? null : k));
+        setOpenKeys((prev) => {
+            const next = new Set(prev);
+            next.delete(key);
+            return next;
+        });
     };
 
-    // Accordion toggle: open the clicked file, or close it if already open.
     const toggleOpen = (key) => {
-        setOpenKey((k) => (k === key ? null : key));
+        setOpenKeys((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key);
+            else next.add(key);
+            return next;
+        });
     };
 
     // Dataset-level special-character validation helper.
@@ -295,7 +274,14 @@ function CreateDataset() {
     // Fields every file must carry before the dataset can be published.
     const fileMissing = (item) => {
         const missing = [];
+        if (!storedFilename(item.basename, item.extension)) missing.push("File name");
         if (!item.title.trim()) missing.push("File title");
+        if (
+            item.temporalFrom &&
+            item.temporalTo &&
+            item.temporalFrom > item.temporalTo
+        )
+            missing.push("Temporal coverage (from must not be after to)");
         if (
             item.duration === "" ||
             item.duration === null ||
@@ -333,7 +319,9 @@ function CreateDataset() {
         const fileErrs = getFileErrors();
         if (!files.length || fileErrs.length) {
             setShowErrors(true);
-            if (fileErrs.length) setOpenKey(fileErrs[0].key);
+            if (fileErrs.length) {
+                setOpenKeys((prev) => new Set(prev).add(fileErrs[0].key));
+            }
             window.scrollTo({ top: 0, behavior: "smooth" });
             return;
         }
@@ -402,6 +390,7 @@ function CreateDataset() {
                 const { fileId } = await requestAndUploadFile({
                     jobId: datasetJobId,
                     file: item.file,
+                    filename: storedFilename(item.basename, item.extension),
                     onProgress: (pct) => {
                         const current = (item.file.size || 0) * (pct / 100);
                         const overall = totalBytes
@@ -416,7 +405,13 @@ function CreateDataset() {
                 const addFileForm = new FormData();
                 addFileForm.append("job_id", datasetJobId);
                 addFileForm.append("file_id", fileId);
-                addFileForm.append("file_title", constrained(item.title, 200));
+                addFileForm.append(
+                    "file_title",
+                    constrained(
+                        storedFilename(item.basename, item.extension) || item.title,
+                        200
+                    )
+                );
                 addFileForm.append(
                     "file_description",
                     constrained(item.description, 1000)
@@ -488,13 +483,6 @@ function CreateDataset() {
             No special characters &lt; &gt; " ' &amp; ; ( )
         </span>
     );
-
-    const fmtBytes = (n) => {
-        if (!n && n !== 0) return "";
-        if (n < 1024) return `${n} B`;
-        if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`;
-        return `${(n / 1048576).toFixed(1)} MB`;
-    };
 
     if (loading) {
         return (
@@ -780,9 +768,8 @@ function CreateDataset() {
                                     <h3>Files &amp; attribution</h3>
                                     <p>
                                         Add a file and record its attribution
-                                        and coverage. Once it has a title you
-                                        can add another. Every file keeps its
-                                        own attribution.
+                                        and coverage. Every file keeps its own
+                                        attribution.
                                     </p>
                                 </div>
                             </div>
@@ -808,439 +795,17 @@ function CreateDataset() {
                                     </div>
                                 )}
 
-                            {files.length > 0 && (
-                                <div className="acc-list">
-                                    {files.map((item) => {
-                                        const isOpen = openKey === item.key;
-                                        const complete = !!item.title.trim();
-                                        return (
-                                            <div
-                                                className={
-                                                    "acc" +
-                                                    (isOpen ? " open" : "")
-                                                }
-                                                key={item.key}
-                                            >
-                                                <div className="acc-head">
-                                                    <button
-                                                        type="button"
-                                                        className="acc-toggle"
-                                                        onClick={() =>
-                                                            toggleOpen(item.key)
-                                                        }
-                                                        aria-expanded={isOpen}
-                                                    >
-                                                        <span className="acc-chev">
-                                                            <Ic
-                                                                name="chev"
-                                                                size={16}
-                                                            />
-                                                        </span>
-                                                        <span className="fico">
-                                                            {item.format
-                                                                ? item.format
-                                                                      .slice(0, 4)
-                                                                      .toUpperCase()
-                                                                : "FILE"}
-                                                        </span>
-                                                        <span className="acc-name">
-                                                            <b>
-                                                                {item.title.trim() ||
-                                                                    item.file
-                                                                        .name}
-                                                            </b>
-                                                            <small>
-                                                                {item.file.name}
-                                                                {" · "}
-                                                                {fmtBytes(
-                                                                    item.file
-                                                                        .size
-                                                                )}
-                                                            </small>
-                                                        </span>
-                                                    </button>
-                                                    <span
-                                                        className={
-                                                            "chip " +
-                                                            (complete
-                                                                ? "ok"
-                                                                : "todo")
-                                                        }
-                                                    >
-                                                        {complete
-                                                            ? "Complete"
-                                                            : "Needs title"}
-                                                    </span>
-                                                    <button
-                                                        type="button"
-                                                        className="iconbtn"
-                                                        aria-label="Remove file"
-                                                        onClick={() =>
-                                                            removeFileEntry(
-                                                                item.key
-                                                            )
-                                                        }
-                                                    >
-                                                        <Ic
-                                                            name="close"
-                                                            size={16}
-                                                            sw={2}
-                                                        />
-                                                    </button>
-                                                </div>
+                            <FileAccordionList
+                                files={files}
+                                openKeys={openKeys}
+                                onToggle={toggleOpen}
+                                onRemove={removeFileEntry}
+                                onText={updateFileText}
+                                onField={updateFileEntry}
+                                disabled={submitting}
+                            />
 
-                                                {isOpen && (
-                                                    <div className="acc-body">
-                                                        <div className="field-row">
-                                                            <div className="field">
-                                                                <label>
-                                                                    File title{" "}
-                                                                    <span className="req">
-                                                                        (required)
-                                                                    </span>
-                                                                </label>
-                                                                <input
-                                                                    type="text"
-                                                                    value={
-                                                                        item.title
-                                                                    }
-                                                                    onChange={(
-                                                                        e
-                                                                    ) =>
-                                                                        updateFileText(
-                                                                            item.key,
-                                                                            "title",
-                                                                            e
-                                                                                .target
-                                                                                .value,
-                                                                            200
-                                                                        )
-                                                                    }
-                                                                    required
-                                                                />
-                                                                {item.errors
-                                                                    ?.title &&
-                                                                    invalidCharsNote}
-                                                            </div>
-                                                            <div className="field">
-                                                                <label>
-                                                                    File
-                                                                    description
-                                                                </label>
-                                                                <input
-                                                                    type="text"
-                                                                    value={
-                                                                        item.description
-                                                                    }
-                                                                    onChange={(
-                                                                        e
-                                                                    ) =>
-                                                                        updateFileEntry(
-                                                                            item.key,
-                                                                            "description",
-                                                                            e.target.value.slice(
-                                                                                0,
-                                                                                1000
-                                                                            )
-                                                                        )
-                                                                    }
-                                                                />
-                                                            </div>
-                                                        </div>
-
-                                                        <div className="grid3">
-                                                            <div className="field">
-                                                                <label>
-                                                                    Provenance
-                                                                </label>
-                                                                <input
-                                                                    type="text"
-                                                                    value={
-                                                                        item.provenance
-                                                                    }
-                                                                    onChange={(
-                                                                        e
-                                                                    ) =>
-                                                                        updateFileText(
-                                                                            item.key,
-                                                                            "provenance",
-                                                                            e
-                                                                                .target
-                                                                                .value,
-                                                                            125
-                                                                        )
-                                                                    }
-                                                                />
-                                                                {item.errors
-                                                                    ?.provenance &&
-                                                                    invalidCharsNote}
-                                                            </div>
-                                                            <div className="field">
-                                                                <label>
-                                                                    Source
-                                                                </label>
-                                                                <input
-                                                                    type="text"
-                                                                    value={
-                                                                        item.source
-                                                                    }
-                                                                    onChange={(
-                                                                        e
-                                                                    ) =>
-                                                                        updateFileText(
-                                                                            item.key,
-                                                                            "source",
-                                                                            e
-                                                                                .target
-                                                                                .value,
-                                                                            1000
-                                                                        )
-                                                                    }
-                                                                />
-                                                                {item.errors
-                                                                    ?.source &&
-                                                                    invalidCharsNote}
-                                                            </div>
-                                                            <div className="field">
-                                                                <label>
-                                                                    Permissions /
-                                                                    licence
-                                                                </label>
-                                                                <select
-                                                                    value={
-                                                                        item.permissions
-                                                                    }
-                                                                    onChange={(
-                                                                        e
-                                                                    ) =>
-                                                                        updateFileEntry(
-                                                                            item.key,
-                                                                            "permissions",
-                                                                            e
-                                                                                .target
-                                                                                .value
-                                                                        )
-                                                                    }
-                                                                >
-                                                                    {PERMISSION_OPTIONS.map(
-                                                                        (opt) => (
-                                                                            <option
-                                                                                key={
-                                                                                    opt
-                                                                                }
-                                                                                value={
-                                                                                    opt
-                                                                                }
-                                                                            >
-                                                                                {
-                                                                                    opt
-                                                                                }
-                                                                            </option>
-                                                                        )
-                                                                    )}
-                                                                </select>
-                                                            </div>
-                                                            <div className="field">
-                                                                <label>
-                                                                    Cite as
-                                                                </label>
-                                                                <input
-                                                                    type="text"
-                                                                    value={
-                                                                        item.citeAs
-                                                                    }
-                                                                    onChange={(
-                                                                        e
-                                                                    ) =>
-                                                                        updateFileEntry(
-                                                                            item.key,
-                                                                            "citeAs",
-                                                                            e.target.value.slice(
-                                                                                0,
-                                                                                1500
-                                                                            )
-                                                                        )
-                                                                    }
-                                                                />
-                                                            </div>
-                                                            <div className="field">
-                                                                <label>
-                                                                    Groundtruthed{" "}
-                                                                    <span className="opt">
-                                                                        (optional,
-                                                                        defaults to
-                                                                        No)
-                                                                    </span>
-                                                                </label>
-                                                                <div className="seg">
-                                                                    <button
-                                                                        type="button"
-                                                                        className={
-                                                                            "seg-opt" +
-                                                                            (item.groundtruthed ===
-                                                                            "yes"
-                                                                                ? " on"
-                                                                                : "")
-                                                                        }
-                                                                        onClick={() =>
-                                                                            updateFileEntry(
-                                                                                item.key,
-                                                                                "groundtruthed",
-                                                                                "yes"
-                                                                            )
-                                                                        }
-                                                                    >
-                                                                        Yes
-                                                                    </button>
-                                                                    <button
-                                                                        type="button"
-                                                                        className={
-                                                                            "seg-opt" +
-                                                                            (item.groundtruthed ===
-                                                                            "no"
-                                                                                ? " on"
-                                                                                : "")
-                                                                        }
-                                                                        onClick={() =>
-                                                                            updateFileEntry(
-                                                                                item.key,
-                                                                                "groundtruthed",
-                                                                                "no"
-                                                                            )
-                                                                        }
-                                                                    >
-                                                                        No
-                                                                    </button>
-                                                                </div>
-                                                            </div>
-                                                            <div className="field">
-                                                                <label>
-                                                                    Duration
-                                                                    (years)
-                                                                </label>
-                                                                <input
-                                                                    type="number"
-                                                                    value={
-                                                                        item.duration
-                                                                    }
-                                                                    onChange={(
-                                                                        e
-                                                                    ) =>
-                                                                        updateFileEntry(
-                                                                            item.key,
-                                                                            "duration",
-                                                                            Math.max(
-                                                                                0,
-                                                                                parseInt(
-                                                                                    e
-                                                                                        .target
-                                                                                        .value
-                                                                                ) ||
-                                                                                    0
-                                                                            )
-                                                                        )
-                                                                    }
-                                                                    min="0"
-                                                                />
-                                                            </div>
-                                                            <div className="field">
-                                                                <label>
-                                                                    Temporal
-                                                                    coverage from{" "}
-                                                                    <span className="opt">
-                                                                        (optional)
-                                                                    </span>
-                                                                </label>
-                                                                <input
-                                                                    type="datetime-local"
-                                                                    value={isoToLocal(
-                                                                        item.temporalFrom
-                                                                    )}
-                                                                    onChange={(
-                                                                        e
-                                                                    ) =>
-                                                                        updateFileEntry(
-                                                                            item.key,
-                                                                            "temporalFrom",
-                                                                            localToIso(
-                                                                                e
-                                                                                    .target
-                                                                                    .value
-                                                                            )
-                                                                        )
-                                                                    }
-                                                                />
-                                                            </div>
-                                                            <div className="field">
-                                                                <label>
-                                                                    Temporal
-                                                                    coverage to{" "}
-                                                                    <span className="opt">
-                                                                        (optional)
-                                                                    </span>
-                                                                </label>
-                                                                <input
-                                                                    type="datetime-local"
-                                                                    value={isoToLocal(
-                                                                        item.temporalTo
-                                                                    )}
-                                                                    onChange={(
-                                                                        e
-                                                                    ) =>
-                                                                        updateFileEntry(
-                                                                            item.key,
-                                                                            "temporalTo",
-                                                                            localToIso(
-                                                                                e
-                                                                                    .target
-                                                                                    .value
-                                                                            )
-                                                                        )
-                                                                    }
-                                                                />
-                                                            </div>
-                                                            <div className="field">
-                                                                <label>
-                                                                    Geographical
-                                                                    extent{" "}
-                                                                    <span className="opt">
-                                                                        (optional)
-                                                                    </span>
-                                                                </label>
-                                                                <input
-                                                                    type="text"
-                                                                    value={
-                                                                        item.geography
-                                                                    }
-                                                                    onChange={(
-                                                                        e
-                                                                    ) =>
-                                                                        updateFileText(
-                                                                            item.key,
-                                                                            "geography",
-                                                                            e
-                                                                                .target
-                                                                                .value,
-                                                                            2000
-                                                                        )
-                                                                    }
-                                                                />
-                                                                {item.errors
-                                                                    ?.geography &&
-                                                                    invalidCharsNote}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
-
-                            {files.length === 0 ||
-                            files[files.length - 1].title.trim() ? (
-                                <div
+                            <div
                                     className={
                                         "file-drop" +
                                         (dragging ? " drag" : "") +
@@ -1281,15 +846,6 @@ function CreateDataset() {
                                         aria-label="Add files"
                                     />
                                 </div>
-                            ) : (
-                                <div className="add-hint">
-                                    <Ic name="info" size={15} sw={2} />
-                                    <span>
-                                        Add a title to the current file to add
-                                        another.
-                                    </span>
-                                </div>
-                            )}
                         </div>
                     )}
 

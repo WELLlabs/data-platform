@@ -2,13 +2,14 @@
 Dataset schemas for validation and serialization.
 """
 
-from datetime import datetime
+from datetime import date
 from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, validator
 
 from core.availability import parse_availability
+from utils.temporal import parse_coverage_date
 
 
 class DatasetCreate(BaseModel):
@@ -63,10 +64,10 @@ class DatasetCreate(BaseModel):
     )
     duration: int = Field(default=0, ge=0, description="Duration in years")
     # New file fields
-    temporal_from: Optional[datetime] = Field(
+    temporal_from: Optional[date] = Field(
         None, description="Temporal coverage start date"
     )
-    temporal_to: Optional[datetime] = Field(
+    temporal_to: Optional[date] = Field(
         None, description="Temporal coverage end date"
     )
     geography: Optional[str] = Field(
@@ -156,12 +157,21 @@ class DatasetCreate(BaseModel):
             raise ValueError("Organization ID cannot be empty")
         return v
 
+    @validator("temporal_from", "temporal_to", pre=True)
+    def validate_temporal_date(cls, v):
+        if v is None or v == "":
+            return None
+        try:
+            return parse_coverage_date(v)
+        except ValueError as exc:
+            raise ValueError("Temporal coverage must be a date (YYYY-MM-DD)") from exc
+
     @validator("temporal_to")
     def validate_temporal_range(cls, v, values):
-        """Validate that temporal_to is after temporal_from if both are provided."""
+        """Validate that temporal_to is not before temporal_from if both are provided."""
         if v is not None and "temporal_from" in values and values["temporal_from"] is not None:
             if v < values["temporal_from"]:
-                raise ValueError("temporal_to must be after temporal_from")
+                raise ValueError("temporal_to must not be before temporal_from")
         return v
 
 

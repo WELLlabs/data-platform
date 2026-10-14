@@ -50,7 +50,7 @@ class UserService:
         Returns:
             Dictionary containing user data with fields:
             id, full_name, email, designation, organization,
-            role, phone, contributions, created_at, modified_at, verified,
+            role, contributions, created_at, modified_at, verified,
             is_superuser, is_verified
             Returns None if user not found
         """
@@ -82,7 +82,6 @@ class UserService:
                 "designation": user.designation,
                 "organization": user.organization,
                 "role": user.role,
-                "phone": user.phone,
                 "contributions": contributions,
                 "created_at": user.created_at,
                 "modified_at": user.modified_at,

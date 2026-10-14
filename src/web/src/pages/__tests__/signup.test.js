@@ -144,6 +144,20 @@ describe("SignUp module", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/email already registered/i);
   });
 
+  test("blocks submit for an email outside the configured domains", async () => {
+    stubFetch({
+      "/api/auth/login-options": jsonResponse({
+        google_enabled: false,
+        allowed_email_domains: ["welllabs.org", "ifmr.ac.in"],
+      }),
+    });
+    renderSignUp();
+    await screen.findByRole("option", { name: "WELL Labs" });
+    await fillValidForm({ email: "ada@gmail.com" });
+    expect(screen.getByText(/allowed domain/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /create account/i })).toBeDisabled();
+  });
+
   test("SignupSuccess shows fallback without location state", () => {
     render(
       <MemoryRouter initialEntries={["/signupsuccess"]}>

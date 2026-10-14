@@ -125,12 +125,17 @@ async def _compute_privileges(
     user_id: Optional[UUID] = current_user.id if current_user else None
     apikey_val = apikey.strip() if apikey and apikey.strip() else None
     can_edit = False
+    can_add = False
     if user_id is not None:
-        can_edit = await dataset_service.can_edit_or_add_file(user_id, dataset_id)
+        can_edit = await dataset_service.can_edit_metadata(user_id, dataset_id)
+        can_add = await dataset_service.can_edit_or_add_file(user_id, dataset_id)
     elif apikey_val:
         user_data = await user_service.get_user_by_apikey(apikey_val)
         if user_data:
-            can_edit = await dataset_service.can_edit_or_add_file(
+            can_edit = await dataset_service.can_edit_metadata(
+                user_data["id"], dataset_id
+            )
+            can_add = await dataset_service.can_edit_or_add_file(
                 user_data["id"], dataset_id
             )
     has_perm = await dataset_service.check_dataset_permission(
@@ -162,19 +167,19 @@ async def _compute_privileges(
         )
     manage_owners = False
     if user_id is not None:
-        manage_owners = can_edit or is_org_admin
+        manage_owners = can_add or is_org_admin
         if current_user and current_user.is_superuser:
             manage_owners = True
     elif apikey_val:
         user_data = await user_service.get_user_by_apikey(apikey_val)
         if user_data:
-            manage_owners = can_edit or is_org_admin or bool(
+            manage_owners = can_add or is_org_admin or bool(
                 user_data.get("is_superuser")
             )
 
     return {
         "edit": can_edit,
-        "add_file": can_edit,
+        "add_file": can_add,
         "delete_dataset": has_perm,
         "delete_file": has_perm and files_count > 1,
         "approval": has_approval,
@@ -1082,18 +1087,18 @@ async def edit_dataset(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Dataset not found",
             )
-        can_edit = await controller.dataset_service.can_edit_or_add_file(
+        can_edit = await controller.dataset_service.can_edit_metadata(
             user.id, dataset_id
         )
         if not can_edit:
             logger.warning(
-                "Edit dataset denied: user %s is not creator or owner of dataset %s",
+                "Edit dataset denied: user %s cannot edit dataset %s",
                 user.id,
                 dataset_id,
             )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only a dataset owner can edit.",
+                detail="You do not have permission to edit this dataset.",
             )
         return await controller.edit_dataset(
             dataset_id=dataset_id,

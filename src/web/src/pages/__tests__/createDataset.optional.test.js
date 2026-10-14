@@ -39,9 +39,12 @@ describe("Publish dataset optional coverage fields", () => {
     const file = new File(["a,b"], "rain.csv", { type: "text/csv" });
     const input = await screen.findByLabelText(/add files/i);
     fireEvent.change(input, { target: { files: [file] } });
-    fireEvent.click(await screen.findByRole("button", { name: /rain\.csv/i }));
 
-    expect(await screen.findByText(/defaults to/i)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /rain\.csv/i })).toHaveAttribute(
+      "aria-expanded",
+      "true"
+    );
+    expect(screen.getByText(/defaults to/i)).toBeInTheDocument();
     expect(screen.getAllByText(/\(optional\)/i).length).toBeGreaterThanOrEqual(3);
     const noButton = screen.getByRole("button", { name: /^no$/i });
     expect(noButton.className).toMatch(/\bon\b/);

@@ -11,7 +11,6 @@ class UserRead(schemas.BaseUser[UUID]):
     designation: Optional[str] = None
     organization: Optional[UUID] = None
     role: int
-    phone: Optional[str] = None
     created_at: datetime
     modified_at: Optional[datetime] = None
     verified: bool
@@ -29,7 +28,6 @@ class UserCreate(schemas.BaseUserCreate):
     )
     organization: UUID = Field(..., description="Organization UUID")
     role: int = Field(default=0, ge=0, description="User's role level")
-    phone: Optional[str] = Field(None, max_length=20, description="User's phone number")
 
     @validator("full_name")
     def validate_required_strings(cls, v):
@@ -43,24 +41,6 @@ class UserCreate(schemas.BaseUserCreate):
             return None
         return v.strip() if v else None
 
-    @validator("phone")
-    def validate_phone(cls, v):
-        if v is not None:
-            # Convert to string if it's not already
-            v_str = str(v).strip() if not isinstance(v, str) else v.strip()
-            # If empty after stripping, return None
-            if not v_str:
-                return None
-            # Validate it contains only digits
-            if not v_str.isdigit():
-                raise ValueError("Phone number must contain only digits")
-            # Validate length (max 20 characters as per model)
-            if len(v_str) > 20:
-                raise ValueError("Phone number must be 20 characters or less")
-            return v_str
-        return None
-
-
 class UserUpdate(schemas.BaseUserUpdate):
     """Schema for updating user data"""
 
@@ -68,7 +48,6 @@ class UserUpdate(schemas.BaseUserUpdate):
     designation: Optional[str] = Field(None, max_length=25)
     organization: Optional[UUID] = None
     role: Optional[int] = Field(None, ge=0)
-    phone: Optional[str] = None
     verified: Optional[bool] = None
 
     @validator("full_name")
@@ -83,29 +62,10 @@ class UserUpdate(schemas.BaseUserUpdate):
             return None
         return v.strip() if v else v
 
-    @validator("phone")
-    def validate_phone(cls, v):
-        if v is not None:
-            # Convert to string if it's not already
-            v_str = str(v).strip() if not isinstance(v, str) else v.strip()
-            # If empty after stripping, return None
-            if not v_str:
-                return None
-            # Validate it contains only digits
-            if not v_str.isdigit():
-                raise ValueError("Phone number must contain only digits")
-            # Validate length (max 20 characters as per model)
-            if len(v_str) > 20:
-                raise ValueError("Phone number must be 20 characters or less")
-            return v_str
-        return None
-
-
 class CompleteProfileUpdate(BaseModel):
     full_name: str = Field(..., min_length=1, max_length=50)
     organization: UUID
     designation: Optional[str] = Field(None, max_length=25)
-    phone: Optional[str] = Field(None, max_length=20)
 
     @validator("full_name")
     def validate_required_strings(cls, v):
@@ -118,19 +78,6 @@ class CompleteProfileUpdate(BaseModel):
         if v is not None and not v.strip():
             return None
         return v.strip() if v else None
-
-    @validator("phone")
-    def validate_phone(cls, v):
-        if v is not None:
-            v_str = str(v).strip() if not isinstance(v, str) else v.strip()
-            if not v_str:
-                return None
-            if not v_str.isdigit():
-                raise ValueError("Phone number must contain only digits")
-            if len(v_str) > 20:
-                raise ValueError("Phone number must be 20 characters or less")
-            return v_str
-        return None
 
 
 class DatasetOwnerCreate(BaseModel):

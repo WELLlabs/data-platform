@@ -20,7 +20,8 @@ from services.organization import OrganizationService, get_organization_service
 from services.user import UserService, get_user_service
 from services.typesense_index import safe_index_dataset
 from tasks.email import send_upload_approval_response, send_user_approval_response
-from utils.security import optional_api_key, sanitize_input
+from core.config import settings
+from utils.security import optional_api_key, organization_accepts_email, sanitize_input
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -128,7 +129,6 @@ class UserController:
                 "organization": user.organization,
                 "verified": user.verified,
                 "role": user.role,
-                "phone": user.phone,
                 "contributions": contributions,
                 "created_at": user.created_at.isoformat() if user.created_at else None,
                 "modified_at": user.modified_at.isoformat()
@@ -172,7 +172,6 @@ class UserController:
         email: str,
         designation: Optional[str],
         organization: str,
-        phone: Optional[str],
     ) -> JSONResponse:
         """
         Update the signed-in user's profile. Validates and sanitizes inputs,
@@ -185,7 +184,6 @@ class UserController:
             sanitized_email = sanitize_input(email)
             sanitized_designation = sanitize_input(designation) if designation else None
             sanitized_organization = sanitize_input(organization)
-            sanitized_phone = sanitize_input(phone) if phone else None
 
             # Required fields non-empty after sanitization
             if not sanitized_full_name:
@@ -238,12 +236,6 @@ class UserController:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Organization must be at most 50 characters",
                 )
-            if sanitized_phone is not None and len(sanitized_phone) > 20:
-                self.logger.warning("Edit profile validation failed: phone too long")
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Phone must be at most 20 characters",
-                )
 
             # Email uniqueness if email is being changed
             if sanitized_email != user.email:
@@ -268,13 +260,21 @@ class UserController:
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Organization not found",
                 )
+            provider = getattr(user, "auth_provider", None) or "password"
+            org_error = organization_accepts_email(
+                org, sanitized_email, provider, settings.ALLOWED_EMAIL_DOMAIN
+            )
+            if org_error:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=org_error,
+                )
 
             await self.auth_service.user_db.update(user, {
                 "full_name": sanitized_full_name,
                 "email": sanitized_email,
                 "designation": sanitized_designation,
                 "organization": org.id,
-                "phone": sanitized_phone,
             } | (
                 {"is_verified": False} if sanitized_email != user.email else {}
             ) | (
@@ -969,7 +969,6 @@ async def edit_profile(
     email: str = Form(..., description="Email"),
     designation: Optional[str] = Form(None, description="Designation"),
     organization: str = Form(..., description="Organization ID"),
-    phone: Optional[str] = Form(None, description="Phone"),
 ):
     """
     Update the signed-in user's profile from form data.
@@ -983,7 +982,6 @@ async def edit_profile(
             email=email,
             designation=designation,
             organization=organization,
-            phone=phone,
         )
     except HTTPException:
         raise

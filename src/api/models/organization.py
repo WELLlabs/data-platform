@@ -40,6 +40,15 @@ class Organization(Base):
     roi_states: Mapped[Optional[List[str]]] = mapped_column(
         ARRAY(String), nullable=True
     )
+    allowed_email_domains: Mapped[Optional[List[str]]] = mapped_column(
+        ARRAY(String), nullable=True
+    )
+    allow_password: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
+    allow_google: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(

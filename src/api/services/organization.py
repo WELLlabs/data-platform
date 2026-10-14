@@ -239,6 +239,9 @@ class OrganizationService:
                 private=org_data.private,
                 focus=org_data.focus,
                 roi_states=org_data.roi_states,
+                allowed_email_domains=org_data.allowed_email_domains,
+                allow_password=org_data.allow_password,
+                allow_google=org_data.allow_google,
                 creator=creator_id,
             )
 
@@ -460,6 +463,9 @@ class OrganizationService:
                 Organization.focus,
                 Organization.roi_states,
                 Organization.created_at,
+                Organization.allowed_email_domains,
+                Organization.allow_password,
+                Organization.allow_google,
             )
             result = await self.session.execute(query)
             rows = result.all()
@@ -473,6 +479,9 @@ class OrganizationService:
                     "focus": row.focus,
                     "roi_states": row.roi_states,
                     "created_at": row.created_at,
+                    "allowed_email_domains": row.allowed_email_domains,
+                    "allow_password": bool(row.allow_password),
+                    "allow_google": bool(row.allow_google),
                 }
                 for row in rows
             ]

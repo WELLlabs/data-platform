@@ -6,11 +6,11 @@ It is maintained by PostgreSQL triggers on datasets and files tables.
 """
 
 import logging
-from datetime import datetime
+from datetime import date
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import DateTime, Index, Integer, Text
+from sqlalchemy import Date, Index, Integer, Text
 from sqlalchemy.dialects.postgresql import TSVECTOR, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -78,12 +78,12 @@ class GlobalSearchIndex(Base):
         index=True,
     )
     availability: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    temporal_from: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True),
+    temporal_from: Mapped[Optional[date]] = mapped_column(
+        Date,
         nullable=True,
     )
-    temporal_to: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True),
+    temporal_to: Mapped[Optional[date]] = mapped_column(
+        Date,
         nullable=True,
     )
 

@@ -20,6 +20,9 @@ function CreateOrg() {
     private: "No",
     focus: [],
     roi_states: [],
+    allowed_email_domains: "",
+    allow_password: true,
+    allow_google: true,
   });
 
   const navigate = useNavigate();
@@ -190,6 +193,12 @@ function CreateOrg() {
         private: formData.private === "Yes",
         focus: formData.focus.map(item => item.value),
         roi_states: formData.roi_states.map(item => item.value),
+        allowed_email_domains: formData.allowed_email_domains
+          .split(/[,;\s]+/)
+          .map((item) => item.trim().replace(/^@/, "").toLowerCase())
+          .filter(Boolean),
+        allow_password: formData.allow_password,
+        allow_google: formData.allow_google,
       };
 
       const response = await axios.post(organizations_endpoint, orgData, {
@@ -365,6 +374,42 @@ function CreateOrg() {
                 Website URL must be 200 characters or less
               </span>
             )}
+          </div>
+
+          <div className="field">
+            <label htmlFor="allowed_email_domains">Allowed email domains</label>
+            <input
+              id="allowed_email_domains"
+              name="allowed_email_domains"
+              type="text"
+              value={formData.allowed_email_domains}
+              onChange={handleInputChange}
+              placeholder="Optional, comma-separated. Leave blank to allow any configured domain."
+            />
+          </div>
+          <div className="field">
+            <label className="check" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              <input
+                type="checkbox"
+                checked={formData.allow_password}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, allow_password: e.target.checked }))
+                }
+              />
+              Allow password sign-up
+            </label>
+          </div>
+          <div className="field">
+            <label className="check" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              <input
+                type="checkbox"
+                checked={formData.allow_google}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, allow_google: e.target.checked }))
+                }
+              />
+              Allow Google sign-in
+            </label>
           </div>
 
           {/* Private Data */}

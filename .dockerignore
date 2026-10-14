@@ -1,0 +1,13 @@
+.git
+.github
+**/.venv
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/*.py[oc]
+**/.env
+**/.env.*
+**/.DS_Store
+**/npm-debug.log*
+src/web/build

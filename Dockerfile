@@ -1,7 +1,8 @@
-# linux/amd64: Typesense publishes an amd64 .deb, and the compose TiTiler image is pinned to that architecture.
-# Static files from the web stage are architecture-independent, but the virtualenvs are not.
+# Image architecture follows the build target (amd64 or arm64).
+# Typesense publishes a .deb for both. Virtualenvs must be built for that same CPU.
+# The web stage output is static files.
 
-FROM --platform=linux/amd64 node:22.19.0-alpine3.21 AS web
+FROM node:22.19.0-alpine3.21 AS web
 WORKDIR /app
 COPY src/web/package.json src/web/package-lock.json src/web/.npmrc ./
 RUN npm install
@@ -9,7 +10,7 @@ COPY src/web/ ./
 RUN npm run build
 
 # One environment for the API, the email worker, and the conversion worker.
-FROM --platform=linux/amd64 python:3.13-slim AS api
+FROM python:3.13-slim AS api
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
@@ -22,11 +23,13 @@ COPY src/api/pyproject.toml src/api/uv.lock ./
 RUN uv sync --frozen --no-dev --extra visualization
 
 # Raster libraries stay out of the API environment.
-FROM --platform=linux/amd64 python:3.13-slim AS titiler
+FROM python:3.13-slim AS titiler
 RUN python -m venv /opt/titiler \
     && /opt/titiler/bin/pip install --no-cache-dir "titiler.application[server]==2.4.0"
 
-FROM --platform=linux/amd64 python:3.13-slim
+FROM python:3.13-slim
+
+ARG TARGETARCH
 
 # apt must not start nginx, redis, or typesense during the build.
 # appuser takes uid 1000 before packages add their own system users.
@@ -44,7 +47,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libreoffice-impress \
         gdal-bin \
     && curl -fsSL -o /tmp/typesense-server.deb \
-        https://dl.typesense.org/releases/27.1/typesense-server-27.1-amd64.deb \
+        "https://dl.typesense.org/releases/27.1/typesense-server-27.1-${TARGETARCH}.deb" \
     && printf '#!/bin/sh\nexit 0\n' > /usr/sbin/systemctl \
     && chmod +x /usr/sbin/systemctl \
     && apt-get install -y /tmp/typesense-server.deb \
@@ -90,7 +93,9 @@ COPY --from=web /app/build /usr/share/nginx/html
 COPY deploy/nginx.conf /etc/nginx/conf.d/data-platform.conf
 COPY deploy/supervisord.conf /etc/data-platform/supervisord.conf
 COPY deploy/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh \
+# A CRLF shebang makes the kernel look for /bin/sh\r and exit with "no such file".
+RUN sed -i 's/\r$//' /entrypoint.sh /etc/nginx/conf.d/data-platform.conf /etc/data-platform/supervisord.conf \
+    && chmod +x /entrypoint.sh \
     && chmod -R a+rX /opt/titiler
 
 ENV REDIS_URL=redis://127.0.0.1:6379/0 \

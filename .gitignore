@@ -2,3 +2,5 @@
 .cursorrules
 *.txt
 *.pem
+CLAUDE.md
+.DS_Store

@@ -13,6 +13,19 @@ const OSM_STYLE = {
   layers: [{ id: "osm", type: "raster", source: "osm" }],
 };
 
+function boundsFromHeader(header) {
+  if (!header) return null;
+  const { minLon, minLat, maxLon, maxLat } = header;
+  const values = [minLon, minLat, maxLon, maxLat];
+  if (!values.every((n) => Number.isFinite(n))) return null;
+  if (minLon > maxLon || minLat > maxLat) return null;
+  if (minLon === maxLon && minLat === maxLat) return null;
+  return [
+    [minLon, minLat],
+    [maxLon, maxLat],
+  ];
+}
+
 function bboxOf(geojson) {
   let minX = 180;
   let minY = 90;
@@ -46,6 +59,7 @@ export default function VectorMapViewer({ url, format }) {
   const [pmtilesUrl, setPmtilesUrl] = useState("");
   const [error, setError] = useState("");
   const [bounds, setBounds] = useState(null);
+  const [sourceLayer, setSourceLayer] = useState("default");
 
   useEffect(() => {
     let cancelled = false;
@@ -68,14 +82,30 @@ export default function VectorMapViewer({ url, format }) {
         const fmt = (format || "").toLowerCase();
         if (fmt === "pmtiles") {
           const maplibre = await import("maplibre-gl");
-          const { Protocol } = await import("pmtiles");
+          const pm = await import("pmtiles");
+          const { Protocol, PMTiles } = pm;
           const ml = maplibre.default || maplibre;
           if (!window.__pmtilesProtocol) {
             const protocol = new Protocol();
             ml.addProtocol("pmtiles", protocol.tile);
             window.__pmtilesProtocol = true;
           }
-          if (!cancelled) setPmtilesUrl(`pmtiles://${url}`);
+          const archive = new PMTiles(url);
+          const header = await archive.getHeader();
+          let layerName = "default";
+          try {
+            let meta = await archive.getMetadata();
+            if (typeof meta === "string") meta = JSON.parse(meta);
+            const layers = meta && (meta.vector_layers || meta.vectorLayers);
+            const id = Array.isArray(layers) && layers[0] && (layers[0].id || layers[0].name);
+            if (id) layerName = String(id);
+          } catch {
+            layerName = "default";
+          }
+          if (cancelled) return;
+          setSourceLayer(layerName);
+          setBounds(boundsFromHeader(header));
+          setPmtilesUrl(`pmtiles://${url}`);
           return;
         }
         const fgb = await import("flatgeobuf");
@@ -95,7 +125,14 @@ export default function VectorMapViewer({ url, format }) {
     return () => { cancelled = true; };
   }, [url, format]);
 
-  const initialView = useMemo(() => ({ longitude: 78.96, latitude: 20.59, zoom: 4 }), []);
+  const initialView = useMemo(() => {
+    if (!bounds) return { longitude: 78.96, latitude: 20.59, zoom: 4 };
+    return {
+      longitude: (bounds[0][0] + bounds[1][0]) / 2,
+      latitude: (bounds[0][1] + bounds[1][1]) / 2,
+      zoom: 6,
+    };
+  }, [bounds]);
 
   if (error) {
     return (
@@ -115,6 +152,7 @@ export default function VectorMapViewer({ url, format }) {
   return (
     <div className="preview-map">
       <Map
+        key={bounds ? bounds.flat().join(",") : "default"}
         mapLib={import("maplibre-gl")}
         mapStyle={OSM_STYLE}
         initialViewState={initialView}
@@ -133,8 +171,20 @@ export default function VectorMapViewer({ url, format }) {
             <Layer
               id="viz-pm-fill"
               type="fill"
-              source-layer="default"
+              source-layer={sourceLayer}
               paint={{ "fill-color": "#2563eb", "fill-opacity": 0.25 }}
+            />
+            <Layer
+              id="viz-pm-line"
+              type="line"
+              source-layer={sourceLayer}
+              paint={{ "line-color": "#1d4ed8", "line-width": 1.5 }}
+            />
+            <Layer
+              id="viz-pm-circle"
+              type="circle"
+              source-layer={sourceLayer}
+              paint={{ "circle-radius": 4, "circle-color": "#1d4ed8" }}
             />
           </Source>
         )}

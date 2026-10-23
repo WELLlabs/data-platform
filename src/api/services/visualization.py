@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
@@ -27,7 +26,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_ ]{0,120}$")
 _ALLOWED_AGG = {"sum", "avg", "min", "max", "count"}
 CONVERSION_STALE_SECONDS = 90
 # Matches cpu.convert_file time_limit. Do not use the shorter email-worker limit.
@@ -35,7 +33,18 @@ CONVERSION_TASK_TIME_LIMIT = 2100
 
 
 def quote_ident(name: str) -> str:
-    if not _IDENT.match(name or ""):
+    """Quote a spreadsheet header for DuckDB.
+
+    Headers often contain spaces, parentheses, and units such as
+    ``Available K (kg/ha)``. Doubling embedded quotes keeps the name an
+    identifier, so it cannot change the query.
+    """
+    if not isinstance(name, str) or not name or len(name) > 120:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid column name",
+        )
+    if any(ord(ch) < 32 for ch in name):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid column name",
@@ -373,7 +382,11 @@ class VisualizationService:
                 select_parts.append(f"COUNT(*) AS {alias}")
             else:
                 col_sql = quote_ident(col)
-                select_parts.append(f"{agg.upper()}({col_sql}) AS {alias}")
+                # Excel columns often arrive as text. Cast so units like
+                # "Available K (kg/ha)" still plot.
+                select_parts.append(
+                    f"{agg.upper()}(TRY_CAST({col_sql} AS DOUBLE)) AS {alias}"
+                )
         import duckdb
 
         con = duckdb.connect(database=":memory:")

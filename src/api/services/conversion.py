@@ -69,6 +69,36 @@ def convert_to_pdf(src: Path, dest_dir: Path, timeout: int) -> Path:
     return pdfs[0]
 
 
+def _spreadsheet_to_csv(src: Path, dest_dir: Path, timeout: int) -> Path:
+    """LibreOffice reads xls, xlsm, xlsb, and the template formats DuckDB cannot."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    _run(
+        [
+            _soffice_bin(),
+            "--headless",
+            "--norestore",
+            "--convert-to",
+            "csv",
+            "--outdir",
+            str(dest_dir),
+            str(src),
+        ],
+        timeout=timeout,
+    )
+    csvs = list(dest_dir.glob("*.csv"))
+    if not csvs:
+        raise ConversionError("Could not convert spreadsheet to CSV")
+    return csvs[0]
+
+
+def _copy_csv_to_parquet(con, csv_path: Path, dest_s: str) -> None:
+    csv_s = str(csv_path).replace("'", "''")
+    con.execute(
+        f"COPY (SELECT * FROM read_csv_auto('{csv_s}', header=true)) "
+        f"TO '{dest_s}' (FORMAT PARQUET)"
+    )
+
+
 def convert_to_parquet(src: Path, dest: Path, timeout: int) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -80,6 +110,7 @@ def convert_to_parquet(src: Path, dest: Path, timeout: int) -> Path:
     src_s = str(src).replace("'", "''")
     dest_s = str(dest).replace("'", "''")
     suffix = src.suffix.lower()
+    other_excel = {".xls", ".xlsm", ".xlsb", ".xlt", ".xltx", ".xltm"}
     try:
         if suffix in {".csv", ".tsv"}:
             delim = "\\t" if suffix == ".tsv" else ","
@@ -87,6 +118,9 @@ def convert_to_parquet(src: Path, dest: Path, timeout: int) -> Path:
                 f"COPY (SELECT * FROM read_csv_auto('{src_s}', delim='{delim}', header=true)) "
                 f"TO '{dest_s}' (FORMAT PARQUET)"
             )
+        elif suffix in other_excel:
+            csv_path = _spreadsheet_to_csv(src, dest.parent / "excel_csv", timeout)
+            _copy_csv_to_parquet(con, csv_path, dest_s)
         else:
             try:
                 con.execute("INSTALL excel")
@@ -96,29 +130,8 @@ def convert_to_parquet(src: Path, dest: Path, timeout: int) -> Path:
                     f"TO '{dest_s}' (FORMAT PARQUET)"
                 )
             except Exception:
-                csv_dir = dest.parent / "xlsx_csv"
-                csv_dir.mkdir(parents=True, exist_ok=True)
-                _run(
-                    [
-                        _soffice_bin(),
-                        "--headless",
-                        "--norestore",
-                        "--convert-to",
-                        "csv",
-                        "--outdir",
-                        str(csv_dir),
-                        str(src),
-                    ],
-                    timeout=timeout,
-                )
-                csvs = list(csv_dir.glob("*.csv"))
-                if not csvs:
-                    raise ConversionError("Could not convert spreadsheet to Parquet")
-                csv_s = str(csvs[0]).replace("'", "''")
-                con.execute(
-                    f"COPY (SELECT * FROM read_csv_auto('{csv_s}', header=true)) "
-                    f"TO '{dest_s}' (FORMAT PARQUET)"
-                )
+                csv_path = _spreadsheet_to_csv(src, dest.parent / "xlsx_csv", timeout)
+                _copy_csv_to_parquet(con, csv_path, dest_s)
     except ConversionError:
         raise
     except Exception as exc:
@@ -144,18 +157,23 @@ def _ogrinfo() -> Optional[str]:
 def _count_features(src: Path, timeout: int) -> int:
     info = _ogrinfo()
     if not info:
-        return 0
-    try:
-        proc = _run([info, "-so", "-al", str(src)], timeout=min(timeout, 120))
-    except ConversionError:
-        return 0
+        raise ConversionError("GDAL ogrinfo is not installed")
+    proc = _run([info, "-so", "-al", str(src)], timeout=min(timeout, 120))
     total = 0
+    found = False
     for line in (proc.stdout or "").splitlines():
-        if "Feature Count" in line:
-            try:
-                total += int(line.split(":")[-1].strip())
-            except ValueError:
-                continue
+        if "Feature Count" not in line:
+            continue
+        try:
+            count = int(line.split(":")[-1].strip())
+        except ValueError:
+            continue
+        if count < 0:
+            continue
+        total += count
+        found = True
+    if not found:
+        raise ConversionError("Could not count vector features")
     return total
 
 
@@ -180,6 +198,19 @@ def convert_vector(src: Path, dest_dir: Path, timeout: int) -> tuple[Path, str]:
     if not dest.exists():
         raise ConversionError("FlatGeobuf conversion failed")
     return dest, "flatgeobuf"
+
+
+def is_cog(src: Path, timeout: int) -> bool:
+    """True when gdalinfo reports the file is already a Cloud Optimized GeoTIFF."""
+    gdalinfo = shutil.which("gdalinfo")
+    if not gdalinfo:
+        return False
+    try:
+        proc = _run([gdalinfo, str(src)], timeout=min(timeout, 120))
+    except ConversionError:
+        return False
+    text = f"{proc.stdout or ''}\n{proc.stderr or ''}"
+    return "LAYOUT=COG" in text
 
 
 def convert_cog(src: Path, dest: Path, timeout: int) -> Path:

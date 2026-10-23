@@ -71,8 +71,10 @@ export default function FilePreview() {
           /* ignore */
         }
         if (resp.status === 403) detail = "You do not have permission to view this file.";
-        if (resp.status === 404) detail = "This file no longer exists.";
-        if (resp.status === 400) detail = detail || "This file type cannot be visualised.";
+        if (resp.status === 404 && detail === "Could not open this file.") {
+          detail = "This file no longer exists.";
+        }
+        if (resp.status === 400 && !detail) detail = "This file type cannot be visualised.";
         throw new Error(detail);
       }
       const data = await resp.json();
@@ -139,19 +141,26 @@ export default function FilePreview() {
   const kindLabel = (payload?.format || format || "file").toString().toUpperCase();
   const backHref = datasetId ? `/dataset-info?dataset_id=${encodeURIComponent(datasetId)}` : "/datasets";
   const viewer = payload?.viewer;
+  const chartLayout = status === "ready" && viewer === "table_chart";
+
+  useEffect(() => {
+    if (!chartLayout) return undefined;
+    document.body.classList.add("chart-preview");
+    return () => document.body.classList.remove("chart-preview");
+  }, [chartLayout]);
 
   return (
-    <div className="page preview-page">
+    <div className={"page preview-page" + (chartLayout ? " preview-page-full" : "")}>
       <section className="preview-hero">
         <Contour op={0.35} />
-        <div className="wrap preview-hero-inner">
+        <div className={chartLayout ? "preview-hero-full preview-hero-inner" : "wrap preview-hero-inner"}>
           <div>
             <span className="eyebrow">File preview</span>
             <h1 className="display preview-title">{title}</h1>
-            <p className="preview-meta">
+            {/* <p className="preview-meta">
               <span className="fmt-chip">{kindLabel}</span>
               {name ? <span className="muted">{name}</span> : null}
-            </p>
+            </p> */}
           </div>
           <div className="preview-actions">
             <button
@@ -170,8 +179,8 @@ export default function FilePreview() {
         </div>
       </section>
 
-      <div className="wrap">
-        <div className="preview-stage">
+      <div className={chartLayout ? "preview-chart-page" : "wrap"}>
+        <div className={chartLayout ? "preview-chart-stage" : "preview-stage"}>
           {(status === "loading" || status === "processing") && (
             <div className="empty">
               <p>

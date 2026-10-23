@@ -9,6 +9,7 @@ import {
     organization_by_id_endpoint,
 } from "../api/endpoints";
 import { requestAndUploadFile } from "../api/s3Upload";
+import { findExistingFiles } from "../api/fileCheck";
 import FileAccordionList from "../components/FileAccordionList";
 import HelpTooltip from "../components/HelpTooltip";
 import Ic from "../components/wd/Icons";
@@ -168,6 +169,16 @@ function CreateDataset() {
             incoming.forEach((entry) => next.add(entry.key));
             return next;
         });
+        findExistingFiles(incoming).then((found) => {
+            if (!found.size) return;
+            setFiles((prev) =>
+                prev.map((item) =>
+                    found.has(item.key)
+                        ? { ...item, conflict: found.get(item.key) }
+                        : item
+                )
+            );
+        });
     };
 
     const handleFileChange = (e) => {
@@ -316,6 +327,14 @@ function CreateDataset() {
             window.scrollTo({ top: 0, behavior: "smooth" });
             return;
         }
+        if (files.some((item) => item.conflict)) {
+            setShowErrors(true);
+            setError(
+                "Some files are already uploaded in other datasets. Remove them before publishing."
+            );
+            window.scrollTo({ top: 0, behavior: "smooth" });
+            return;
+        }
         const fileErrs = getFileErrors();
         if (!files.length || fileErrs.length) {
             setShowErrors(true);
@@ -387,7 +406,9 @@ function CreateDataset() {
             let uploadedBytes = 0;
             for (const item of files) {
                 const priorBytes = uploadedBytes;
-                const { fileId } = await requestAndUploadFile({
+                let fileId;
+                try {
+                    ({ fileId } = await requestAndUploadFile({
                     jobId: datasetJobId,
                     file: item.file,
                     filename: storedFilename(item.basename, item.extension),
@@ -400,7 +421,23 @@ function CreateDataset() {
                             : pct;
                         setProgress(Math.min(99, overall));
                     },
-                });
+                    }));
+                } catch (err) {
+                    if (err.status === 409 && err.conflict) {
+                        setFiles((prev) =>
+                            prev.map((x) =>
+                                x.key === item.key
+                                    ? { ...x, conflict: err.conflict }
+                                    : x
+                            )
+                        );
+                        setShowErrors(true);
+                        throw new Error(
+                            `${item.file.name}: This file is already uploaded in some dataset.`
+                        );
+                    }
+                    throw err;
+                }
 
                 const addFileForm = new FormData();
                 addFileForm.append("job_id", datasetJobId);

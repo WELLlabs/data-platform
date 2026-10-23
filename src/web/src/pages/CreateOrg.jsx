@@ -5,6 +5,7 @@ import Select from "react-select";
 import { me_endpoint, organizations_endpoint } from "../api/endpoints";
 import { clearOrganizationNamesCache } from "../components/wd/DatasetItems";
 import Contour from "../components/wd/Contour";
+import Ic from "../components/wd/Icons";
 
 function CreateOrg() {
   const [user, setUser] = useState(null);
@@ -265,226 +266,282 @@ function CreateOrg() {
     );
   }
 
+  const setField = (field, value) =>
+    setFormData((prev) => ({ ...prev, [field]: value }));
+
+  const counter = (value, max) => (
+    <span className={"co-count" + (value.length > max * 0.9 ? " near" : "")}>
+      {value.length}/{max}
+    </span>
+  );
+
+  const renderToggle = (field, title, text) => (
+    <label className="co-switch" key={field}>
+      <span className="co-switch-text">
+        <b>{title}</b>
+        <small>{text}</small>
+      </span>
+      <input
+        type="checkbox"
+        role="switch"
+        checked={formData[field]}
+        onChange={(e) => setField(field, e.target.checked)}
+      />
+      <span className="co-switch-track" aria-hidden="true">
+        <span className="co-switch-thumb" />
+      </span>
+    </label>
+  );
+
   return (
     <div className="page">
-      <div className="wrap" style={{ maxWidth: 720, padding: "48px 0 88px" }}>
-        <span className="eyebrow">Organizations</span>
-        <div className="section-head" style={{ marginTop: 8 }}>
-          <h2 className="section-title">Create organization</h2>
+      <div className="wrap ds-form" style={{ padding: "36px 0 88px" }}>
+        <button type="button" className="back-link" onClick={() => navigate(-1)}>
+          <Ic name="chevLeft" size={15} sw={2} />
+          <span>Back</span>
+        </button>
+
+        <div className="section-head" style={{ marginTop: 14 }}>
+          <div>
+            <span className="eyebrow">Organisations</span>
+            <h2 className="section-title" style={{ marginTop: 6 }}>
+              Create organisation
+            </h2>
+            <p className="muted" style={{ marginTop: 6, maxWidth: "70ch" }}>
+              Set up a new organisation to manage its datasets and members. Only
+              the name is required, and every detail can be edited later.
+            </p>
+          </div>
         </div>
-        <p className="lede" style={{ marginTop: -8, marginBottom: 26 }}>
-          Create a new organization to manage data and users.
-        </p>
 
-        {error && (
-          <div className="attn-card warn" role="alert" style={{ marginBottom: 20 }}>
-            <div><b>{error}</b></div>
-          </div>
-        )}
+        <form onSubmit={handleSubmit} noValidate style={{ marginTop: 22 }}>
+          {error && (
+            <div className="form-note err" role="alert">
+              <span>{error}</span>
+            </div>
+          )}
 
-        <form onSubmit={handleSubmit} noValidate>
-          {/* Organization Name */}
-          <div className="field">
-            <label htmlFor="name">Organization name *</label>
-            <input
-              id="name"
-              name="name"
-              type="text"
-              value={formData.name}
-              onChange={handleInputChange}
-              placeholder="Enter organization name"
-              maxLength={100}
-              required
-            />
-            {formData.name.length > 100 && (
-              <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
-                Organization name must be 100 characters or less
-              </span>
-            )}
-          </div>
+          {/* Section 1: details */}
+          <div className="form-section">
+            <div className="fs-head">
+              <span className="fs-num">1</span>
+              <div>
+                <h3>Organisation details</h3>
+                <p>How the organisation appears across the platform.</p>
+              </div>
+            </div>
 
-          {/* Description */}
-          <div className="field">
-            <label htmlFor="description">Description</label>
-            <textarea
-              id="description"
-              name="description"
-              value={formData.description}
-              onChange={handleInputChange}
-              placeholder="Enter organization description"
-              maxLength={1000}
-              rows={3}
-            />
-            {formData.description.length > 1000 && (
-              <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
-                Description must be 1000 characters or less
-              </span>
-            )}
-          </div>
-
-          {/* Organization Type */}
-          <div className="field">
-            <label htmlFor="org_type">Organization type</label>
-            <Select
-              inputId="org_type"
-              name="org_type"
-              value={orgTypeOptions.find(option => option.value === formData.org_type) || null}
-              onChange={(selectedOption) => handleSelectChange(selectedOption, "org_type")}
-              options={orgTypeOptions}
-              placeholder="Select organization type"
-              isClearable
-              className="react-select-container"
-              classNamePrefix="react-select"
-            />
-          </div>
-
-          {/* Contact */}
-          <div className="field">
-            <label htmlFor="contact">Contact information</label>
-            <input
-              id="contact"
-              name="contact"
-              type="text"
-              value={formData.contact}
-              onChange={handleInputChange}
-              placeholder="Enter contact information"
-              maxLength={100}
-            />
-            {formData.contact.length > 100 && (
-              <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
-                Contact information must be 100 characters or less
-              </span>
-            )}
-          </div>
-
-          {/* Website */}
-          <div className="field">
-            <label htmlFor="website">Website</label>
-            <input
-              id="website"
-              name="website"
-              type="url"
-              value={formData.website}
-              onChange={handleInputChange}
-              placeholder="https://example.com"
-              maxLength={200}
-            />
-            {formData.website.length > 200 && (
-              <span style={{ color: "var(--red, #c62828)", fontSize: 13 }}>
-                Website URL must be 200 characters or less
-              </span>
-            )}
-          </div>
-
-          <div className="field">
-            <label htmlFor="allowed_email_domains">Allowed email domains</label>
-            <input
-              id="allowed_email_domains"
-              name="allowed_email_domains"
-              type="text"
-              value={formData.allowed_email_domains}
-              onChange={handleInputChange}
-              placeholder="Optional, comma-separated. Leave blank to allow any configured domain."
-            />
-          </div>
-          <div className="field">
-            <label className="check" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-              <input
-                type="checkbox"
-                checked={formData.allow_password}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, allow_password: e.target.checked }))
-                }
-              />
-              Allow password sign-up
-            </label>
-          </div>
-          <div className="field">
-            <label className="check" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-              <input
-                type="checkbox"
-                checked={formData.allow_google}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, allow_google: e.target.checked }))
-                }
-              />
-              Allow Google sign-in
-            </label>
-          </div>
-
-          {/* Private Data */}
-          <div className="field">
-            <label>Private data</label>
-            <div style={{ display: "flex", gap: 18, alignItems: "center" }}>
-              <label className="check" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                <input
-                  type="radio"
-                  name="private"
-                  id="privateNo"
-                  value="No"
-                  checked={formData.private === "No"}
-                  onChange={handleInputChange}
-                />
-                No
+            <div className="field">
+              <label htmlFor="name">
+                Organisation name <span className="req">(required)</span>
               </label>
-              <label className="check" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                <input
-                  type="radio"
-                  name="private"
-                  id="privateYes"
-                  value="Yes"
-                  checked={formData.private === "Yes"}
-                  onChange={handleInputChange}
-                />
-                Yes
+              <input
+                id="name"
+                name="name"
+                type="text"
+                value={formData.name}
+                onChange={handleInputChange}
+                placeholder="e.g. WELL Labs"
+                maxLength={100}
+                required
+              />
+            </div>
+
+            <div className="field">
+              <label htmlFor="description">
+                Description <span className="opt">(optional)</span>
               </label>
+              <textarea
+                id="description"
+                name="description"
+                value={formData.description}
+                onChange={handleInputChange}
+                placeholder="What does the organisation do, and what kind of data will it share?"
+                maxLength={1000}
+                rows={3}
+              />
+              {counter(formData.description, 1000)}
+            </div>
+
+            <div className="field-row">
+              <div className="field">
+                <label htmlFor="org_type">
+                  Organisation type <span className="opt">(optional)</span>
+                </label>
+                <Select
+                  inputId="org_type"
+                  name="org_type"
+                  value={orgTypeOptions.find((o) => o.value === formData.org_type) || null}
+                  onChange={(opt) => handleSelectChange(opt, "org_type")}
+                  options={orgTypeOptions}
+                  placeholder="Select a type"
+                  isClearable
+                  className="react-select-container"
+                  classNamePrefix="react-select"
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="website">
+                  Website <span className="opt">(optional)</span>
+                </label>
+                <input
+                  id="website"
+                  name="website"
+                  type="url"
+                  value={formData.website}
+                  onChange={handleInputChange}
+                  placeholder="https://example.org"
+                  maxLength={200}
+                />
+              </div>
+            </div>
+
+            <div className="field">
+              <label htmlFor="contact">
+                Contact information <span className="opt">(optional)</span>
+              </label>
+              <input
+                id="contact"
+                name="contact"
+                type="text"
+                value={formData.contact}
+                onChange={handleInputChange}
+                placeholder="A shared email or phone number for the organisation"
+                maxLength={100}
+              />
             </div>
           </div>
 
-          {/* Focus Areas */}
-          <div className="field">
-            <label htmlFor="focus">Focus areas (multi-select)</label>
-            <Select
-              inputId="focus"
-              name="focus"
-              value={formData.focus}
-              onChange={(selectedOptions) => handleMultiSelectChange(selectedOptions, "focus")}
-              options={focusOptions}
-              placeholder="Select focus areas"
-              isMulti
-              isClearable
-              className="react-select-container"
-              classNamePrefix="react-select"
-            />
+          {/* Section 2: access */}
+          <div className="form-section">
+            <div className="fs-head">
+              <span className="fs-num">2</span>
+              <div>
+                <h3>Sign-in &amp; access</h3>
+                <p>Who can join, how they sign in, and whether data can be private.</p>
+              </div>
+            </div>
+
+            <div className="field">
+              <label htmlFor="allowed_email_domains">
+                Allowed email domains <span className="opt">(optional)</span>
+              </label>
+              <input
+                id="allowed_email_domains"
+                name="allowed_email_domains"
+                type="text"
+                value={formData.allowed_email_domains}
+                onChange={handleInputChange}
+                placeholder="e.g. welllabs.org, ifmr.ac.in"
+              />
+              <span className="hint">
+                Separate domains with commas. Leave blank to allow any configured domain.
+              </span>
+            </div>
+
+            <div className="co-switches">
+              {renderToggle("allow_password", "Password sign-up", "Members can create an account with an email and password.")}
+              {renderToggle("allow_google", "Google sign-in", "Members can sign in with their Google account.")}
+            </div>
+
+            <div className="field co-private">
+              <div>
+                <label id="private-label" style={{ marginBottom: 2 }}>Private data</label>
+                <span className="hint" style={{ marginTop: 0 }}>
+                  Allows datasets to be restricted to members of this organisation.
+                </span>
+              </div>
+              <div className="seg" role="radiogroup" aria-labelledby="private-label">
+                {["No", "Yes"].map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    role="radio"
+                    aria-checked={formData.private === v}
+                    className={"seg-opt" + (formData.private === v ? " on" : "")}
+                    onClick={() => setField("private", v)}
+                  >
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
-          {/* States */}
-          <div className="field">
-            <label htmlFor="roi_states">States working in (multi-select)</label>
-            <Select
-              inputId="roi_states"
-              name="roi_states"
-              value={formData.roi_states}
-              onChange={(selectedOptions) => handleMultiSelectChange(selectedOptions, "roi_states")}
-              options={stateOptions}
-              placeholder="Select states"
-              isMulti
-              isClearable
-              isSearchable
-              className="react-select-container"
-              classNamePrefix="react-select"
-            />
+          {/* Section 3: focus */}
+          <div className="form-section">
+            <div className="fs-head">
+              <span className="fs-num">3</span>
+              <div>
+                <h3>Focus &amp; coverage</h3>
+                <p>Helps people find the organisation by theme and geography.</p>
+              </div>
+            </div>
+
+            <div className="field">
+              <label htmlFor="focus">
+                Focus areas <span className="opt">(select any)</span>
+              </label>
+              <Select
+                inputId="focus"
+                name="focus"
+                value={formData.focus}
+                onChange={(opts) => handleMultiSelectChange(opts, "focus")}
+                options={focusOptions}
+                placeholder="Select focus areas"
+                isMulti
+                isClearable
+                closeMenuOnSelect={false}
+                className="react-select-container"
+                classNamePrefix="react-select"
+              />
+            </div>
+
+            <div className="field">
+              <label htmlFor="roi_states">
+                States and union territories <span className="opt">(select any)</span>
+              </label>
+              <Select
+                inputId="roi_states"
+                name="roi_states"
+                value={formData.roi_states}
+                onChange={(opts) => handleMultiSelectChange(opts, "roi_states")}
+                options={stateOptions}
+                placeholder="Search or select states"
+                isMulti
+                isClearable
+                isSearchable
+                closeMenuOnSelect={false}
+                className="react-select-container"
+                classNamePrefix="react-select"
+              />
+            </div>
           </div>
 
-          {/* Submit Button */}
-          <button
-            type="submit"
-            className="btn btn-primary"
-            style={{ width: "100%", marginTop: 8 }}
-            disabled={!isFormValid() || submitting}
-          >
-            {submitting ? "Creating organization…" : "Create organization"}
-          </button>
+          <div className="form-actions">
+            <span className="fa-note">
+              {formData.name.trim()
+                ? "Ready to create"
+                : "Add an organisation name to continue"}
+            </span>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => navigate(-1)}
+                disabled={submitting}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={!isFormValid() || submitting}
+              >
+                {submitting ? "Creating…" : "Create organisation"}
+              </button>
+            </div>
+          </div>
         </form>
       </div>
     </div>

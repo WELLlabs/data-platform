@@ -2,5 +2,3 @@ node_modules
 .gitignore
 README.md
 .env
-nginx/fullchain.pem 
-nginx/privkey.pem

@@ -390,9 +390,12 @@ class UploadController:
                 self.logger.warning(
                     "File already exists: %s/%s", user.id, sanitized_filename
                 )
-                raise HTTPException(
+                owner = await self._existing_file_dataset(
+                    f"{user.id}/{sanitized_filename}"
+                )
+                return JSONResponse(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="File already exists",
+                    content={"detail": "This file is already uploaded in some dataset.", **owner},
                 )
 
             file_id = uuid4()
@@ -492,6 +495,56 @@ class UploadController:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Error generating upload URL",
             )
+
+    async def _existing_file_dataset(self, file_key: str) -> Dict[str, Any]:
+        """Return the dataset that already holds ``file_key``, if any."""
+        try:
+            result = await self.session.execute(
+                select(File.dataset_id, Dataset.dataset_title)
+                .join(Dataset, Dataset.dataset_id == File.dataset_id)
+                .where(File.file_key == file_key)
+                .limit(1)
+            )
+            row = result.first()
+        except Exception as e:  # lookup is best effort; never block the 409
+            self.logger.warning("Existing file lookup failed for %s: %s", file_key, e)
+            return {"dataset_id": None, "dataset_title": None}
+        if not row:
+            return {"dataset_id": None, "dataset_title": None}
+        return {"dataset_id": str(row[0]), "dataset_title": row[1]}
+
+    async def check_files(
+        self, user: User, files: List[Dict[str, Any]]
+    ) -> JSONResponse:
+        """Report which of the user's chosen files already exist in storage."""
+        if len(files) > 200:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Too many files; check at most 200 at a time",
+            )
+
+        async def check_one(entry: Dict[str, Any]) -> Dict[str, Any]:
+            filename = str(entry.get("filename") or "")
+            original = entry.get("original_filename")
+            base = {"filename": filename, "exists": False}
+            try:
+                stored = sanitize_storage_filename(filename, original)
+            except FilenameError as exc:
+                return {**base, "error": str(exc) or "Invalid filename"}
+            file_key = f"{user.id}/{stored}"
+            owner = await self._existing_file_dataset(file_key)
+            exists = owner.get("dataset_id") is not None
+            if not exists:
+                status_data = await self.upload_service.check_file_status_by_key(
+                    file_key
+                )
+                exists = bool(status_data.get("exists", False))
+            return {**base, "stored_filename": stored, "exists": exists, **owner}
+
+        results = []
+        for entry in files:
+            results.append(await check_one(entry if isinstance(entry, dict) else {}))
+        return JSONResponse(content={"results": results})
 
     async def complete_multipart(
         self, body: CompleteMultipartRequest, user: User
@@ -1358,6 +1411,27 @@ async def get_upload_url(
     return await controller.get_upload_url(
         job_id, filename, user, file_size, original_filename
     )
+
+
+@router.post("/check_files")
+async def check_files(
+    payload: Dict[str, Any] = Body(...),
+    user: User = Depends(get_current_active_user),
+    controller: UploadController = Depends(get_upload_controller),
+):
+    """Check whether files with these names already exist for the user.
+
+    Body: {"files": [{"filename": str, "original_filename": str | null}]}
+    Each result carries ``exists`` and, when the file belongs to a dataset,
+    ``dataset_id`` and ``dataset_title``.
+    """
+    files = payload.get("files") if isinstance(payload, dict) else None
+    if not isinstance(files, list):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="files must be a list",
+        )
+    return await controller.check_files(user, files)
 
 
 @router.post("/complete_multipart")

@@ -949,6 +949,21 @@ textarea.autogrow{width:100%;resize:none;overflow:hidden;min-height:42px;line-he
 .preview-meta{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
 .preview-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .preview-stage{margin-top:22px;background:var(--paper);border:1px solid var(--line);border-radius:var(--radius-lg);padding:18px;box-shadow:var(--shadow-sm);min-height:240px}
+body.chart-preview{overflow:hidden}
+body.chart-preview .app-root{height:100vh;height:100dvh;overflow:hidden}
+body.chart-preview .app-root > #app{min-height:0;display:flex;flex-direction:column;overflow:hidden}
+body.chart-preview .footer{display:none}
+.preview-page-full{flex:1;min-height:0;display:flex;flex-direction:column;padding-bottom:0;overflow:hidden}
+.preview-page-full .preview-hero{flex:none;padding:14px 0 6px}
+.preview-hero-full{width:100%;max-width:none;padding:0 28px;box-sizing:border-box}
+.preview-page-full .preview-title{font-size:26px;margin-top:4px}
+.preview-page-full .preview-meta{margin-top:6px}
+.preview-chart-page{flex:1;min-height:0;width:100%;max-width:none;padding:0 20px 12px;box-sizing:border-box;display:flex;flex-direction:column}
+.preview-chart-stage{flex:1;min-height:0;margin:0;display:flex;flex-direction:column}
+.preview-chart{flex:1;min-height:0;display:flex;flex-direction:column}
+.preview-chart-controls{display:flex;gap:20px;align-items:flex-end;flex-wrap:wrap;margin-bottom:8px;flex:none}
+.preview-chart-plot{position:relative;flex:1;min-height:0;width:100%}
+.preview-chart-plot svg{position:absolute;inset:0;width:100%;height:100%;display:block}
 .preview-media{display:flex;justify-content:center;background:var(--bg-tint);border-radius:var(--radius);padding:16px}
 .preview-media img{max-width:100%;max-height:78vh;border-radius:8px;box-shadow:var(--shadow)}
 .preview-frame{width:100%;height:80vh;border:1px solid var(--line);border-radius:8px;background:#fff}
@@ -1079,3 +1094,66 @@ textarea.autogrow{width:100%;resize:none;overflow:hidden;min-height:42px;line-he
 .form-note span{display:block}
 .pager.pager-compact{margin-top:20px}
 .results-bar .count .count-pages{display:inline-block;margin-left:10px;font-size:12.5px;color:var(--muted);padding:3px 10px;border:1px solid var(--line);border-radius:999px;background:var(--paper)}
+
+/* ============================================================
+   ADD FILES — page for adding files to an existing dataset.
+   Reuses the publish form (form-section, file-drop, form-actions).
+   ============================================================ */
+.back-link{display:inline-flex;align-items:center;gap:4px;border:none;background:none;padding:4px 0;font:inherit;font-size:13px;color:var(--muted);cursor:pointer;max-width:100%;transition:var(--t)}
+.back-link span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.back-link:hover{color:var(--blue)}
+.af-ds-name{font-weight:500;color:var(--navy)}
+.af-count{margin-left:auto;align-self:center;font-family:var(--mono);font-size:12px;color:var(--muted);white-space:nowrap}
+.af-drop{position:relative;cursor:pointer;margin-bottom:18px}
+.af-drop .fdic svg{transform:rotate(180deg)}
+.af-drop input[type=file]{position:absolute;inset:0;width:100%;height:100%;max-width:none;opacity:0;cursor:pointer}
+.af-drop:focus-within{border-color:var(--blue);box-shadow:0 0 0 3px var(--blue-soft)}
+.af-drop.is-disabled{opacity:.55;pointer-events:none}
+.af-browse{flex:none;font-size:13px;font-weight:500;color:var(--blue);background:var(--paper);border:1px solid var(--blue-line);border-radius:var(--radius-sm);padding:7px 14px;transition:var(--t)}
+.af-drop:hover .af-browse{border-color:var(--blue)}
+.af-drop.lg{flex-direction:column;text-align:center;padding:44px 20px 40px;gap:12px}
+.af-drop.lg .fdic{width:54px;height:54px;border-radius:14px}
+.af-drop.lg .fdmain{flex:none}
+.af-drop.lg .fdmain b{white-space:normal;font-size:15px;margin-bottom:3px}
+.af-drop.lg .fdmain span{font-size:12.5px}
+.af-done-ic{width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 18px;color:var(--green);background:var(--green-soft);border:1px solid var(--green-line)}
+.af-done-ic.warn{color:var(--amber);background:var(--amber-soft);border-color:var(--amber-line)}
+.af-done-actions{margin-top:24px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+@media(max-width:560px){
+  .af-drop:not(.lg) .af-browse{display:none}
+  .af-count{display:none}
+}
+
+/* ============================================================
+   CREATE ORGANISATION — toggles, counters, private-data row.
+   ============================================================ */
+.co-count{display:block;text-align:right;font-family:var(--mono);font-size:11px;color:var(--faint);margin-top:4px}
+.co-count.near{color:var(--amber)}
+.co-switches{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg-tint);margin-bottom:14px}
+.co-switch{display:flex;align-items:center;gap:16px;padding:13px 16px;cursor:pointer;position:relative;margin:0}
+.co-switch + .co-switch{border-top:1px solid var(--line)}
+.co-switch-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.co-switch-text b{font-size:13.5px;font-weight:500;color:var(--navy)}
+.co-switch-text small{font-size:12px;color:var(--muted)}
+.field .co-switch input,.co-switch input{position:absolute;opacity:0;width:1px;height:1px;padding:0;border:0}
+.co-switch-track{flex:none;width:38px;height:22px;border-radius:999px;background:var(--line-strong);position:relative;transition:var(--t)}
+.co-switch-thumb{position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(11,31,51,.2);transition:var(--t)}
+.co-switch input:checked + .co-switch-track{background:var(--blue)}
+.co-switch input:checked + .co-switch-track .co-switch-thumb{transform:translateX(16px)}
+.co-switch input:focus-visible + .co-switch-track{box-shadow:0 0 0 3px rgba(23,105,170,.2)}
+.co-private{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;padding:4px 0 10px}
+@media(max-width:560px){.ds-form .field-row{grid-template-columns:1fr}}
+
+/* ============================================================
+   FILE CONFLICT — a chosen file already exists in the user's uploads.
+   ============================================================ */
+.acc.conflict{border-color:#e4c8c4}
+.chip.dup{background:#f8eeec;border:1px solid #e4c8c4;color:#8d3b32}
+.acc-conflict{display:flex;align-items:flex-start;gap:9px;padding:10px 14px;border-top:1px solid #efdcd9;background:#fbf4f2;color:#7a3129;font-size:12.5px;line-height:1.5}
+.acc-conflict > svg{flex:none;margin-top:2px}
+.acc-conflict > span{flex:1;min-width:0}
+.acc-conflict b{font-weight:600}
+.acc-conflict-link{flex:none;display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:500;color:#8d3b32;background:var(--paper);border:1px solid #e4c8c4;border-radius:var(--radius-sm);padding:4px 10px;text-decoration:none;white-space:nowrap;transition:var(--t)}
+.acc-conflict-link:hover{border-color:#8d3b32;color:#6f2c26}
+@media(max-width:560px){.acc-conflict{flex-wrap:wrap}.acc-conflict-link{margin-left:24px}}
+.text-lines{white-space:pre-line}

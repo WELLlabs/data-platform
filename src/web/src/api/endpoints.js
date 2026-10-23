@@ -26,6 +26,7 @@ export const organization_add_member_endpoint = (id) =>
 
 // Upload/Data endpoints
 export const upload_url_endpoint = "/api/upload_url";
+export const check_files_endpoint = "/api/check_files";
 export const complete_multipart_endpoint = "/api/complete_multipart";
 export const create_upload_job_endpoint = "/api/create_upload_job";
 export const complete_upload_job_endpoint = "/api/complete_upload_job";

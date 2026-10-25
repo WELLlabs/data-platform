@@ -382,16 +382,11 @@ class UploadController:
                     detail=f"File exceeds maximum upload size of {max_size} bytes",
                 )
 
-            file_status = await self.upload_service.check_file_exists(
-                user.id, sanitized_filename
-            )
-
-            if file_status.get("exists", False):
+            file_key = f"{user.id}/{sanitized_filename}"
+            owner = await self._existing_file_dataset(file_key)
+            if owner.get("dataset_id"):
                 self.logger.warning(
                     "File already exists: %s/%s", user.id, sanitized_filename
-                )
-                owner = await self._existing_file_dataset(
-                    f"{user.id}/{sanitized_filename}"
                 )
                 return JSONResponse(
                     status_code=status.HTTP_409_CONFLICT,
@@ -400,7 +395,6 @@ class UploadController:
 
             file_id = uuid4()
             use_multipart = file_size > S3_PUT_OBJECT_MAX_BYTES
-            file_key = f"{user.id}/{sanitized_filename}"
             multipart = None
             url = None
             presigned_data = None
@@ -534,11 +528,6 @@ class UploadController:
             file_key = f"{user.id}/{stored}"
             owner = await self._existing_file_dataset(file_key)
             exists = owner.get("dataset_id") is not None
-            if not exists:
-                status_data = await self.upload_service.check_file_status_by_key(
-                    file_key
-                )
-                exists = bool(status_data.get("exists", False))
             return {**base, "stored_filename": stored, "exists": exists, **owner}
 
         results = []

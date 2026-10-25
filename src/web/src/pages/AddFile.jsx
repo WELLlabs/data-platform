@@ -348,6 +348,15 @@ function AddFile() {
         const txt = await completeJobResp.text();
         throw new Error(`Failed to complete upload job: ${txt}`);
       }
+      const completeData = await completeJobResp.json();
+      const fileSaveFailed = (completeData.events || []).some((ev) =>
+        Object.values(ev).includes("failed")
+      );
+      if (completeData.status === "completed_with_errors" || fileSaveFailed) {
+        throw new Error(
+          "The upload finished, but a file could not be saved. Try adding it again."
+        );
+      }
 
       setSuccess(true);
       setProgress(100);

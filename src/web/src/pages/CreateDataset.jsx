@@ -503,7 +503,18 @@ function CreateDataset() {
                 const txt = await completeResp.text();
                 throw new Error(`Failed to complete upload job: ${txt}`);
             }
-            await completeResp.json();
+            const completeData = await completeResp.json();
+            const fileSaveFailed = (completeData.events || []).some((ev) =>
+                Object.values(ev).includes("failed")
+            );
+            if (
+                completeData.status === "completed_with_errors" ||
+                fileSaveFailed
+            ) {
+                throw new Error(
+                    "The dataset was created, but a file could not be saved. Open the dataset and add the file again."
+                );
+            }
 
             setProgress(100);
             setSuccess(true);

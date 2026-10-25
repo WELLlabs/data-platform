@@ -23,8 +23,6 @@ export default function FilePreview() {
   const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const fileId = params.get("file_id") || "";
   const title = params.get("title") || "File preview";
-  const format = params.get("format") || "";
-  const name = params.get("name") || "";
   const datasetId = params.get("dataset_id") || "";
 
   const [status, setStatus] = useState("loading");
@@ -138,7 +136,6 @@ export default function FilePreview() {
     document.title = `Preview · ${title}`;
   }, [title]);
 
-  const kindLabel = (payload?.format || format || "file").toString().toUpperCase();
   const backHref = datasetId ? `/dataset-info?dataset_id=${encodeURIComponent(datasetId)}` : "/datasets";
   const viewer = payload?.viewer;
   const chartLayout = status === "ready" && viewer === "table_chart";
@@ -157,10 +154,6 @@ export default function FilePreview() {
           <div>
             <span className="eyebrow">File preview</span>
             <h1 className="display preview-title">{title}</h1>
-            {/* <p className="preview-meta">
-              <span className="fmt-chip">{kindLabel}</span>
-              {name ? <span className="muted">{name}</span> : null}
-            </p> */}
           </div>
           <div className="preview-actions">
             <button
@@ -169,6 +162,7 @@ export default function FilePreview() {
               onClick={handleDownload}
               disabled={!fileId || downloading}
             >
+              
               <Ic name="dl" size={15} sw={2} />
               {downloading ? "Preparing…" : "Download"}
             </button>

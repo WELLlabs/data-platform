@@ -47,8 +47,12 @@ export default function FileAccordionList({
         const titled =
           storedFilename(item.basename, item.extension) || item.file?.name || "";
         const complete = !!titled.trim();
+        const conflict = item.conflict;
         return (
-          <div className={"acc" + (isOpen ? " open" : "")} key={item.key}>
+          <div
+            className={"acc" + (isOpen ? " open" : "") + (conflict ? " conflict" : "")}
+            key={item.key}
+          >
             <div className="acc-head">
               <button
                 type="button"
@@ -69,9 +73,13 @@ export default function FileAccordionList({
                   </small>
                 </span>
               </button>
-              <span className={"chip " + (complete ? "ok" : "todo")}>
-                {complete ? "Complete" : "Needs title"}
-              </span>
+              {conflict ? (
+                <span className="chip dup">Already uploaded</span>
+              ) : (
+                <span className={"chip " + (complete ? "ok" : "todo")}>
+                  {complete ? "Complete" : "Needs title"}
+                </span>
+              )}
               <button
                 type="button"
                 className="btn btn-remove"
@@ -82,6 +90,23 @@ export default function FileAccordionList({
                 Remove
               </button>
             </div>
+            {conflict && (
+              <div className="acc-conflict" role="alert">
+                <Ic name="warn" size={15} sw={2} />
+                <span>This file is already uploaded in some dataset.</span>
+                {conflict.datasetId && (
+                  <a
+                    className="acc-conflict-link"
+                    href={`/dataset-info?dataset_id=${encodeURIComponent(conflict.datasetId)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    View dataset
+                    <Ic name="arrow" size={13} sw={2} />
+                  </a>
+                )}
+              </div>
+            )}
             {isOpen && (
               <div className="acc-body">
                 <input
@@ -231,7 +256,7 @@ export default function FileAccordionList({
                 {item.status === "ok" && (
                   <div className="file-status ok">Uploaded</div>
                 )}
-                {item.status === "error" && (
+                {item.status === "error" && !conflict && (
                   <div className="file-status err" role="alert">
                     {item.statusMessage || "This file was not uploaded."}
                   </div>

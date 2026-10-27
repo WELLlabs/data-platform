@@ -5,13 +5,24 @@ import {
   add_files_url_endpoint,
   create_upload_job_endpoint,
   complete_upload_job_endpoint,
+  dataset_info_endpoint,
 } from "../api/endpoints";
 import { requestAndUploadFile } from "../api/s3Upload";
+import { findExistingFiles } from "../api/fileCheck";
 import FileAccordionList from "../components/FileAccordionList";
+import Ic from "../components/wd/Icons";
 import { splitFilename, storedFilename } from "../utils/filenames";
 
 const INVALID_CHARS = /[<>"'&;()]/;
 const INVALID_CHARS_G = /[<>"'&;()]/g;
+
+function fmtBytes(n) {
+  if (!n) return "0 KB";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
 
 function AddFile() {
   const navigate = useNavigate();
@@ -26,6 +37,8 @@ function AddFile() {
   const [partialNote, setPartialNote] = useState("");
   const [files, setFiles] = useState([]);
   const [openKeys, setOpenKeys] = useState(() => new Set());
+  const [dragging, setDragging] = useState(false);
+  const [datasetTitle, setDatasetTitle] = useState("");
 
   const datasetId = searchParams.get("dataset_id");
 
@@ -40,6 +53,18 @@ function AddFile() {
         if (!userData) {
           navigate("/signin");
           return;
+        }
+        try {
+          const params = new URLSearchParams({ dataset_id: datasetId });
+          const resp = await fetch(`${dataset_info_endpoint}?${params.toString()}`, {
+            credentials: "include",
+          });
+          if (resp && resp.ok) {
+            const data = await resp.json();
+            if (data?.dataset?.dataset_title) setDatasetTitle(data.dataset.dataset_title);
+          }
+        } catch {
+          // The title is only for context; the page still works without it.
         }
       } catch (e) {
         console.error("Error checking authentication:", e);
@@ -84,9 +109,9 @@ function AddFile() {
     };
   };
 
-  const handleFileChange = (e) => {
-    const picked = e.target.files ? Array.from(e.target.files) : [];
+  const addFiles = (picked) => {
     if (!picked.length) return;
+    setError("");
     const incoming = picked.map((f) => toFileEntry(f));
     setFiles((prev) => {
       const next = [...prev];
@@ -100,7 +125,37 @@ function AddFile() {
       incoming.forEach((entry) => next.add(entry.key));
       return next;
     });
+    findExistingFiles(incoming).then((found) => {
+      if (!found.size) return;
+      setFiles((prev) =>
+        prev.map((item) =>
+          found.has(item.key) ? { ...item, conflict: found.get(item.key) } : item
+        )
+      );
+    });
+  };
+
+  const handleFileChange = (e) => {
+    const picked = e.target.files ? Array.from(e.target.files) : [];
+    addFiles(picked);
     e.target.value = "";
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragging(false);
+    if (submitting) return;
+    const picked = e.dataTransfer?.files ? Array.from(e.dataTransfer.files) : [];
+    addFiles(picked);
+  };
+
+  const resetForm = () => {
+    setFiles([]);
+    setOpenKeys(new Set());
+    setSuccess(false);
+    setPartialNote("");
+    setError("");
+    setProgress(0);
   };
 
   const updateFileEntry = (key, field, value) => {
@@ -163,6 +218,12 @@ function AddFile() {
     }
     if (!files.length) {
       setError("Please select at least one file.");
+      return;
+    }
+    if (files.some((item) => item.conflict)) {
+      setError(
+        "Some files are already uploaded in other datasets. Remove them before uploading."
+      );
       return;
     }
     const invalid = files.filter(
@@ -260,6 +321,11 @@ function AddFile() {
           const message = err.message || "Upload failed";
           failures.push(`${item.file.name}: ${message}`);
           setFileStatus(item.key, "error", message);
+          if (err.status === 409 && err.conflict) {
+            setFiles((prev) =>
+              prev.map((x) => (x.key === item.key ? { ...x, conflict: err.conflict } : x))
+            );
+          }
         }
         uploadedBytes += item.file.size || 0;
       }
@@ -282,6 +348,15 @@ function AddFile() {
         const txt = await completeJobResp.text();
         throw new Error(`Failed to complete upload job: ${txt}`);
       }
+      const completeData = await completeJobResp.json();
+      const fileSaveFailed = (completeData.events || []).some((ev) =>
+        Object.values(ev).includes("failed")
+      );
+      if (completeData.status === "completed_with_errors" || fileSaveFailed) {
+        throw new Error(
+          "The upload finished, but a file could not be saved. Try adding it again."
+        );
+      }
 
       setSuccess(true);
       setProgress(100);
@@ -302,7 +377,7 @@ function AddFile() {
   if (loading) {
     return (
       <div className="page">
-        <div className="wrap" style={{ maxWidth: 860, padding: "48px 0 88px" }}>
+        <div className="wrap ds-form" style={{ padding: "48px 0 88px" }}>
           <div className="empty"><p>Loading…</p></div>
         </div>
       </div>
@@ -311,54 +386,82 @@ function AddFile() {
 
   if (!user) return null;
 
+  const datasetLabel = datasetTitle || "this dataset";
+  const totalSize = files.reduce((sum, item) => sum + (item.file?.size || 0), 0);
+  const goToDataset = () => navigate(`/dataset-info?dataset_id=${datasetId}`);
+
+  if (success) {
+    return (
+      <div className="page">
+        <div className="wrap" style={{ maxWidth: 560, padding: "72px 0 88px" }}>
+          <div className="auth-card" style={{ textAlign: "center" }}>
+            <div className={"af-done-ic" + (partialNote ? " warn" : "")}>
+              <Ic name={partialNote ? "warn" : "check"} size={26} sw={2.4} />
+            </div>
+            <span className="eyebrow">Datasets</span>
+            <h1 className="display" style={{ marginTop: 6 }}>
+              {partialNote ? "Some files were added" : "Files added"}
+            </h1>
+            <p className="auth-sub" style={{ maxWidth: "46ch", margin: "8px auto 0" }}>
+              {partialNote ||
+                `Your files were uploaded to ${datasetLabel}. They are being processed and will appear in the dataset shortly.`}
+            </p>
+            <div className="af-done-actions">
+              <button type="button" className="btn btn-primary" onClick={goToDataset}>
+                Back to dataset
+              </button>
+              <button type="button" className="btn btn-ghost" onClick={resetForm}>
+                Add more files
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="page">
-      <div className="wrap" style={{ maxWidth: 860, padding: "48px 0 88px" }}>
-        <span className="eyebrow">Datasets</span>
-        <div className="section-head" style={{ marginTop: 8 }}>
-          <h2 className="section-title">Add file to dataset</h2>
+      <div className="wrap ds-form" style={{ padding: "36px 0 88px" }}>
+        <button type="button" className="back-link" onClick={goToDataset}>
+          <Ic name="chevLeft" size={15} sw={2} />
+          <span>Back to {datasetTitle || "dataset"}</span>
+        </button>
+
+        <div className="section-head" style={{ marginTop: 14 }}>
+          <div>
+            <span className="eyebrow">Datasets</span>
+            <h2 className="section-title" style={{ marginTop: 6 }}>
+              Add files
+            </h2>
+            <p className="muted" style={{ marginTop: 6, maxWidth: "70ch" }}>
+              Upload new files to{" "}
+              {datasetTitle ? <b className="af-ds-name">{datasetTitle}</b> : "this dataset"}.
+              Every file keeps its own attribution and coverage, so open each one
+              below to record where it came from and what it covers.
+            </p>
+          </div>
         </div>
 
-        {error && (
-          <div className="attn-card warn" role="alert" style={{ marginBottom: 20 }}>
-            <div><b>{error}</b></div>
-          </div>
-        )}
+        <form onSubmit={onSubmit} style={{ marginTop: 22 }}>
+          <div className="form-section">
+            <div className="fs-head">
+              <div>
+                <h3>Files &amp; attribution</h3>
+                <p>Only the file itself is required. All other details are optional.</p>
+              </div>
+              {files.length > 0 && (
+                <span className="af-count">
+                  {files.length} {files.length === 1 ? "file" : "files"} · {fmtBytes(totalSize)}
+                </span>
+              )}
+            </div>
 
-        {success ? (
-          <div className="auth-card" style={{ marginTop: 8 }}>
-            <h1 className="display" style={{ fontSize: 28 }}>File added</h1>
-            <p className="auth-sub">
-              {partialNote || "File successfully added to the dataset."}
-            </p>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 20 }}>
-              <button
-                className="btn btn-primary"
-                onClick={() => navigate(`/dataset-info?dataset_id=${datasetId}`)}
-              >
-                Dataset
-              </button>
-              <button className="btn btn-ghost" onClick={() => navigate("/dashboard")}>
-                Dashboard
-              </button>
-            </div>
-          </div>
-        ) : (
-          <form onSubmit={onSubmit}>
-            <div className="field">
-              <label htmlFor="file">
-                Files <span style={{ color: "var(--red, #c62828)" }}>(required)</span>
-              </label>
-              <input
-                type="file"
-                id="file"
-                onChange={handleFileChange}
-                multiple
-                accept="*/*"
-                disabled={submitting}
-                aria-label="Add files"
-              />
-            </div>
+            {error && (
+              <div className="form-note err" role="alert">
+                <span>{error}</span>
+              </div>
+            )}
 
             <FileAccordionList
               files={files}
@@ -370,26 +473,104 @@ function AddFile() {
               disabled={submitting}
             />
 
-            {submitting && (
-              <div className="field">
-                <div style={{ background: "var(--wash, #eef2f6)", borderRadius: 999, height: 8, overflow: "hidden" }}>
-                  <div
-                    role="progressbar"
-                    aria-valuenow={progress}
-                    aria-valuemin="0"
-                    aria-valuemax="100"
-                    style={{ width: `${progress}%`, height: "100%", background: "var(--blue, #1b75e0)", transition: "width .2s" }}
-                  />
-                </div>
-                <span className="mono-token" style={{ marginTop: 6, display: "inline-block" }}>{progress}%</span>
+            <div
+              className={
+                "file-drop af-drop" +
+                (files.length ? "" : " lg") +
+                (dragging ? " drag" : "") +
+                (submitting ? " is-disabled" : "")
+              }
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (!submitting) setDragging(true);
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault();
+                setDragging(false);
+              }}
+              onDrop={handleDrop}
+            >
+              <span className="fdic">
+                <Ic name="dl" size={files.length ? 18 : 22} sw={2} />
+              </span>
+              <div className="fdmain">
+                <b>
+                  {dragging
+                    ? "Drop files to add them"
+                    : files.length
+                    ? "Add another file"
+                    : "Drag files here, or click to browse"}
+                </b>
+                <span>
+                  {files.length
+                    ? "Drop it here or browse. Its attribution starts blank."
+                    : "Any format. You can select several files at once."}
+                </span>
               </div>
-            )}
+              <span className="af-browse" aria-hidden="true">
+                Browse files
+              </span>
+              <input
+                type="file"
+                id="file"
+                onChange={handleFileChange}
+                multiple
+                accept="*/*"
+                disabled={submitting}
+                aria-label="Add files"
+              />
+            </div>
+          </div>
 
-            <button type="submit" className="btn btn-primary" disabled={submitting}>
-              {submitting ? "Uploading…" : "Upload"}
-            </button>
-          </form>
-        )}
+          <div className="form-actions">
+            <div style={{ flex: 1, minWidth: 200 }}>
+              {submitting ? (
+                <>
+                  <div className="progress-track">
+                    <div
+                      className="progress-fill"
+                      role="progressbar"
+                      aria-valuenow={progress}
+                      aria-valuemin="0"
+                      aria-valuemax="100"
+                      style={{ width: `${progress}%` }}
+                    />
+                  </div>
+                  <span className="mono-token" style={{ marginTop: 6, display: "inline-block" }}>
+                    Uploading… {progress}%
+                  </span>
+                </>
+              ) : (
+                <span className="fa-note">
+                  {files.length
+                    ? `${files.length} ${files.length === 1 ? "file" : "files"} ready to upload`
+                    : "No files selected yet"}
+                </span>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={goToDataset}
+                disabled={submitting}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={submitting || !files.length}
+              >
+                {submitting
+                  ? "Uploading…"
+                  : files.length > 1
+                  ? `Upload ${files.length} files`
+                  : "Upload file"}
+              </button>
+            </div>
+          </div>
+        </form>
       </div>
     </div>
   );

@@ -1,19 +1,59 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { access_file_chart_endpoint, access_file_schema_endpoint, access_file_table_endpoint } from "../../api/endpoints";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { access_file_chart_endpoint, access_file_schema_endpoint } from "../../api/endpoints";
 
+// Brand-led palette: WELL Labs blue first, then green, amber, and supporting hues.
 const CHART_COLOURS = [
-  "#2563eb", "#16a34a", "#ea580c", "#9333ea",
-  "#0891b2", "#dc2626", "#ca8a04", "#4f46e5",
+  "#1769AA", "#3D7658", "#C9822B", "#7A5BA6",
+  "#2A9BB5", "#B5524A", "#8C8A2E", "#4C5FA8",
 ];
+
+const AGGREGATIONS = [
+  { value: "sum", label: "Sum" },
+  { value: "avg", label: "Average" },
+  { value: "min", label: "Minimum" },
+  { value: "max", label: "Maximum" },
+  { value: "count", label: "Count" },
+];
+
+const compactFmt = new Intl.NumberFormat("en-IN", { notation: "compact", maximumFractionDigits: 1 });
+const fullFmt = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 });
+
+function fmtTick(v) {
+  return Math.abs(v) >= 10000 ? compactFmt.format(v) : fullFmt.format(v);
+}
+
+function fmtValue(v) {
+  return v == null ? "–" : fullFmt.format(v);
+}
+
+function xLabel(v) {
+  const s = v == null ? "" : String(v).trim();
+  return s === "" || s === "-" ? "(blank)" : s;
+}
 
 function isNumericType(t) {
   const s = String(t || "").toUpperCase();
   return ["INTEGER", "BIGINT", "HUGEINT", "DOUBLE", "FLOAT", "DECIMAL", "REAL", "SMALLINT", "TINYINT", "UBIGINT"].some((n) => s.includes(n));
 }
 
-function D3Chart({ points, series, chartType }) {
+// Bar with rounded corners on the end away from the baseline.
+function barPath(x, y0, y1, w, r) {
+  const top = Math.min(y0, y1);
+  const h = Math.abs(y1 - y0);
+  const rad = Math.max(0, Math.min(r, w / 2, h));
+  if (y1 <= y0) {
+    // positive value: round the top
+    return `M${x},${top + h}V${top + rad}Q${x},${top} ${x + rad},${top}H${x + w - rad}Q${x + w},${top} ${x + w},${top + rad}V${top + h}Z`;
+  }
+  // negative value: round the bottom
+  return `M${x},${top}V${top + h - rad}Q${x},${top + h} ${x + rad},${top + h}H${x + w - rad}Q${x + w},${top + h} ${x + w},${top + h - rad}V${top}Z`;
+}
+
+function D3Chart({ points, series, chartType, yTitle, xTitle }) {
+  const hostRef = useRef(null);
   const [d3, setD3] = useState(null);
   const [hover, setHover] = useState(null);
+  const [size, setSize] = useState({ w: 0, h: 0 });
 
   useEffect(() => {
     let cancelled = false;
@@ -25,12 +65,32 @@ function D3Chart({ points, series, chartType }) {
     };
   }, []);
 
+  useEffect(() => {
+    const el = hostRef.current;
+    if (!el) return undefined;
+    const measure = () => {
+      const rect = el.getBoundingClientRect();
+      setSize({ w: Math.floor(rect.width), h: Math.floor(rect.height) });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   const layout = useMemo(() => {
-    if (!d3 || !points.length) return null;
-    const W = 920;
-    const H = 460;
-    const m = { top: 24, right: 24, bottom: 90, left: 92 };
-    const x = d3.scaleBand().domain(points.map((p) => String(p.x))).range([m.left, W - m.right]).padding(0.18);
+    if (!d3 || !points.length || size.w < 1 || size.h < 1) return null;
+    const W = size.w;
+    const H = size.h;
+    const labels = points.map((p) => xLabel(p.x));
+    const longest = labels.reduce((n, l) => Math.max(n, Math.min(l.length, 18)), 0);
+    const left = 72;
+    const right = 24;
+    const slot = (W - left - right) / points.length;
+    const rotate = longest * 6.6 > slot - 8;
+    const bottom = rotate ? Math.min(40 + longest * 5.2, 120) : 52;
+    const m = { top: 28, right, bottom, left };
+    const x = d3.scaleBand().domain(points.map((_, i) => String(i))).range([m.left, W - m.right]).padding(0.28);
     let ymin = 0;
     let ymax = 0;
     points.forEach((p) => {
@@ -42,111 +102,211 @@ function D3Chart({ points, series, chartType }) {
       });
     });
     if (ymin === ymax) ymax = ymin + 1;
-    const y = d3.scaleLinear().domain([ymin, ymax]).nice().range([H - m.bottom, m.top]);
-    return { W, H, m, x, y, ymin, ymax };
-  }, [d3, points, series]);
+    const y = d3.scaleLinear().domain([ymin, ymax]).nice(6).range([H - m.bottom, m.top]);
+    return { W, H, m, x, y, labels, rotate };
+  }, [d3, points, series, size]);
 
-  if (!d3 || !layout) return <div className="empty"><p>Drawing chart…</p></div>;
-  if (!series.length) return <div style={styles.chartEmpty}>Select at least one Y-axis column.</div>;
-  if (!points.length) return <div style={styles.chartEmpty}>No aggregated values to plot.</div>;
+  if (!series.length) {
+    return <div className="pc-plot pc-plot-empty">Select a Y-axis column.</div>;
+  }
+  if (!points.length) {
+    return <div className="pc-plot pc-plot-empty">No aggregated values to plot.</div>;
+  }
 
-  const { W, H, m, x, y } = layout;
-  const ticks = y.ticks(5);
-  const n = points.length;
-  const labelEvery = Math.max(1, Math.ceil(n / 18));
+  const ticks = layout ? layout.y.ticks(6) : [];
+  const labelEvery = layout
+    ? Math.max(1, Math.ceil(points.length / Math.max(12, Math.floor(layout.W / 64))))
+    : 1;
+  const showValues = chartType === "bar" && series.length === 1 && points.length <= 24;
+
+  const onMove = (e, i) => {
+    const host = hostRef.current;
+    if (!host) return;
+    const r = host.getBoundingClientRect();
+    setHover({ i, left: e.clientX - r.left, top: e.clientY - r.top, flip: e.clientX - r.left > r.width - 200 });
+  };
 
   return (
-    <div style={{ position: "relative" }}>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxWidth: W, display: "block", margin: "0 auto" }} role="img">
-        {ticks.map((t) => (
-          <g key={t}>
-            <line x1={m.left} y1={y(t)} x2={W - m.right} y2={y(t)} stroke="#e5e7eb" />
-            <text x={m.left - 12} y={y(t) + 4} textAnchor="end" fontSize="11" fill="#6b7280">{t}</text>
-          </g>
-        ))}
-        <line x1={m.left} y1={m.top} x2={m.left} y2={H - m.bottom} stroke="#9ca3af" strokeWidth="1.5" />
-        <line x1={m.left} y1={y(0)} x2={W - m.right} y2={y(0)} stroke="#9ca3af" strokeWidth="1.5" />
-        {chartType === "bar"
-          ? points.map((p, i) => {
-              const band = x.bandwidth();
-              const barW = band / Math.max(series.length, 1);
-              return (
-                <g key={i}>
-                  {series.map((_, k) => {
-                    const v = p[`y${k}`];
-                    if (v == null) return null;
-                    const bh = Math.abs(y(v) - y(0));
-                    return (
-                      <rect
-                        key={k}
-                        x={x(String(p.x)) + k * barW}
-                        y={Math.min(y(v), y(0))}
-                        width={Math.max(barW - 2, 1)}
-                        height={Math.max(bh, 0.5)}
-                        fill={CHART_COLOURS[k % CHART_COLOURS.length]}
-                        onMouseEnter={() => setHover(p)}
-                        onMouseLeave={() => setHover(null)}
-                      />
-                    );
-                  })}
-                </g>
-              );
-            })
-          : series.map((_, k) => {
-              const line = d3.line()
-                .defined((p) => p[`y${k}`] != null)
-                .x((p) => x(String(p.x)) + x.bandwidth() / 2)
-                .y((p) => y(p[`y${k}`]));
-              return (
-                <g key={k}>
-                  <path d={line(points)} fill="none" stroke={CHART_COLOURS[k % CHART_COLOURS.length]} strokeWidth="2" />
-                </g>
+    <>
+      <div ref={hostRef} className="pc-plot" onMouseLeave={() => setHover(null)}>
+        {!layout && <div className="pc-plot-empty">Drawing chart…</div>}
+        {layout && (
+          <svg viewBox={`0 0 ${layout.W} ${layout.H}`} width="100%" height="100%" role="img" aria-label={`${yTitle} by ${xTitle}`}>
+            {/* grid + y ticks */}
+            {ticks.map((t) => (
+              <g key={t}>
+                <line
+                  x1={layout.m.left}
+                  y1={layout.y(t)}
+                  x2={layout.W - layout.m.right}
+                  y2={layout.y(t)}
+                  className={t === 0 ? "pc-baseline" : "pc-grid"}
+                />
+                <text x={layout.m.left - 10} y={layout.y(t) + 4} textAnchor="end" className="pc-tick">{fmtTick(t)}</text>
+              </g>
+            ))}
+
+            {/* y-axis title */}
+            <text
+              className="pc-axis-title"
+              textAnchor="middle"
+              transform={`translate(16 ${(layout.m.top + layout.H - layout.m.bottom) / 2}) rotate(-90)`}
+            >
+              {yTitle}
+            </text>
+
+            {/* hover column */}
+            {hover && (
+              <rect
+                className="pc-hover-band"
+                x={layout.x(String(hover.i)) - (layout.x.step() * layout.x.paddingInner()) / 2}
+                y={layout.m.top}
+                width={layout.x.step()}
+                height={layout.H - layout.m.bottom - layout.m.top}
+              />
+            )}
+
+            {chartType === "bar"
+              ? points.map((p, i) => {
+                  const band = layout.x.bandwidth();
+                  const barW = band / Math.max(series.length, 1);
+                  const dim = hover && hover.i !== i;
+                  return (
+                    <g key={i} className={"pc-bar" + (dim ? " is-dim" : "")}>
+                      {series.map((_, k) => {
+                        const v = p[`y${k}`];
+                        if (v == null) return null;
+                        const bx = layout.x(String(i)) + k * barW;
+                        const y0 = layout.y(0);
+                        const y1 = layout.y(v);
+                        return (
+                          <path
+                            key={k}
+                            d={barPath(bx, y0, Math.abs(y1 - y0) < 1 ? y0 - (v < 0 ? -1 : 1) : y1, Math.max(barW - 2, 1), 5)}
+                            fill={CHART_COLOURS[k % CHART_COLOURS.length]}
+                          />
+                        );
+                      })}
+                      {showValues && p.y0 != null && (
+                        <text
+                          className="pc-value"
+                          x={layout.x(String(i)) + band / 2}
+                          y={p.y0 >= 0 ? layout.y(p.y0) - 8 : layout.y(p.y0) + 16}
+                          textAnchor="middle"
+                        >
+                          {fmtTick(p.y0)}
+                        </text>
+                      )}
+                    </g>
+                  );
+                })
+              : series.map((_, k) => {
+                  const colour = CHART_COLOURS[k % CHART_COLOURS.length];
+                  const cx = (i) => layout.x(String(i)) + layout.x.bandwidth() / 2;
+                  const line = d3.line()
+                    .defined((p) => p[`y${k}`] != null)
+                    .x((_p, i) => cx(i))
+                    .y((p) => layout.y(p[`y${k}`]))
+                    .curve(d3.curveMonotoneX);
+                  const area = d3.area()
+                    .defined((p) => p[`y${k}`] != null)
+                    .x((_p, i) => cx(i))
+                    .y0(layout.y(0))
+                    .y1((p) => layout.y(p[`y${k}`]))
+                    .curve(d3.curveMonotoneX);
+                  return (
+                    <g key={k}>
+                      {series.length === 1 && <path d={area(points)} fill={colour} opacity="0.08" />}
+                      <path d={line(points)} fill="none" stroke={colour} strokeWidth="2.25" strokeLinejoin="round" />
+                      {points.map((p, i) => (p[`y${k}`] == null ? null : (
+                        <circle
+                          key={i}
+                          cx={cx(i)}
+                          cy={layout.y(p[`y${k}`])}
+                          r={hover && hover.i === i ? 5 : points.length > 60 ? 0 : 3}
+                          fill="#fff"
+                          stroke={colour}
+                          strokeWidth="2"
+                        />
+                      )))}
+                    </g>
+                  );
+                })}
+
+            {/* hit targets for hover */}
+            {points.map((_, i) => (
+              <rect
+                key={`hit${i}`}
+                x={layout.x(String(i)) - (layout.x.step() * layout.x.paddingInner()) / 2}
+                y={layout.m.top}
+                width={layout.x.step()}
+                height={layout.H - layout.m.bottom - layout.m.top}
+                fill="transparent"
+                onMouseMove={(e) => onMove(e, i)}
+              />
+            ))}
+
+            {/* x labels */}
+            {layout.labels.map((label, i) => {
+              if (i % labelEvery !== 0) return null;
+              const cx = layout.x(String(i)) + layout.x.bandwidth() / 2;
+              const ly = layout.H - layout.m.bottom + 18;
+              const text = label.length > 18 ? `${label.slice(0, 17)}…` : label;
+              return layout.rotate ? (
+                <text key={`x${i}`} x={cx} y={ly} textAnchor="end" className="pc-tick pc-xtick" transform={`rotate(-35 ${cx} ${ly})`}>
+                  {text}
+                </text>
+              ) : (
+                <text key={`x${i}`} x={cx} y={ly} textAnchor="middle" className="pc-tick pc-xtick">
+                  {text}
+                </text>
               );
             })}
-        {points.map((p, i) => (i % labelEvery !== 0 ? null : (
-          <text
-            key={`x${i}`}
-            x={x(String(p.x)) + x.bandwidth() / 2}
-            y={H - m.bottom + 18}
-            textAnchor="end"
-            fontSize="11"
-            fill="#6b7280"
-            transform={`rotate(-40 ${x(String(p.x)) + x.bandwidth() / 2} ${H - m.bottom + 18})`}
+          </svg>
+        )}
+        {hover && layout && (
+          <div
+            className="pc-tooltip"
+            style={{
+              left: hover.flip ? undefined : hover.left + 14,
+              right: hover.flip ? layout.W - hover.left + 14 : undefined,
+              top: Math.max(hover.top - 20, 8),
+            }}
           >
-            {String(p.x).length > 18 ? `${String(p.x).slice(0, 17)}…` : String(p.x)}
-          </text>
-        )))}
-      </svg>
-      <div style={styles.legend}>
-        {series.map((s, k) => (
-          <span key={s} style={styles.legendItem}>
-            <span style={{ ...styles.legendSwatch, background: CHART_COLOURS[k % CHART_COLOURS.length] }} />
-            {s}
-          </span>
-        ))}
+            <div className="pc-tooltip-title">{layout.labels[hover.i]}</div>
+            {series.map((s, k) => (
+              <div key={s} className="pc-tooltip-row">
+                <span className="pc-swatch" style={{ background: CHART_COLOURS[k % CHART_COLOURS.length] }} />
+                <span className="pc-tooltip-name">{s}</span>
+                <strong>{fmtValue(points[hover.i][`y${k}`])}</strong>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
-      {hover && (
-        <div style={styles.tooltip}>
-          <strong>{String(hover.x)}</strong>
+      {series.length > 1 && (
+        <div className="pc-legend">
           {series.map((s, k) => (
-            <div key={s}>{s}: {hover[`y${k}`] == null ? "—" : hover[`y${k}`]}</div>
+            <span key={s} className="pc-legend-item">
+              <span className="pc-swatch" style={{ background: CHART_COLOURS[k % CHART_COLOURS.length] }} />
+              {s}
+            </span>
           ))}
         </div>
       )}
-    </div>
+    </>
   );
 }
 
 export default function TableChartViewer({ fileId }) {
-  const [mode, setMode] = useState("table");
   const [schema, setSchema] = useState(null);
-  const [table, setTable] = useState(null);
   const [error, setError] = useState("");
   const [chartType, setChartType] = useState("bar");
   const [xCol, setXCol] = useState("");
-  const [yCols, setYCols] = useState([]);
+  const [yCol, setYCol] = useState("");
   const [agg, setAgg] = useState("sum");
   const [chart, setChart] = useState(null);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -162,8 +322,10 @@ export default function TableChartViewer({ fileId }) {
         const cols = data.columns || [];
         const numeric = cols.filter((c) => isNumericType(c.type));
         const nonNumeric = cols.filter((c) => !isNumericType(c.type));
-        setXCol((nonNumeric[0] || cols[0] || {}).name || "");
-        setYCols(numeric[0] ? [numeric[0].name] : []);
+        const xName = (nonNumeric[0] || cols[0] || {}).name || "";
+        const yName = (numeric[0] || cols.find((c) => c.name !== xName) || cols[0] || {}).name || "";
+        setXCol(xName);
+        setYCol(yName);
       } catch (e) {
         if (!cancelled) setError(e.message || "Failed to load schema.");
       }
@@ -172,161 +334,123 @@ export default function TableChartViewer({ fileId }) {
   }, [fileId]);
 
   useEffect(() => {
-    if (mode !== "table") return undefined;
+    if (!xCol || !yCol) return undefined;
     let cancelled = false;
     (async () => {
+      setError("");
+      setLoading(true);
       try {
-        const resp = await fetch(`${access_file_table_endpoint}?${new URLSearchParams({ file_id: fileId, limit: "200", offset: "0" })}`, {
+        const resp = await fetch(access_file_chart_endpoint, {
+          method: "POST",
           credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            file_id: fileId,
+            x_column: xCol,
+            y_columns: [{ column: yCol, aggregation: agg }],
+            limit: 200,
+          }),
         });
-        if (!resp.ok) throw new Error("Could not load table rows.");
+        if (!resp.ok) {
+          const j = await resp.json().catch(() => ({}));
+          throw new Error(j.detail || "Chart aggregation failed.");
+        }
         const data = await resp.json();
-        if (!cancelled) setTable(data);
+        if (!cancelled) setChart(data);
       } catch (e) {
-        if (!cancelled) setError(e.message || "Failed to load table.");
+        if (!cancelled) setError(e.message || "Chart aggregation failed.");
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [fileId, mode]);
-
-  const loadChart = async () => {
-    if (!xCol || yCols.length === 0) return;
-    setError("");
-    try {
-      const resp = await fetch(access_file_chart_endpoint, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          file_id: fileId,
-          x_column: xCol,
-          y_columns: yCols.map((c) => ({ column: c, aggregation: agg })),
-          limit: 200,
-        }),
-      });
-      if (!resp.ok) {
-        const j = await resp.json().catch(() => ({}));
-        throw new Error(j.detail || "Chart aggregation failed.");
-      }
-      setChart(await resp.json());
-    } catch (e) {
-      setError(e.message || "Chart aggregation failed.");
-    }
-  };
-
-  useEffect(() => {
-    if (mode === "chart" && xCol && yCols.length) {
-      loadChart();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, xCol, yCols.join("|"), agg]);
-
-  const toggleY = (name) => {
-    setYCols((prev) => (prev.includes(name) ? prev.filter((c) => c !== name) : [...prev, name]));
-  };
+  }, [fileId, xCol, yCol, agg]);
 
   const columns = schema?.columns || [];
+  const yColumn = columns.find((c) => c.name === yCol);
+  const yNumeric = yColumn ? isNumericType(yColumn.type) : true;
+
+  useEffect(() => {
+    if (!yNumeric && agg !== "count") setAgg("count");
+  }, [yNumeric, agg]);
+
+  const aggLabel =(AGGREGATIONS.find((a) => a.value === agg) || AGGREGATIONS[0]).label;
+  const yTitle = agg === "count" ? `Count of ${yCol}` : `${aggLabel} of ${yCol}`;
 
   return (
-    <div>
-      <div style={styles.toolbar}>
-        <div style={styles.segmented}>
-          <button type="button" onClick={() => setMode("table")} style={mode === "table" ? styles.segOn : styles.segOff}>Table</button>
-          <button type="button" onClick={() => setMode("chart")} style={mode === "chart" ? styles.segOn : styles.segOff}>Chart</button>
-        </div>
-        {schema?.row_count != null && (
-          <span className="muted">{Number(schema.row_count).toLocaleString("en-IN")} rows</span>
-        )}
-      </div>
-      {error && <p className="muted" style={{ color: "#9a6b12" }}>{error}</p>}
-      {mode === "chart" && (
-        <div style={styles.chartControls}>
-          <label style={styles.control}>
-            <span style={styles.controlLabel}>Chart type</span>
-            <select value={chartType} onChange={(e) => setChartType(e.target.value)} style={styles.select}>
-              <option value="bar">Bar</option>
-              <option value="line">Line</option>
-            </select>
-          </label>
-          <label style={styles.control}>
-            <span style={styles.controlLabel}>Aggregation</span>
-            <select value={agg} onChange={(e) => setAgg(e.target.value)} style={styles.select}>
-              <option value="sum">Sum</option>
-              <option value="avg">Average</option>
-              <option value="min">Min</option>
-              <option value="max">Max</option>
-              <option value="count">Count</option>
-            </select>
-          </label>
-          <label style={styles.control}>
-            <span style={styles.controlLabel}>X-axis</span>
-            <select value={xCol} onChange={(e) => setXCol(e.target.value)} style={styles.select}>
-              {columns.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
-            </select>
-          </label>
-          <div style={styles.control}>
-            <span style={styles.controlLabel}>Y-axis</span>
-            <div style={styles.yList}>
-              {columns.map((c) => (
-                <label key={c.name} style={styles.yItem}>
-                  <input type="checkbox" checked={yCols.includes(c.name)} onChange={() => toggleY(c.name)} />
-                  <span>{c.name}</span>
-                </label>
+    <div className="preview-chart">
+      <div className="pc-card">
+        <div className="pc-toolbar">
+          <div className="pc-field">
+            <span className="pc-label">Chart</span>
+            <div className="pc-seg" role="radiogroup" aria-label="Chart type">
+              {[
+                { v: "bar", label: "Bar" },
+                { v: "line", label: "Line" },
+              ].map((o) => (
+                <button
+                  key={o.v}
+                  type="button"
+                  role="radio"
+                  aria-checked={chartType === o.v}
+                  className={"pc-seg-btn" + (chartType === o.v ? " is-active" : "")}
+                  onClick={() => setChartType(o.v)}
+                >
+                  {o.label}
+                </button>
               ))}
             </div>
           </div>
-        </div>
-      )}
-      {mode === "table" && table && (
-        <div style={styles.tableWrap}>
-          <table style={styles.table}>
-            <thead>
-              <tr>
-                <th style={{ ...styles.th, ...styles.thIndex }}>#</th>
-                {(table.headers || []).map((h) => <th key={h} style={styles.th}>{h}</th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {(table.rows || []).map((r, i) => (
-                <tr key={i} style={i % 2 ? styles.trAlt : undefined}>
-                  <td style={{ ...styles.td, ...styles.tdIndex }}>{i + 1 + (table.offset || 0)}</td>
-                  {r.map((cell, ci) => (
-                    <td key={ci} style={styles.td}>{cell == null ? "" : String(cell)}</td>
-                  ))}
-                </tr>
+          <label className="pc-field">
+            <span className="pc-label">X-axis</span>
+            <select className="pc-select" value={xCol} onChange={(e) => setXCol(e.target.value)}>
+              {columns.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
+            </select>
+          </label>
+          <label className="pc-field">
+            <span className="pc-label">Y-axis</span>
+            <select className="pc-select" value={yCol} onChange={(e) => setYCol(e.target.value)}>
+              {columns.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
+            </select>
+          </label>
+          <label className="pc-field">
+            <span className="pc-label">Aggregation</span>
+            <select className="pc-select pc-select-sm" value={agg} onChange={(e) => setAgg(e.target.value)}>
+              {AGGREGATIONS.map((a) => (
+                <option key={a.value} value={a.value} disabled={!yNumeric && a.value !== "count"}>
+                  {a.label}
+                </option>
               ))}
-            </tbody>
-          </table>
+            </select>
+          </label>
+          {schema?.row_count != null && (
+            <span className="pc-rows">
+              {Number(schema.row_count).toLocaleString("en-IN")} rows
+              {chart?.points ? ` · ${chart.points.length.toLocaleString("en-IN")} groups` : ""}
+            </span>
+          )}
         </div>
-      )}
-      {mode === "chart" && chart && (
-        <D3Chart points={chart.points || []} series={chart.series || []} chartType={chartType} />
-      )}
+
+        <div className="pc-head">
+          <h2 className="pc-title">
+            {yTitle} <span className="pc-title-by">by {xCol}</span>
+          </h2>
+          {loading && <span className="pc-loading">Updating…</span>}
+        </div>
+
+        {error && <p className="pc-error">{error}</p>}
+        {chart ? (
+          <D3Chart
+            points={chart.points || []}
+            series={chart.series || []}
+            chartType={chartType}
+            yTitle={yTitle}
+            xTitle={xCol}
+          />
+        ) : (
+          !error && <div className="pc-plot pc-plot-empty">Loading chart…</div>
+        )}
+      </div>
     </div>
   );
 }
-
-const styles = {
-  toolbar: { display: "flex", gap: 16, alignItems: "center", marginBottom: 16, flexWrap: "wrap" },
-  segmented: { display: "inline-flex", background: "#EFEEE8", borderRadius: 8, padding: 3 },
-  segOn: { border: "none", background: "#0B1F33", color: "#fff", padding: "7px 18px", borderRadius: 6, fontWeight: 600, cursor: "pointer" },
-  segOff: { border: "none", background: "transparent", color: "#334155", padding: "7px 18px", borderRadius: 6, fontWeight: 600, cursor: "pointer" },
-  chartControls: { display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap", background: "#FCFCFA", border: "1px solid #E7E6DF", borderRadius: 10, padding: 16, marginBottom: 16 },
-  control: { display: "flex", flexDirection: "column", gap: 6 },
-  controlLabel: { fontSize: 12, fontWeight: 600, color: "#475569", textTransform: "uppercase", letterSpacing: 0.3 },
-  select: { padding: "8px 10px", borderRadius: 6, border: "1px solid #D8D7CE", background: "#fff", fontSize: 14, minWidth: 140 },
-  yList: { display: "flex", flexWrap: "wrap", gap: "6px 14px", maxWidth: 520, maxHeight: 132, overflow: "auto" },
-  yItem: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13 },
-  tableWrap: { background: "#FCFCFA", border: "1px solid #E7E6DF", borderRadius: 10, overflow: "auto", maxHeight: "78vh" },
-  table: { borderCollapse: "collapse", width: "100%", fontSize: 13 },
-  th: { position: "sticky", top: 0, background: "#F3F4EF", textAlign: "left", padding: "10px 12px", borderBottom: "2px solid #E7E6DF", fontWeight: 700, whiteSpace: "nowrap", zIndex: 1 },
-  thIndex: { left: 0, zIndex: 2 },
-  td: { padding: "8px 12px", borderBottom: "1px solid #EFEEE8", whiteSpace: "nowrap", maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis" },
-  tdIndex: { color: "#8a93a0", background: "#F7F7F3", position: "sticky", left: 0 },
-  trAlt: { background: "#FBFCF8" },
-  chartEmpty: { padding: "50px 0", textAlign: "center", color: "#667085", background: "#FCFCFA", border: "1px dashed #D8D7CE", borderRadius: 10 },
-  legend: { display: "flex", gap: 18, justifyContent: "center", flexWrap: "wrap", marginTop: 10 },
-  legendItem: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "#31404f" },
-  legendSwatch: { width: 14, height: 14, borderRadius: 3, display: "inline-block" },
-  tooltip: { position: "absolute", top: 8, right: 8, background: "rgba(11,31,51,0.92)", color: "#fff", padding: "8px 12px", borderRadius: 6, fontSize: 12, pointerEvents: "none", minWidth: 120 },
-};

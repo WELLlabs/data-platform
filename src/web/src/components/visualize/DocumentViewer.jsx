@@ -1,20 +1,16 @@
 import React, { useEffect, useState } from "react";
 
 export default function DocumentViewer({ url, title }) {
-  const [pdfLib, setPdfLib] = useState(null);
-  const [numPages, setNumPages] = useState(0);
+  const [Preview, setPreview] = useState(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const reactPdf = await import("react-pdf");
-        const { pdfjs } = reactPdf;
-        pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
-        await import("react-pdf/dist/esm/Page/AnnotationLayer.css");
-        await import("react-pdf/dist/esm/Page/TextLayer.css");
-        if (!cancelled) setPdfLib(reactPdf);
+        const mod = await import("@files-preview-app/preview-file/react");
+        await import("@files-preview-app/preview-file/styles.css");
+        if (!cancelled) setPreview(() => mod.FilePreview);
       } catch (e) {
         if (!cancelled) setError("Could not load the document viewer.");
       }
@@ -32,21 +28,17 @@ export default function DocumentViewer({ url, title }) {
       </div>
     );
   }
-  if (!pdfLib) return <div className="empty"><p>Loading document viewer…</p></div>;
+  if (!Preview) return <div className="empty"><p>Loading document viewer…</p></div>;
 
-  const { Document, Page } = pdfLib;
   return (
-    <div className="preview-pdf">
-      <Document
-        file={url}
-        onLoadSuccess={({ numPages: n }) => setNumPages(n)}
-        onLoadError={() => setError("Could not open this PDF. The object store may block in-browser reads.")}
-        loading={<p>Opening document…</p>}
-      >
-        {Array.from({ length: numPages }, (_, i) => (
-          <Page key={i + 1} pageNumber={i + 1} width={920} />
-        ))}
-      </Document>
+    <div className="preview-pdf" style={{ width: "100%", height: "75vh" }}>
+      <Preview
+        src={url}
+        options={{ theme: "light", showToolbar: true, toolbarPosition: "top" }}
+        onError={() =>
+          setError("Could not open this document. The object store may block in-browser reads.")
+        }
+      />
       {title ? <p className="muted" style={{ marginTop: 12 }}>{title}</p> : null}
     </div>
   );

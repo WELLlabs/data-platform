@@ -599,6 +599,11 @@ class DatasetService:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
             )
+        if not target_user.verified:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Owner must be an approved organization member",
+            )
         if (
             not actor.is_superuser
             and target_user.organization != dataset.organization

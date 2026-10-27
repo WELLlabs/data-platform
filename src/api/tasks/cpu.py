@@ -46,7 +46,7 @@ def convert_file(self, cloud_file_id: str) -> dict:
         from db.sync_session import SyncSession
         from models.converted_file import ConvertedFile
         from models.file import File
-        from services.conversion import ConversionError, convert_native
+        from services.conversion import ConversionError, convert_native, is_cog
         from services.formats import (
             STATUS_AVAILABLE,
             STATUS_REMOVED,
@@ -80,6 +80,14 @@ def convert_file(self, cloud_file_id: str) -> dict:
             work = Path(tmp)
             src = work / f"native{suffix}"
             _download(bucket, native.file_key, src)
+            if plan.conversion == "cog" and is_cog(src, timeout=120):
+                row.bucket = bucket
+                row.file_key = native.file_key
+                row.format = "cog"
+                row.status = STATUS_AVAILABLE
+                row.last_accessed = datetime.now(timezone.utc)
+                session.commit()
+                return {"ok": True, "key": native.file_key, "format": "cog", "reused_native": True}
             try:
                 out_path, out_fmt = convert_native(
                     src, work / "out", plan.conversion, timeout=1700

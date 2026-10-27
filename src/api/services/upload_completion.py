@@ -320,6 +320,10 @@ async def complete_upload_job(
                 geography=ev.get("geography"),
             )
             session.add(nf)
+            # The download-count row references files.file_id. Flush the file
+            # first: a later autoflush (session.get) can insert the count
+            # before the file and the foreign key then rolls the file back.
+            await session.flush()
             session.add(
                 FileDownloadCount(
                     file_id=fid,

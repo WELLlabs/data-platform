@@ -21,7 +21,7 @@ STATUS_REMOVED = "removed"
 
 VECTOR_FEATURE_LIMIT = 100_000
 
-# Geospatial formats are not visualised.
+# Geospatial tokens. Supported ones are planned below; the rest stay unsupported.
 _GEO_TOKENS = {
     "pmtiles",
     "mbtiles",
@@ -48,8 +48,21 @@ _GEO_TOKENS = {
     "wkt",
 }
 
-# Excel workbooks and templates are not visualised. CSV and TSV stay tabular.
+# Excel workbooks are converted to Parquet and shown as a table and chart.
 _EXCEL_TOKENS = {"xlsx", "xls", "xlsm", "xlsb", "xlt", "xltx", "xltm"}
+_SUPPORTED_GEO = {
+    "pmtiles",
+    "flatgeobuf",
+    "fgb",
+    "geoparquet",
+    "geojson",
+    "geopackage",
+    "gpkg",
+    "cog",
+    "geotiff",
+    "tif",
+    "tiff",
+}
 
 _PDF_CONVERT = {
     "docx",
@@ -169,7 +182,9 @@ def normalize_format_token(file_format: Optional[str], file_key: Optional[str] =
 
 
 def _excluded_from_visualization(token: str) -> bool:
-    if token in _GEO_TOKENS or token in _EXCEL_TOKENS:
+    if token in _SUPPORTED_GEO or token in _EXCEL_TOKENS:
+        return False
+    if token in _GEO_TOKENS:
         return True
     if token.startswith("geo"):
         return True
@@ -179,7 +194,7 @@ def _excluded_from_visualization(token: str) -> bool:
 def plan_for_format(file_format: Optional[str], file_key: Optional[str] = None) -> Optional[FormatPlan]:
     """Viewer plan for a file.
 
-    Every format can be visualised except geospatial files and Excel files.
+    Shapefile and KML are not visualised. Excel workbooks are.
     """
     token = normalize_format_token(file_format, file_key)
     if token and _excluded_from_visualization(token):
@@ -191,10 +206,18 @@ def plan_for_format(file_format: Optional[str], file_key: Optional[str] = None) 
         return FormatPlan(VIEWER_DOCUMENT, True, "pdf", "none")
     if token in _PDF_CONVERT:
         return FormatPlan(VIEWER_DOCUMENT, False, "pdf", "pdf")
-    if token in {"csv", "tsv"}:
+    if token in {"csv", "tsv"} or token in _EXCEL_TOKENS:
         return FormatPlan(VIEWER_TABLE_CHART, False, "parquet", "parquet")
     if token == "parquet":
         return FormatPlan(VIEWER_TABLE_CHART, True, "parquet", "none")
+    if token in {"geojson", "geopackage", "geoparquet"}:
+        return FormatPlan(VIEWER_VECTOR_MAP, False, "flatgeobuf", "vector")
+    if token in {"flatgeobuf", "pmtiles"}:
+        return FormatPlan(VIEWER_VECTOR_MAP, True, token, "none")
+    if token == "cog":
+        return FormatPlan(VIEWER_RASTER_MAP, True, "cog", "none")
+    if token == "geotiff":
+        return FormatPlan(VIEWER_RASTER_MAP, False, "cog", "cog")
     if token in _IMAGE_TOKENS:
         return FormatPlan(VIEWER_IMAGE, True, token, "none")
     if token in _AUDIO_TOKENS or token in _VIDEO_TOKENS:

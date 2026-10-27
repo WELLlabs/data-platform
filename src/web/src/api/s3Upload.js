@@ -66,7 +66,25 @@ export async function requestAndUploadFile({ jobId, file, filename, onProgress }
   });
   if (!uploadResp.ok) {
     const txt = await uploadResp.text();
-    throw new Error(`Failed to get upload URL: ${txt}`);
+    let body = null;
+    try {
+      body = JSON.parse(txt);
+    } catch {
+      // Not JSON; fall through to the raw text.
+    }
+    if (uploadResp.status === 409) {
+      const err = new Error("This file is already uploaded in some dataset.");
+      err.status = 409;
+      err.conflict = {
+        datasetId: body?.dataset_id || null,
+        datasetTitle: body?.dataset_title || null,
+      };
+      throw err;
+    }
+    const detail = typeof body?.detail === "string" ? body.detail : txt;
+    const err = new Error(`Failed to get upload URL: ${detail}`);
+    err.status = uploadResp.status;
+    throw err;
   }
   const uploadData = await uploadResp.json();
   const fileId = uploadData.file_id;

@@ -27,6 +27,38 @@ import {
   parseAvailability,
 } from "../constants/availability";
 
+
+const DESC_PREVIEW_CHARS = 320;
+
+/** Normalise stored text: real line breaks, including escaped "\\n" sequences. */
+function normalizeText(text) {
+  return String(text || "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/\\r\\n|\\n/g, "\n")
+    .trim();
+}
+
+/** Cut text at a word boundary for the collapsed preview. */
+function previewText(text, max) {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const space = cut.search(/\s\S*$/);
+  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).trimEnd()}…`;
+}
+
+/** Blank lines start a new paragraph; single line breaks stay as breaks. */
+function renderParagraphs(text) {
+  return text
+    .split(/\n\s*\n/)
+    .map((para) => para.trim())
+    .filter(Boolean)
+    .map((para, i) => (
+      <p key={i} className="text-lines">
+        {para}
+      </p>
+    ));
+}
+
 const initialDatasetEdit = {
   showModal: false,
   title: "",
@@ -354,17 +386,11 @@ function DatasetInfo() {
     const name = (file?.file_name || "").toLowerCase();
     const fmt = (file?.file_format || "").toLowerCase();
     const ext = name.includes(".") ? name.split(".").pop() : "";
-    const excel = new Set(["xlsx", "xls", "xlsm", "xlsb", "xlt", "xltx", "xltm"]);
     const geo = new Set([
-      "geojson", "gpkg", "geopackage", "geoparquet", "fgb", "flatgeobuf",
-      "pmtiles", "mbtiles", "tif", "tiff", "geotiff", "cog", "shp", "shx",
-      "prj", "cpg", "kml", "kmz", "gml", "topojson", "wkt",
+      "mbtiles", "shp", "shx", "prj", "cpg", "kml", "kmz", "gml", "topojson", "wkt",
     ]);
-    if (excel.has(ext) || excel.has(fmt) || geo.has(ext) || geo.has(fmt)) return true;
-    if (fmt.includes("excel") || fmt.includes("spreadsheetml")) return true;
-    if (/geojson|geo\+json|geopackage|geoparquet|geotiff|flatgeobuf|shapefile|pmtiles/.test(fmt)) {
-      return true;
-    }
+    if (geo.has(ext) || geo.has(fmt)) return true;
+    if (/shapefile|\bkml\b|\bkmz\b/.test(fmt)) return true;
     return false;
   };
 
@@ -681,6 +707,15 @@ function DatasetInfo() {
     if (role === 2) return "Reviewer";
     return "Member";
   };
+
+  const approvedOwnerCandidates = (members) =>
+    (members || []).filter(
+      (m) =>
+        m.verified === true &&
+        !(dataset?.owners || []).some(
+          (o) => String(o.user_id) === String(m.id)
+        )
+    );
 
   const loadOwnerMembersForOrg = async (orgId) => {
     const response = await fetch(organization_by_id_endpoint(orgId), {
@@ -1188,8 +1223,8 @@ function DatasetInfo() {
   const licenseVal = files.map((f) => f.permissions).find(Boolean) || "";
   const timeVal = formatDateShort(dataset.modified_at || dataset.created_at);
   const timeValCreated = formatDateShort(dataset.created_at);
-  const description = dataset.dataset_description || "";
-  const isLongDesc = description.length > 320;
+  const description = normalizeText(dataset.dataset_description);
+  const isLongDesc = description.length > DESC_PREVIEW_CHARS;
   const tagsList =
     dataset.tags && Array.isArray(dataset.tags) ? dataset.tags : [];
 
@@ -1395,10 +1430,9 @@ function DatasetInfo() {
                 {description ? (
                   isLongDesc ? (
                     <>
-                      <p>{description.slice(0, 320)}</p>
-                      <div className={"about-extra" + (aboutOpen ? " show" : "")}>
-                        <p>{description.slice(320)}</p>
-                      </div>
+                      {renderParagraphs(
+                        aboutOpen ? description : previewText(description, DESC_PREVIEW_CHARS)
+                      )}
                       <button
                         className="readmore"
                         onClick={() => setAboutOpen((v) => !v)}
@@ -1407,7 +1441,7 @@ function DatasetInfo() {
                       </button>
                     </>
                   ) : (
-                    <p>{description}</p>
+                    renderParagraphs(description)
                   )
                 ) : (
                   <p className="muted">No description provided for this dataset.</p>
@@ -1641,8 +1675,8 @@ function DatasetInfo() {
                           <div className="fcard-body-inner">
                             <div className="fcard-body-pad">
                               {file.file_description && (
-                                <p className="fcard-desc">
-                                  {file.file_description}
+                                <p className="fcard-desc text-lines">
+                                  {normalizeText(file.file_description)}
                                 </p>
                               )}
                               <div className="fmeta">
@@ -2069,44 +2103,30 @@ function DatasetInfo() {
                   </select>
                 </div>
               )}
-              {!ownerLoadingOrg && ownerMembers.length > 0 && (
-                <>
-                  <div className="field">
-                    <label htmlFor="owner-member-select">Add owner</label>
-                    <select
-                      id="owner-member-select"
-                      ref={ownerMemberSelectRef}
-                      value={ownerSelectedUserId}
-                      onChange={(e) => setOwnerSelectedUserId(e.target.value)}
-                      style={{ width: "100%" }}
-                    >
-                      <option value="">Select a member…</option>
-                      {ownerMembers
-                        .filter(
-                          (m) =>
-                            !(dataset.owners || []).some(
-                              (o) => String(o.user_id) === String(m.id)
-                            )
-                        )
-                        .map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.full_name} ({roleLabelForOwner(m.role)})
-                          </option>
-                        ))}
-                    </select>
-                  </div>
-                </>
+              {!ownerLoadingOrg && approvedOwnerCandidates(ownerMembers).length > 0 && (
+                <div className="field">
+                  <label htmlFor="owner-member-select">Add owner</label>
+                  <select
+                    id="owner-member-select"
+                    ref={ownerMemberSelectRef}
+                    value={ownerSelectedUserId}
+                    onChange={(e) => setOwnerSelectedUserId(e.target.value)}
+                    style={{ width: "100%" }}
+                  >
+                    <option value="">Select a member…</option>
+                    {approvedOwnerCandidates(ownerMembers).map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.full_name} ({roleLabelForOwner(m.role)})
+                      </option>
+                    ))}
+                  </select>
+                </div>
               )}
               {!ownerLoadingOrg &&
-                ownerMembers.filter(
-                  (m) =>
-                    !(dataset.owners || []).some(
-                      (o) => String(o.user_id) === String(m.id)
-                    )
-                ).length === 0 && (
+                approvedOwnerCandidates(ownerMembers).length === 0 && (
                   <p className="muted">
-                    No members in this organization to add as owners. Add people
-                    to the organization first.
+                    No approved members in this organization are available to
+                    add as owners.
                   </p>
                 )}
             </div>

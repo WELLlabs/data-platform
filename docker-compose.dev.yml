@@ -3,11 +3,22 @@ volumes:
   typesense_data:
 
 services:
+  migrate:
+    build:
+      context: ./src/api
+      dockerfile: Dockerfile.backend
+    env_file:
+      - ./.env
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["uv", "run", "alembic", "upgrade", "head"]
+    restart: no
+
   backend:
     build:
       context: ./src/api
-      dockerfile: Dockerfile.api
-    #expose:
+      dockerfile: Dockerfile.backend
     ports:
       - "8000:8000"
     env_file:
@@ -17,12 +28,15 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       email-worker:
         condition: service_healthy
       typesense:
         condition: service_started
+    command: ["uv", "run", "main.py"]
     # restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
@@ -34,7 +48,7 @@ services:
   frontend:
     build:
       context: ./src/web
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile.frontend
     networks:
       - appnet
     ports:
@@ -45,6 +59,10 @@ services:
         condition: service_healthy
       titiler:
         condition: service_started
+    volumes:
+      - ./src/web/nginx/fullchain.pem:/etc/data-platform/ssl/fullchain.pem:ro
+      - ./src/web/nginx/privkey.pem:/etc/data-platform/ssl/privkey.pem:ro
+    command: ["nginx", "-g", "daemon off;"]
     # restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
@@ -54,7 +72,7 @@ services:
       start_period: 5s
   
   db:
-    image: postgres:17
+    image: postgres:18.6
     environment:
       - POSTGRES_USER
       - POSTGRES_PASSWORD
@@ -70,7 +88,7 @@ services:
       test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}", "-d", "${POSTGRES_DB}"]
 
   redis:
-    image: redis:latest
+    image: redis:8.10-alpine
     networks:
       - appnet
     ports:
@@ -85,10 +103,8 @@ services:
       - appnet
     ports:
       - "8108:8108"
-    environment:
-      TYPESENSE_DATA_DIR: /data
-      TYPESENSE_API_KEY: ${TYPESENSE_API_KEY:-xyz}
-      TYPESENSE_ENABLE_CORS: "true"
+    env_file:
+      - ./.env
     volumes:
       - typesense_data:/data
     command: ["--data-dir", "/data", "--api-key", "${TYPESENSE_API_KEY:-xyz}", "--enable-cors"]
@@ -102,7 +118,7 @@ services:
   email-worker:
     build:
       context: ./src/api
-      dockerfile: Dockerfile.email
+      dockerfile: Dockerfile.backend
     env_file:
       - ./.env
     networks:
@@ -112,9 +128,11 @@ services:
         condition: service_healthy
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     # restart: unless-stopped
     # Optional: Override command to specify queues and concurrency
-    # command: ["uv", "run", "celery", "-A", "celery_worker", "worker", "--loglevel=info", "-Q", "email,default", "--concurrency=2"]
+    command: ["uv", "run", "celery", "-A", "celery_worker", "worker", "--loglevel=info", "-Q", "email,default", "--concurrency=2"]
     healthcheck:
       test: ["CMD-SHELL", "uv run celery -A celery_worker inspect ping || exit 1"]
       interval: 30s
@@ -123,8 +141,8 @@ services:
       start_period: 10s
 
   titiler:
-    image: ghcr.io/developmentseed/titiler:latest
-    platform: linux/amd64
+    image: ghcr.io/developmentseed/titiler:2.4
+    # platform: linux/amd64
     command:
       [
         "uvicorn",
@@ -166,7 +184,7 @@ services:
   conversion-worker:
     build:
       context: ./src/api
-      dockerfile: Dockerfile.conversion
+      dockerfile: Dockerfile.backend
     env_file:
       - ./.env
     networks:
@@ -176,6 +194,9 @@ services:
         condition: service_healthy
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command: ["uv", "run", "celery", "-A", "celery_cpu_worker", "worker", "--loglevel=info", "-P", "prefork", "-Q", "cpu", "--concurrency=1", "-B"]
     healthcheck:
       test: ["CMD-SHELL", "uv run celery -A celery_cpu_worker inspect ping || exit 1"]
       interval: 30s

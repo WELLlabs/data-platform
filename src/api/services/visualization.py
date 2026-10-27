@@ -20,6 +20,12 @@ from services.formats import (
     mime_for_cloud_format,
     plan_for_format,
 )
+from services.spreadsheet_header import (
+    HEADER_SCAN_ROWS,
+    detect_header_offset,
+    infer_column_type,
+    unique_headers,
+)
 from services.upload import UploadService
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -263,6 +269,52 @@ class VisualizationService:
         path = f"s3://{bucket}/{file_key}".replace("'", "''")
         return f"read_parquet('{path}')"
 
+    def _sheet_from(self, con: Any, src: str) -> tuple[str, bool]:
+        """Read a table, skipping title and filter rows above the header.
+
+        Files converted before header detection stored the report title as
+        the column names and the real header as a data row. This projects
+        those files onto the real columns. A normal table is returned as-is.
+        """
+        try:
+            described = con.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()
+            names = [column[0] for column in described]
+            sample = con.execute(
+                f"SELECT * FROM {src} LIMIT {HEADER_SCAN_ROWS}"
+            ).fetchall()
+        except Exception:
+            self.logger.exception("Could not inspect table preamble")
+            return src, False
+        if not names:
+            return src, False
+        logical = [names] + [list(row) for row in sample]
+        offset = detect_header_offset(logical, column_names_as_first_row=True)
+        if offset <= 0 or offset >= len(logical):
+            return src, False
+        new_names = unique_headers(logical[offset], len(names))
+        try:
+            select_list = ", ".join(
+                f"{quote_ident(old)} AS {quote_ident(new)}"
+                for old, new in zip(names, new_names)
+            )
+        except HTTPException:
+            self.logger.warning("Could not quote repaired spreadsheet headers")
+            return src, False
+        from_item = (
+            f"(SELECT {select_list} FROM ("
+            f"SELECT *, row_number() OVER () AS __dw_rn FROM {src}"
+            f") WHERE __dw_rn > {int(offset)}) AS _sheet"
+        )
+        try:
+            con.execute(f"SELECT * FROM {from_item} LIMIT 0")
+        except Exception:
+            self.logger.exception(
+                "Repaired spreadsheet query failed; using original columns"
+            )
+            return src, False
+        self.logger.info("Skipping %s preamble rows in converted table", offset)
+        return from_item, True
+
     def _configure_duckdb(self, con: Any) -> None:
         con.execute("INSTALL httpfs")
         con.execute("LOAD httpfs")
@@ -303,8 +355,14 @@ class VisualizationService:
         try:
             self._configure_duckdb(con)
             src = self._duckdb_parquet_sql(converted.bucket, converted.file_key)
-            cols = con.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()
-            count_row = con.execute(f"SELECT COUNT(*) FROM {src}").fetchone()
+            from_item, repaired = self._sheet_from(con, src)
+            cols = con.execute(f"DESCRIBE SELECT * FROM {from_item}").fetchall()
+            count_row = con.execute(f"SELECT COUNT(*) FROM {from_item}").fetchone()
+            sample = []
+            if repaired:
+                sample = con.execute(
+                    f"SELECT * FROM {from_item} LIMIT {HEADER_SCAN_ROWS}"
+                ).fetchall()
         except Exception as exc:
             self.logger.exception("DuckDB schema failed: %s", exc)
             raise HTTPException(
@@ -313,7 +371,14 @@ class VisualizationService:
             ) from exc
         finally:
             con.close()
-        columns = [{"name": c[0], "type": c[1]} for c in cols]
+        columns = [{"name": column[0], "type": column[1]} for column in cols]
+        if repaired and sample:
+            for index, column in enumerate(columns):
+                values = [
+                    row[index] if index < len(row) else None for row in sample
+                ]
+                if infer_column_type(values) == "DOUBLE":
+                    column["type"] = "DOUBLE"
         return {
             "columns": columns,
             "row_count": int(count_row[0]) if count_row else 0,
@@ -332,9 +397,15 @@ class VisualizationService:
         try:
             self._configure_duckdb(con)
             src = self._duckdb_parquet_sql(converted.bucket, converted.file_key)
-            headers = [c[0] for c in con.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()]
+            from_item, _repaired = self._sheet_from(con, src)
+            headers = [
+                column[0]
+                for column in con.execute(
+                    f"DESCRIBE SELECT * FROM {from_item}"
+                ).fetchall()
+            ]
             rows = con.execute(
-                f"SELECT * FROM {src} LIMIT {limit} OFFSET {offset}"
+                f"SELECT * FROM {from_item} LIMIT {limit} OFFSET {offset}"
             ).fetchall()
         except Exception as exc:
             self.logger.exception("DuckDB table read failed: %s", exc)
@@ -393,8 +464,9 @@ class VisualizationService:
         try:
             self._configure_duckdb(con)
             src = self._duckdb_parquet_sql(converted.bucket, converted.file_key)
+            from_item, _repaired = self._sheet_from(con, src)
             sql = (
-                f"SELECT {', '.join(select_parts)} FROM {src} "
+                f"SELECT {', '.join(select_parts)} FROM {from_item} "
                 f"GROUP BY 1 ORDER BY 1 LIMIT {limit}"
             )
             rows = con.execute(sql).fetchall()

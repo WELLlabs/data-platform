@@ -5,14 +5,21 @@ Runs only on the isolated Celery CPU worker (not the API process).
 
 from __future__ import annotations
 
+import csv
 import logging
 import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 from services.formats import VECTOR_FEATURE_LIMIT
+from services.spreadsheet_header import (
+    HEADER_SCAN_ROWS,
+    detect_header_offset,
+    excel_column_letter,
+    used_column_count,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -91,12 +98,102 @@ def _spreadsheet_to_csv(src: Path, dest_dir: Path, timeout: int) -> Path:
     return csvs[0]
 
 
-def _copy_csv_to_parquet(con, csv_path: Path, dest_s: str) -> None:
-    csv_s = str(csv_path).replace("'", "''")
+# Columns inspected while looking for a title row above the real header.
+_XLSX_SNIFF_COLUMNS = 128
+
+
+def _sql_path(path: Path) -> str:
+    return str(path).replace("'", "''")
+
+
+def _header_skip(rows: Sequence[Sequence[object]]) -> int:
+    try:
+        skip = detect_header_offset(rows)
+    except Exception:
+        logger.exception("Spreadsheet header detection failed")
+        return 0
+    if not isinstance(skip, int) or skip <= 0:
+        return 0
+    return min(skip, HEADER_SCAN_ROWS - 1)
+
+
+def _sample_delimited(path: Path, delimiter: str) -> list[list[str]]:
+    rows: list[list[str]] = []
+    with path.open(newline="", encoding="utf-8-sig", errors="replace") as handle:
+        reader = csv.reader(handle, delimiter=delimiter)
+        for index, row in enumerate(reader):
+            if index >= HEADER_SCAN_ROWS:
+                break
+            rows.append(row)
+    return rows
+
+
+def _delimited_source(path_s: str, delimiter: str, skip: int) -> str:
+    sql_delim = "\\t" if delimiter == "\t" else delimiter
+    skip_sql = f", skip={int(skip)}" if skip > 0 else ""
+    return f"read_csv_auto('{path_s}', delim='{sql_delim}', header=true{skip_sql})"
+
+
+def _copy_query(con, source_sql: str, dest_s: str) -> None:
     con.execute(
-        f"COPY (SELECT * FROM read_csv_auto('{csv_s}', header=true)) "
-        f"TO '{dest_s}' (FORMAT PARQUET)"
+        f"COPY (SELECT * FROM {source_sql}) TO '{dest_s}' (FORMAT PARQUET)"
     )
+
+
+def _copy_delimited_to_parquet(
+    con, src: Path, dest_s: str, delimiter: str
+) -> None:
+    skip = _header_skip(_sample_delimited(src, delimiter))
+    if skip:
+        logger.info(
+            "Skipping %s leading rows before the header in %s", skip, src.name
+        )
+    _copy_query(con, _delimited_source(_sql_path(src), delimiter, skip), dest_s)
+
+
+def _sniff_xlsx(con, src_s: str):
+    end = excel_column_letter(_XLSX_SNIFF_COLUMNS)
+    # An explicit range keeps blank rows between a title and the header.
+    # Without it, DuckDB stops at the first empty row.
+    return con.execute(
+        "SELECT * FROM read_xlsx("
+        f"'{src_s}', header=false, all_varchar=true, "
+        f"range='A1:{end}{HEADER_SCAN_ROWS}')"
+    ).fetchall()
+
+
+def _xlsx_source(src_s: str, skip: int, width: int) -> str:
+    if skip <= 0:
+        return f"read_xlsx('{src_s}', header=true)"
+    start = skip + 1
+    end = excel_column_letter(max(width, 1))
+    return (
+        f"read_xlsx('{src_s}', header=true, stop_at_empty=true, "
+        f"range='A{start}:{end}')"
+    )
+
+
+def _copy_xlsx_to_parquet(con, src_s: str, dest_s: str) -> None:
+    con.execute("INSTALL excel")
+    con.execute("LOAD excel")
+    skip = 0
+    width = 1
+    try:
+        sample = _sniff_xlsx(con, src_s)
+        skip = _header_skip(sample)
+        width = used_column_count(sample, _XLSX_SNIFF_COLUMNS) if sample else 1
+    except Exception:
+        logger.exception("Could not detect the Excel header; using the first row")
+        skip = 0
+    if skip:
+        logger.info("Skipping %s leading Excel rows before the header", skip)
+    try:
+        _copy_query(con, _xlsx_source(src_s, skip, width), dest_s)
+    except Exception:
+        if skip <= 0:
+            raise
+        logger.exception("Header-aware Excel read failed; using the first row")
+        _copy_query(con, _xlsx_source(src_s, 0, width), dest_s)
 
 
 def convert_to_parquet(src: Path, dest: Path, timeout: int) -> Path:
@@ -113,25 +210,18 @@ def convert_to_parquet(src: Path, dest: Path, timeout: int) -> Path:
     other_excel = {".xls", ".xlsm", ".xlsb", ".xlt", ".xltx", ".xltm"}
     try:
         if suffix in {".csv", ".tsv"}:
-            delim = "\\t" if suffix == ".tsv" else ","
-            con.execute(
-                f"COPY (SELECT * FROM read_csv_auto('{src_s}', delim='{delim}', header=true)) "
-                f"TO '{dest_s}' (FORMAT PARQUET)"
+            _copy_delimited_to_parquet(
+                con, src, dest_s, "\t" if suffix == ".tsv" else ","
             )
         elif suffix in other_excel:
             csv_path = _spreadsheet_to_csv(src, dest.parent / "excel_csv", timeout)
-            _copy_csv_to_parquet(con, csv_path, dest_s)
+            _copy_delimited_to_parquet(con, csv_path, dest_s, ",")
         else:
             try:
-                con.execute("INSTALL excel")
-                con.execute("LOAD excel")
-                con.execute(
-                    f"COPY (SELECT * FROM read_xlsx('{src_s}', header=true)) "
-                    f"TO '{dest_s}' (FORMAT PARQUET)"
-                )
+                _copy_xlsx_to_parquet(con, src_s, dest_s)
             except Exception:
                 csv_path = _spreadsheet_to_csv(src, dest.parent / "xlsx_csv", timeout)
-                _copy_csv_to_parquet(con, csv_path, dest_s)
+                _copy_delimited_to_parquet(con, csv_path, dest_s, ",")
     except ConversionError:
         raise
     except Exception as exc:

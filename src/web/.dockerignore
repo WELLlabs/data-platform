@@ -2,3 +2,10 @@ node_modules
 .gitignore
 README.md
 .env
+nginx/fullchain.pem 
+nginx/privkey.pem
+.git
+.github
+**/.DS_Store
+**/npm-debug.log*
+src/web/build

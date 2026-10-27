@@ -7,3 +7,10 @@ wheels
 *.egg-info
 .gitignore
 README.md
+.git
+.github
+**/.pytest_cache
+**/.mypy_cache
+**/.env
+**/.env.*
+**/.DS_Store

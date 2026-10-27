@@ -4,11 +4,11 @@ WORKDIR /app
 COPY package*.json .npmrc ./
 RUN npm install
 COPY . .
-# The production compile runs on a small server. Source maps and the
-# default Node heap make webpack abort with "JavaScript heap out of memory".
+# Source maps and ESLint push the compile past the memory this server can
+# spare. A 2 GB Node heap is killed by the OS, so stay inside 1 GB.
 ENV GENERATE_SOURCEMAP=false
 ENV DISABLE_ESLINT_PLUGIN=true
-ENV NODE_OPTIONS=--max-old-space-size=2048
+ENV NODE_OPTIONS=--max-old-space-size=1024
 RUN npm run build
 
 # Serve with Nginx

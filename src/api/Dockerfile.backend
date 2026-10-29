@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir uv
 WORKDIR /app
-COPY src/api/pyproject.toml src/api/uv.lock ./
+COPY ./pyproject.toml ./uv.lock ./
 RUN uv sync --frozen --no-dev --extra visualization
 
 FROM python:3.13-slim
@@ -34,24 +34,24 @@ WORKDIR /app
 
 COPY --chown=appuser:appuser --from=builder /app/.venv /app/.venv
 COPY --chown=appuser:appuser \
-    src/api/alembic.ini \
-    src/api/__init__.py \
-    src/api/main.py \
-    src/api/celery_worker.py \
-    src/api/celery_cpu_worker.py \
+    ./alembic.ini \
+    ./__init__.py \
+    ./main.py \
+    ./celery_worker.py \
+    ./celery_cpu_worker.py \
     ./
-COPY --chown=appuser:appuser src/api/core/ ./core/
-COPY --chown=appuser:appuser src/api/db/ ./db/
-COPY --chown=appuser:appuser src/api/middleware/ ./middleware/
-COPY --chown=appuser:appuser src/api/models/ ./models/
-COPY --chown=appuser:appuser src/api/routers/ ./routers/
-COPY --chown=appuser:appuser src/api/schemas/ ./schemas/
-COPY --chown=appuser:appuser src/api/services/ ./services/
-COPY --chown=appuser:appuser src/api/tasks/ ./tasks/
-COPY --chown=appuser:appuser src/api/emails/ ./emails/
-COPY --chown=appuser:appuser src/api/utils/ ./utils/
-COPY --chown=appuser:appuser src/api/scripts/ ./scripts/
-COPY --chown=appuser:appuser src/api/migrations/ ./migrations/
+COPY --chown=appuser:appuser ./core/ ./core/
+COPY --chown=appuser:appuser ./db/ ./db/
+COPY --chown=appuser:appuser ./middleware/ ./middleware/
+COPY --chown=appuser:appuser ./models/ ./models/
+COPY --chown=appuser:appuser ./routers/ ./routers/
+COPY --chown=appuser:appuser ./schemas/ ./schemas/
+COPY --chown=appuser:appuser ./services/ ./services/
+COPY --chown=appuser:appuser ./tasks/ ./tasks/
+COPY --chown=appuser:appuser ./emails/ ./emails/
+COPY --chown=appuser:appuser ./utils/ ./utils/
+COPY --chown=appuser:appuser ./scripts/ ./scripts/
+COPY --chown=appuser:appuser ./migrations/ ./migrations/
 
 ENV PYTHONPATH=/app \
     PYTHONUNBUFFERED=1 \

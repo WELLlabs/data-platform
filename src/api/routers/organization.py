@@ -344,21 +344,27 @@ class OrganizationController:
         """
         Return list of all organizations (id and name). Uses Redis cache key
         organization:list; on miss loads from DB and caches the response.
+        An empty list is never cached, so the first organisation shows up
+        immediately on a fresh instance.
         """
         try:
             cached = await redis.get(ORGANIZATION_LIST_CACHE_KEY)
             if cached is not None:
                 try:
                     data = json.loads(cached)
+                    if data.get("items"):
+                        self.logger.info(
+                            "Organization list served from Redis cache (key=%s)",
+                            ORGANIZATION_LIST_CACHE_KEY,
+                        )
+                        return JSONResponse(
+                            content=data,
+                            status_code=status.HTTP_200_OK,
+                        )
                     self.logger.info(
-                        "Organization list served from Redis cache (key=%s)",
-                        ORGANIZATION_LIST_CACHE_KEY,
+                        "Cached organization list is empty; refetching from database"
                     )
-                    return JSONResponse(
-                        content=data,
-                        status_code=status.HTTP_200_OK,
-                    )
-                except (json.JSONDecodeError, TypeError) as e:
+                except (json.JSONDecodeError, TypeError, AttributeError) as e:
                     self.logger.warning(
                         "Invalid organization list cache value, refetching: %s", e
                     )
@@ -368,6 +374,12 @@ class OrganizationController:
                 items=[OrganizationListItem(**x) for x in items]
             )
             body = jsonable_encoder(response_data)
+            if not items:
+                self.logger.info("Organization list is empty; skipping Redis cache")
+                return JSONResponse(
+                    content=body,
+                    status_code=status.HTTP_200_OK,
+                )
             ttl = settings.ORGANIZATION_LIST_CACHE_AGE_SECONDS
             cache_value = json.dumps(body)
             try:

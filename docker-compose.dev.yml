@@ -50,7 +50,7 @@ services:
   frontend:
     build:
       context: ./src/web
-      dockerfile: Dockerfile.frontend
+      dockerfile: Dockerfile.dev
     networks:
       - appnet
     ports:
@@ -74,13 +74,13 @@ services:
       start_period: 5s
   
   db:
-    image: postgres:18.6
+    image: postgres:18.6-alpine3.24
     environment:
       - POSTGRES_USER
       - POSTGRES_PASSWORD
       - POSTGRES_DB
     volumes:
-      - pg_data:/var/lib/postgresql/data
+      - pg_data:/var/lib/postgresql
     ports:
       - "5432:5432"
     networks:
@@ -90,7 +90,7 @@ services:
       test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}", "-d", "${POSTGRES_DB}"]
 
   redis:
-    image: redis:8.10-alpine
+    image: redis:7.4.12-alpine3.21
     networks:
       - appnet
     ports:
@@ -100,7 +100,7 @@ services:
       test: ["CMD", "redis-cli", "-e", "QUIT"]
 
   typesense:
-    image: typesense/typesense:27.1
+    image: typesense/typesense:31.0.rc23
     networks:
       - appnet
     ports:
@@ -143,7 +143,7 @@ services:
       start_period: 10s
 
   titiler:
-    image: ghcr.io/developmentseed/titiler:2.4
+    image: ghcr.io/developmentseed/titiler:2.4.0
     # platform: linux/amd64
     command:
       [

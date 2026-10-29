@@ -50,7 +50,7 @@ services:
   frontend:
     build:
       context: ./src/web
-      dockerfile: Dockerfile.frontend
+      dockerfile: Dockerfile.dev
     networks:
       - appnet
     ports:

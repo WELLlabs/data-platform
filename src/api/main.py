@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+from urllib.parse import urlsplit
 
 import uvicorn
 from core.config import host_name_from_env, settings
@@ -42,6 +43,24 @@ def _get_log_level() -> int:
     return level_map.get(log_level_str, logging.INFO)
 
 
+def _trusted_hosts() -> list[str]:
+    """
+    Hosts accepted by TrustedHostMiddleware: loopback plus the hostname from DOMAIN.
+
+    Returns:
+        list[str]: Allowed Host header values
+    """
+    hosts = ["localhost", "127.0.0.1"]
+    domain = (settings.DOMAIN or "").strip()
+    if domain:
+        if "//" not in domain:
+            domain = f"//{domain}"
+        hostname = urlsplit(domain).hostname
+        if hostname:
+            hosts.append(hostname)
+    return hosts
+
+
 def create_app() -> FastAPI:
     # Basic logging configuration if not already configured by the host
     if not logging.getLogger().handlers:
@@ -68,7 +87,7 @@ def create_app() -> FastAPI:
     # Trusted host middleware for security
     app.add_middleware(
         TrustedHostMiddleware,
-        allowed_hosts=["localhost", "127.0.0.1", "*.welllabs.org"],
+        allowed_hosts=_trusted_hosts(),
     )
 
     # CORS: allow frontend origin(s) from env or default to localhost

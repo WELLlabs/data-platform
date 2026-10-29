@@ -1,4 +1,4 @@
-name: Docker Image CI for GHCR
+name: Release images to GHCR
 
 on:
   release:
@@ -8,16 +8,72 @@ permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: release-images
+  cancel-in-progress: false
+
+env:
+  VERSION: ${{ github.event.release.tag_name }}
+
 jobs:
-  build_and_publish:
+  build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: backend
+            image: ghcr.io/welllabs/data-platform-backend
+            context: src/api
+            file: src/api/Dockerfile.backend
+          - name: frontend
+            image: ghcr.io/welllabs/data-platform-frontend
+            context: src/web
+            file: src/web/Dockerfile.frontend
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ env.VERSION }}
 
       - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
 
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.ACCESS_TOKEN_GHCR }}   # secrets.GITHUB_TOKEN or keep secrets.ACCESS_TOKEN_GHCR
+
+      - name: Refuse to overwrite a released version
+        run: |
+          if docker buildx imagetools inspect "${{ matrix.image }}:${VERSION}" >/dev/null 2>&1; then
+            echo "::error::${{ matrix.image }}:${VERSION} already exists"
+            exit 1
+          fi
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ matrix.image }}
+          tags: type=sha                          # sha-<first 7 chars of the commit>
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          sbom: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  publish:
+    needs: build                                  # runs only if both builds succeed
+    runs-on: ubuntu-latest
+    steps:
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
@@ -26,20 +82,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.ACCESS_TOKEN_GHCR }}
 
-      - id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/welllabs/data-platform
-          tags: |
-            type=raw,value=${{ github.event.release.tag_name }}
-            type=raw,value=latest,enable=${{ github.event.release.prerelease == false }}
-
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          provenance: false
-          sbom: false
-          tags: ${{ steps.meta.outputs.tags }}
+      - name: Tag both images with the release version
+        env:
+          PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          set -eu
+          SHA_TAG="sha-${GITHUB_SHA::7}"
+          for IMAGE in ghcr.io/welllabs/data-platform-backend ghcr.io/welllabs/data-platform-frontend; do
+            TAGS="-t ${IMAGE}:${VERSION}"
+            [ "$PRERELEASE" = "false" ] && TAGS="$TAGS -t ${IMAGE}:latest"
+            docker buildx imagetools create $TAGS "${IMAGE}:${SHA_TAG}"
+          done

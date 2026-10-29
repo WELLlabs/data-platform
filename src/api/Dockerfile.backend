@@ -53,9 +53,11 @@ COPY --chown=appuser:appuser ./utils/ ./utils/
 COPY --chown=appuser:appuser ./scripts/ ./scripts/
 COPY --chown=appuser:appuser ./migrations/ ./migrations/
 
+ARG APP_VERSION=0.0.0
 ENV PYTHONPATH=/app \
     PYTHONUNBUFFERED=1 \
-    UV_NO_SYNC=1
+    UV_NO_SYNC=1 \
+    APP_VERSION=$APP_VERSION
 
 USER appuser
 

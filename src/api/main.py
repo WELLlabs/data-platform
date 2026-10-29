@@ -19,7 +19,7 @@ from routers.user import router as user_router
 from routers.visualization import router as visualization_router
 from starlette.responses import JSONResponse
 
-__version__ = "1.0.0"
+__version__ = os.environ.get("APP_VERSION", "0.0.0")
 
 
 def _get_log_level() -> int:

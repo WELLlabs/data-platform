@@ -1,4 +1,9 @@
 .env
 .cursorrules
+.cursor/
 *.txt
 *.pem
+CLAUDE.md
+AGENTS.md
+.DS_Store
+*.bak

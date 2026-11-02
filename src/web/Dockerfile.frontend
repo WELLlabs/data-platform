@@ -1,0 +1,13 @@
+# Build React app
+FROM --platform=$BUILDPLATFORM node:26.12-alpine AS build
+WORKDIR /app
+COPY package*.json .npmrc ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# Serve with Nginx
+FROM nginx:1.30-alpine
+COPY --from=build /app/build /usr/share/nginx/html
+COPY ./nginx/nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80 443

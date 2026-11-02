@@ -1,0 +1,182 @@
+# Paste the GHCR image address in this extension block to be used for different containers.
+x-images:
+  frontend: &frontend-image "ghcr.io/welllabs/data-platform-frontend:X.Y.Z"
+  backend:  &backend-image "ghcr.io/welllabs/data-platform-backend:X.Y.Z"
+
+volumes:
+  typesense_data:
+
+services:
+  migrate:
+    image: *backend-image
+    env_file:
+      - ./.env
+    networks:
+      - appnet
+    command: ["uv", "run", "alembic", "upgrade", "head"]
+    restart: no
+
+  backend:
+    image: *backend-image
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./.env
+    networks:
+      - appnet
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      email-worker:
+        condition: service_healthy
+      conversion-worker:
+        condition: service_healthy
+      typesense:
+        condition: service_started
+    command: ["uv", "run", "main.py"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    
+  frontend:
+    image: *frontend-image
+    networks:
+      - appnet
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      backend:
+        condition: service_healthy
+      titiler:
+        condition: service_started
+    volumes:
+      - /etc/ssl/certs/fullchain.pem:/etc/data-platform/ssl/fullchain.pem:ro
+      - /etc/ssl/private/privkey.pem:/etc/data-platform/ssl/privkey.pem:ro
+    command: ["nginx", "-g", "daemon off;"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  redis:
+    image: redis:7.4.12-alpine3.21
+    networks:
+      - appnet
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "-e", "QUIT"]
+
+  typesense:
+    image: typesense/typesense:31.0.rc23
+    networks:
+      - appnet
+    ports:
+      - "8108:8108"
+    env_file:
+      - ./.env
+    restart: unless-stopped
+    volumes:
+      - typesense_data:/data
+    command: ["--data-dir", "/data", "--api-key", "${TYPESENSE_API_KEY:-xyz}", "--enable-cors"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8108/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  email-worker:
+    image: *backend-image
+    env_file:
+      - ./.env
+    networks:
+      - appnet
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    command: ["uv", "run", "celery", "-A", "celery_worker", "worker", "--loglevel=info", "-Q", "email,default", "--concurrency=2"]
+    healthcheck:
+      test: ["CMD-SHELL", "uv run celery -A celery_worker inspect ping || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  titiler:
+    image: ghcr.io/developmentseed/titiler:2.4.0
+    command:
+      [
+        "uvicorn",
+        "titiler.application.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--workers",
+        "1",
+      ]
+    environment:
+      CPL_TMPDIR: /tmp
+      GDAL_CACHEMAX: 75%
+      GDAL_DISABLE_READDIR_ON_OPEN: EMPTY_DIR
+      GDAL_HTTP_MERGE_CONSECUTIVE_RANGES: "YES"
+      GDAL_HTTP_MULTIPLEX: "YES"
+      GDAL_HTTP_VERSION: "2"
+      VSI_CACHE: "TRUE"
+      VSI_CACHE_SIZE: "536870912"
+      TITILER_API_CORS_ORIGINS: "*"
+    ports:
+      - "8001:8000"
+    networks:
+      - appnet
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  conversion-worker:
+    image: *backend-image
+    env_file:
+      - ./.env
+    networks:
+      - appnet
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command: ["uv", "run", "celery", "-A", "celery_cpu_worker", "worker", "--loglevel=info", "-P", "prefork", "-Q", "cpu", "--concurrency=1", "-B"]
+    healthcheck:
+      test: ["CMD-SHELL", "uv run celery -A celery_cpu_worker inspect ping || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+networks:
+  appnet:

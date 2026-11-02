@@ -36,6 +36,8 @@ services:
         condition: service_healthy
       email-worker:
         condition: service_healthy
+      conversion-worker:
+        condition: service_healthy
       typesense:
         condition: service_started
     command: ["uv", "run", "main.py"]

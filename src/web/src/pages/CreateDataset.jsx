@@ -9,6 +9,7 @@ import {
     organization_by_id_endpoint,
 } from "../api/endpoints";
 import { requestAndUploadFile } from "../api/s3Upload";
+import { createRateMeter, describeProgress } from "../api/uploadRate";
 import { findExistingFiles } from "../api/fileCheck";
 import FileAccordionList from "../components/FileAccordionList";
 import HelpTooltip from "../components/HelpTooltip";
@@ -53,6 +54,7 @@ function CreateDataset() {
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [progress, setProgress] = useState(0);
+    const [uploadStats, setUploadStats] = useState(null);
     const [error, setError] = useState("");
     const [success, setSuccess] = useState(false);
 
@@ -356,6 +358,9 @@ function CreateDataset() {
             });
             if (!uploadJobResp.ok) {
                 const txt = await uploadJobResp.text();
+                if (uploadJobResp.status === 401) {
+                    throw new Error("Your session has expired. Please sign in again, then upload the files.");
+                }
                 throw new Error(`Failed to create upload job: ${txt}`);
             }
             const uploadJobData = await uploadJobResp.json();
@@ -404,6 +409,8 @@ function CreateDataset() {
                 0
             );
             let uploadedBytes = 0;
+            const rateMeter = Object.assign(createRateMeter(), { shownAt: 0 });
+            setUploadStats(null);
             for (const item of files) {
                 const priorBytes = uploadedBytes;
                 let fileId;
@@ -412,14 +419,24 @@ function CreateDataset() {
                     jobId: datasetJobId,
                     file: item.file,
                     filename: storedFilename(item.basename, item.extension),
-                    onProgress: (pct) => {
-                        const current = (item.file.size || 0) * (pct / 100);
+                    onProgress: (pct, loaded) => {
+                        const current = Number.isFinite(loaded)
+                            ? loaded
+                            : (item.file.size || 0) * (pct / 100);
+                        const sent = priorBytes + current;
                         const overall = totalBytes
-                            ? Math.round(
-                                  ((priorBytes + current) / totalBytes) * 100
-                              )
+                            ? Math.round((sent / totalBytes) * 100)
                             : pct;
                         setProgress(Math.min(99, overall));
+                        rateMeter.push(sent);
+                        const now = Date.now();
+                        if (now - rateMeter.shownAt > 1000) {
+                            rateMeter.shownAt = now;
+                            setUploadStats({
+                                rate: rateMeter.bytesPerSecond(),
+                                remaining: totalBytes - sent,
+                            });
+                        }
                     },
                     }));
                 } catch (err) {
@@ -919,7 +936,8 @@ function CreateDataset() {
                                             display: "inline-block",
                                         }}
                                     >
-                                        Uploading… {progress}%
+                                        Uploading…{" "}
+                                        {describeProgress(progress, uploadStats)}
                                     </span>
                                 </>
                             ) : (

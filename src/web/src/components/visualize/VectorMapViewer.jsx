@@ -109,17 +109,33 @@ export default function VectorMapViewer({ url, format }) {
           return;
         }
         const fgb = await import("flatgeobuf");
+        // Read the whole file with one plain GET and stream-decode it.
+        // Passing the URL string makes flatgeobuf do a bounding-box query
+        // with ranged reads, which throws when no box is given and also
+        // needs Range in the bucket's CORS rules.
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`The file could not be read (HTTP ${resp.status}).`);
         const fc = { type: "FeatureCollection", features: [] };
-        const iter = fgb.geojson.deserialize(url);
+        const iter = resp.body
+          ? fgb.geojson.deserialize(resp.body)
+          : fgb.geojson.deserialize(new Uint8Array(await resp.arrayBuffer()));
         for await (const feature of iter) {
+          if (cancelled) return;
           fc.features.push(feature);
           if (fc.features.length >= 100000) break;
         }
         if (cancelled) return;
+        if (!fc.features.length) {
+          setError("This file has no features to draw.");
+          return;
+        }
         setGeojson(fc);
         setBounds(bboxOf(fc));
       } catch (e) {
-        if (!cancelled) setError("Could not load vector features for this file.");
+        if (!cancelled) {
+          const detail = e && e.message ? ` ${e.message}` : "";
+          setError(`Could not load vector features for this file.${detail}`);
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -127,11 +143,10 @@ export default function VectorMapViewer({ url, format }) {
 
   const initialView = useMemo(() => {
     if (!bounds) return { longitude: 78.96, latitude: 20.59, zoom: 4 };
-    return {
-      longitude: (bounds[0][0] + bounds[1][0]) / 2,
-      latitude: (bounds[0][1] + bounds[1][1]) / 2,
-      zoom: 6,
-    };
+    const [[w, s], [e, n]] = bounds;
+    // A single point has no extent to fit.
+    if (w === e && s === n) return { longitude: w, latitude: s, zoom: 12 };
+    return { bounds, fitBoundsOptions: { padding: 32, maxZoom: 16 } };
   }, [bounds]);
 
   if (error) {
@@ -146,7 +161,12 @@ export default function VectorMapViewer({ url, format }) {
 
   const { Map, Source, Layer } = mapMod;
   const maxBounds = bounds
-    ? [bounds[0][0] - 0.5, bounds[0][1] - 0.5, bounds[1][0] + 0.5, bounds[1][1] + 0.5]
+    ? [
+        Math.max(-180, bounds[0][0] - 0.5),
+        Math.max(-85, bounds[0][1] - 0.5),
+        Math.min(180, bounds[1][0] + 0.5),
+        Math.min(85, bounds[1][1] + 0.5),
+      ]
     : undefined;
 
   return (
@@ -161,9 +181,24 @@ export default function VectorMapViewer({ url, format }) {
       >
         {geojson && (
           <Source id="viz-vector" type="geojson" data={geojson}>
-            <Layer id="viz-fill" type="fill" paint={{ "fill-color": "#2563eb", "fill-opacity": 0.25 }} />
-            <Layer id="viz-line" type="line" paint={{ "line-color": "#1d4ed8", "line-width": 1.5 }} />
-            <Layer id="viz-circle" type="circle" paint={{ "circle-radius": 4, "circle-color": "#1d4ed8" }} />
+            <Layer
+              id="viz-fill"
+              type="fill"
+              filter={["match", ["geometry-type"], ["Polygon", "MultiPolygon"], true, false]}
+              paint={{ "fill-color": "#2563eb", "fill-opacity": 0.25 }}
+            />
+            <Layer
+              id="viz-line"
+              type="line"
+              filter={["match", ["geometry-type"], ["Point", "MultiPoint"], false, true]}
+              paint={{ "line-color": "#1d4ed8", "line-width": 2 }}
+            />
+            <Layer
+              id="viz-circle"
+              type="circle"
+              filter={["match", ["geometry-type"], ["Point", "MultiPoint"], true, false]}
+              paint={{ "circle-radius": 4, "circle-color": "#1d4ed8" }}
+            />
           </Source>
         )}
         {pmtilesUrl && (

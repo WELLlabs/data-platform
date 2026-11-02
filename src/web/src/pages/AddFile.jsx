@@ -8,6 +8,7 @@ import {
   dataset_info_endpoint,
 } from "../api/endpoints";
 import { requestAndUploadFile } from "../api/s3Upload";
+import { createRateMeter, describeProgress } from "../api/uploadRate";
 import { findExistingFiles } from "../api/fileCheck";
 import FileAccordionList from "../components/FileAccordionList";
 import Ic from "../components/wd/Icons";
@@ -32,6 +33,7 @@ function AddFile() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [uploadStats, setUploadStats] = useState(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
   const [partialNote, setPartialNote] = useState("");
@@ -256,6 +258,9 @@ function AddFile() {
       });
       if (!createJobResp.ok) {
         const txt = await createJobResp.text();
+        if (createJobResp.status === 401) {
+          throw new Error("Your session has expired. Please sign in again, then upload the files.");
+        }
         throw new Error(`Failed to create upload job: ${txt}`);
       }
       const createJobData = await createJobResp.json();
@@ -266,6 +271,8 @@ function AddFile() {
 
       const totalBytes = files.reduce((sum, item) => sum + (item.file.size || 0), 0);
       let uploadedBytes = 0;
+      const meter = Object.assign(createRateMeter(), { shownAt: 0 });
+      setUploadStats(null);
       let staged = 0;
       const failures = [];
 
@@ -277,12 +284,17 @@ function AddFile() {
             jobId,
             file: item.file,
             filename: storedFilename(item.basename, item.extension),
-            onProgress: (pct) => {
-              const current = (item.file.size || 0) * (pct / 100);
-              const overall = totalBytes
-                ? Math.round(((priorBytes + current) / totalBytes) * 100)
-                : pct;
+            onProgress: (pct, loaded) => {
+              const current = Number.isFinite(loaded) ? loaded : (item.file.size || 0) * (pct / 100);
+              const sent = priorBytes + current;
+              const overall = totalBytes ? Math.round((sent / totalBytes) * 100) : pct;
               setProgress(Math.min(99, overall));
+              meter.push(sent);
+              const now = Date.now();
+              if (now - meter.shownAt > 1000) {
+                meter.shownAt = now;
+                setUploadStats({ rate: meter.bytesPerSecond(), remaining: totalBytes - sent });
+              }
             },
           });
 
@@ -537,7 +549,7 @@ function AddFile() {
                     />
                   </div>
                   <span className="mono-token" style={{ marginTop: 6, display: "inline-block" }}>
-                    Uploading… {progress}%
+                    Uploading… {describeProgress(progress, uploadStats)}
                   </span>
                 </>
               ) : (

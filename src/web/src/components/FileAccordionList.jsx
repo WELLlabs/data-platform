@@ -76,8 +76,27 @@ export default function FileAccordionList({
               {conflict ? (
                 <span className="chip dup">Already uploaded</span>
               ) : (
-                <span className={"chip " + (complete ? "ok" : "todo")}>
-                  {complete ? "Complete" : "Needs title"}
+                // While uploading, the chip shows the upload, not the form.
+                // "Complete" next to a file at 25% read as "upload complete".
+                <span
+                  className={
+                    "chip " +
+                    (item.status === "error"
+                      ? "dup"
+                      : item.status === "ok" || (!item.status && complete)
+                      ? "ok"
+                      : "todo")
+                  }
+                >
+                  {item.status === "uploading"
+                    ? "Uploading"
+                    : item.status === "ok"
+                    ? "Uploaded"
+                    : item.status === "error"
+                    ? "Failed"
+                    : complete
+                    ? "Details added"
+                    : "Needs title"}
                 </span>
               )}
               <button

@@ -134,9 +134,23 @@ class Settings(BaseSettings):
     HOMEPAGE_STATS_CACHE_AGE_SECONDS: int = 300
     HOMEPAGE_STATS_RESULT_COUNT: int = 10
 
+    # Delete uploads that never became a dataset file, this many hours after
+    # the upload URL was issued and once the upload job is closed or expired.
+    AUTO_REMOVE_ORPHANED_UPLOADS: bool = True
+    ORPHANED_UPLOAD_EXPIRY_HOURS: int = 24
+
     AUTO_REMOVE_CONVERTED_FILES: bool = False
     CONVERTED_FILES_EXPIRY_TIME_DAYS: int = 30
     TITILER_BASE_URL: str = ""
+    # Rasters whose CRS is missing or mislabelled are placed with one of these
+    # projections, but only when exactly one of them puts the data inside
+    # RASTER_EXPECTED_REGION (west,south,east,north in degrees). EPSG:7755 is
+    # the India NSF LCC used by NRSC/Bhuvan products.
+    RASTER_CRS_CANDIDATES: str = (
+        "EPSG:7755,EPSG:3857,EPSG:32642,EPSG:32643,EPSG:32644,"
+        "EPSG:32645,EPSG:32646,EPSG:32647"
+    )
+    RASTER_EXPECTED_REGION: str = "60,-5,105,40"
 
     model_config = SettingsConfigDict(
         env_file=(

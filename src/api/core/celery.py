@@ -55,7 +55,12 @@ celery_app.conf.beat_schedule = {
         "task": "cpu.purge_expired_converted_files",
         "schedule": 3600.0,
         "options": {"queue": "cpu"},
-    }
+    },
+    "cleanup-orphaned-uploads": {
+        "task": "cpu.cleanup_orphaned_uploads",
+        "schedule": 3600.0,
+        "options": {"queue": "cpu"},
+    },
 }
 
 def _sanitize_url(url: str) -> str:

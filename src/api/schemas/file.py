@@ -22,6 +22,16 @@ class CompleteMultipartRequest(BaseModel):
     parts: List[MultipartPartComplete]
 
 
+class MultipartSessionRequest(BaseModel):
+    job_id: str
+    file_id: UUID
+    upload_id: str
+
+
+class MultipartPartUrlsRequest(MultipartSessionRequest):
+    part_numbers: List[int] = Field(..., min_length=1, max_length=100)
+
+
 class FileEditRequest(BaseModel):
     """
     Schema for editing file metadata via PUT request body.

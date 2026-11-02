@@ -219,6 +219,8 @@ export default function FilePreview() {
                   bidx={payload.bidx}
                   rescale={payload.rescale}
                   colormapName={payload.colormap_name}
+                  georefStatus={payload.georef_status}
+                  georefNote={payload.georef_note}
                 />
               )}
               {(viewer === "image" || viewer === "text" || viewer === "media" || viewer === "embed") && (

@@ -112,6 +112,23 @@ async def _invalidate_ds_cache(
         log.warning("Failed to clear dataset cache: %s", e)
 
 
+async def _staged_file_ids(
+    redis_jobs: Redis, jid: str, event_ids: List[str]
+) -> set[UUID]:
+    staged: set[UUID] = set()
+    for eid in event_ids:
+        if not re.match(r"^file_\d+$", eid):
+            continue
+        raw = await redis_jobs.get(f"job:{jid}:event:{eid}")
+        if not raw:
+            continue
+        try:
+            staged.add(UUID(str(json.loads(raw)["file_id"])))
+        except (KeyError, ValueError, TypeError):
+            logger.warning("Upload job %s event %s has no valid file_id", jid, eid)
+    return staged
+
+
 async def complete_upload_job(
     job_id: str,
     user: User,
@@ -146,12 +163,20 @@ async def complete_upload_job(
     job["status"] = "in_progress"
     await _set_json(redis_jobs, f"job:{jid}", job, ttl)
 
+    events_raw = await redis_jobs.get(f"job:{jid}:events")
+    event_ids: List[str] = json.loads(events_raw or "[]")
+    staged_file_ids = await _staged_file_ids(redis_jobs, jid, event_ids)
+
     or_result = await session.execute(
         select(OrphanedS3Object).where(OrphanedS3Object.job_id == UUID(jid))
     )
     orphans: List[OrphanedS3Object] = list(or_result.scalars().all())
     file_sizes: Dict[UUID, int] = {}
     for row in orphans:
+        # A file whose upload failed was never staged with add_file. Leave its
+        # row for the orphan cleanup instead of failing the files that worked.
+        if row.file_id not in staged_file_ids:
+            continue
         st = await upload_service.check_file_status_by_key(row.file_key)
         if not st.get("exists", False):
             raise HTTPException(
@@ -164,8 +189,6 @@ async def complete_upload_job(
         session.add(row)
     await session.commit()
 
-    events_raw = await redis_jobs.get(f"job:{jid}:events")
-    event_ids: List[str] = json.loads(events_raw or "[]")
     dataset_ids_to_invalidate: set[UUID] = set()
     any_failed_event = False
 

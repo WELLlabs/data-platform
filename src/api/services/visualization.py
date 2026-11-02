@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -26,6 +27,7 @@ from services.spreadsheet_header import (
     infer_column_type,
     unique_headers,
 )
+from services.raster_georef import GEOREF_OK
 from services.upload import UploadService
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -56,6 +58,36 @@ def quote_ident(name: str) -> str:
             detail="Invalid column name",
         )
     return '"' + name.replace('"', '""') + '"'
+
+
+def _sql_literal(value: str) -> str:
+    return str(value).replace("'", "''")
+
+
+def _s3_credentials() -> tuple[str, str, str]:
+    """Return S3 credentials for DuckDB.
+
+    Explicit keys in .env win. Otherwise use boto3's credential chain, which
+    covers the EC2 instance role used in production. DuckDB's plain
+    ``SET s3_*`` settings do not read the instance role on their own, so
+    without this every Parquet read fails with 403 when the keys are blank.
+    Role credentials are temporary, so the session token is passed too.
+    """
+    key = (settings.AWS_ACCESS_KEY_ID or "").strip()
+    secret = (settings.AWS_SECRET_ACCESS_KEY or "").strip()
+    if key and secret:
+        return key, secret, ""
+    try:
+        import boto3
+
+        creds = boto3.Session().get_credentials()
+        if creds is None:
+            return "", "", ""
+        frozen = creds.get_frozen_credentials()
+        return frozen.access_key or "", frozen.secret_key or "", frozen.token or ""
+    except Exception:
+        logger.exception("Could not resolve AWS credentials for DuckDB")
+        return "", "", ""
 
 
 class VisualizationService:
@@ -173,8 +205,14 @@ class VisualizationService:
             if plan.viewer == "raster_map" and titiler:
                 body["titiler_url"] = f"{titiler}/cog"
                 body["bidx"] = 1
-                body["rescale"] = "0,255"
+                # The viewer computes the stretch from the raster's own
+                # statistics. A fixed 0,255 range paints small-valued
+                # rasters (indices, rainfall, temperature) one flat colour.
+                body["rescale"] = None
                 body["colormap_name"] = "viridis"
+            if plan.viewer == "raster_map":
+                body["georef_status"] = converted.georef_status or GEOREF_OK
+                body["georef_note"] = converted.georef_note or ""
         return body
 
     def _is_stale(self, converted: ConvertedFile) -> bool:
@@ -193,6 +231,18 @@ class VisualizationService:
         plan = self._plan(file_record)
         converted = await self.latest_converted(file_record.file_id)
 
+        if (
+            converted
+            and converted.status == STATUS_AVAILABLE
+            and plan.viewer == "raster_map"
+            and converted.georef_status is None
+        ):
+            # Made before rasters were checked for a missing or mislabelled
+            # CRS. Check again so files such as NRSC LULC exports that say
+            # EPSG:4326 but use metres get placed correctly.
+            await self._supersede(converted, file_record)
+            converted = None
+
         if converted and converted.status == STATUS_AVAILABLE:
             await self._touch_and_log(converted, user)
             extra = await self._presign(converted)
@@ -206,7 +256,8 @@ class VisualizationService:
                 return self._payload(file_record, plan, converted)
 
         bucket = file_record.bucket or settings.S3_BUCKET
-        if plan.cloud_native:
+        fast_raster = await self._sound_native_cog(plan, bucket, file_record)
+        if plan.cloud_native or fast_raster:
             row = ConvertedFile(
                 cloud_file_id=uuid4(),
                 native_file_id=file_record.file_id,
@@ -215,6 +266,7 @@ class VisualizationService:
                 format=plan.target_format,
                 status=STATUS_AVAILABLE,
                 last_accessed=datetime.now(timezone.utc),
+                georef_status=GEOREF_OK if fast_raster else None,
             )
             self.session.add(row)
             await self.session.commit()
@@ -236,6 +288,52 @@ class VisualizationService:
         await self.session.refresh(row)
         self._enqueue_conversion(row.cloud_file_id)
         return self._payload(file_record, plan, row)
+
+    async def _sound_native_cog(
+        self, plan: FormatPlan, bucket: str, file_record: File
+    ) -> bool:
+        """True when an uploaded GeoTIFF can be served as is, with no conversion.
+
+        Reads only the TIFF header (a few ranged GETs). The file must be a
+        COG, name an EPSG code, and convert cleanly to longitude/latitude.
+        Anything less certain (no CRS, a user-defined CRS, coordinates that
+        do not match the CRS) goes to the conversion worker, where GDAL reads
+        the full definition and fixes what it can.
+        """
+        if plan.conversion != "cog":
+            return False
+        from services import cog_check
+        from services.raster_georef import (
+            RasterGeoref,
+            assess,
+            parse_candidates,
+            parse_region,
+        )
+        from services.upload import get_s3_client
+
+        found = await asyncio.to_thread(
+            cog_check.inspect_s3_tiff, get_s3_client(), bucket, file_record.file_key
+        )
+        if not found.is_cog or found.epsg is None or found.geotransform is None:
+            return False
+        decision = assess(
+            RasterGeoref(found.width, found.height, found.geotransform, f"EPSG:{found.epsg}"),
+            parse_candidates(settings.RASTER_CRS_CANDIDATES),
+            parse_region(settings.RASTER_EXPECTED_REGION),
+        )
+        return decision.status == GEOREF_OK
+
+    async def _supersede(self, converted: ConvertedFile, file_record: File) -> None:
+        """Retire a derivative so the file is processed again."""
+        converted.status = STATUS_REMOVED
+        await self.session.commit()
+        if converted.file_key and converted.file_key != file_record.file_key:
+            try:
+                await self.upload_service.delete_object(converted.file_key)
+            except Exception:
+                self.logger.warning(
+                    "Could not delete superseded derivative %s", converted.file_key
+                )
 
     def _enqueue_conversion(self, cloud_file_id: UUID) -> None:
         from core.celery import celery_app
@@ -318,14 +416,13 @@ class VisualizationService:
     def _configure_duckdb(self, con: Any) -> None:
         con.execute("INSTALL httpfs")
         con.execute("LOAD httpfs")
-        con.execute(f"SET s3_region='{settings.S3_REGION}'")
-        key = (settings.AWS_ACCESS_KEY_ID or "").strip()
-        secret = (settings.AWS_SECRET_ACCESS_KEY or "").strip()
+        con.execute(f"SET s3_region='{_sql_literal(settings.S3_REGION)}'")
+        key, secret, token = _s3_credentials()
         if key and secret:
-            con.execute(f"SET s3_access_key_id='{key.replace(chr(39), chr(39)+chr(39))}'")
-            con.execute(
-                f"SET s3_secret_access_key='{secret.replace(chr(39), chr(39)+chr(39))}'"
-            )
+            con.execute(f"SET s3_access_key_id='{_sql_literal(key)}'")
+            con.execute(f"SET s3_secret_access_key='{_sql_literal(secret)}'")
+        if token:
+            con.execute(f"SET s3_session_token='{_sql_literal(token)}'")
 
     async def _require_parquet(self, file_record: File) -> ConvertedFile:
         plan = self._plan(file_record)

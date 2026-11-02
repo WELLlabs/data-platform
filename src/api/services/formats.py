@@ -200,7 +200,8 @@ def plan_for_format(file_format: Optional[str], file_key: Optional[str] = None) 
     if token and _excluded_from_visualization(token):
         return None
     if not token:
-        return FormatPlan(VIEWER_EMBED, True, "bin", "none")
+        # No extension and no format: nothing a browser can be trusted to show.
+        return None
 
     if token == "pdf":
         return FormatPlan(VIEWER_DOCUMENT, True, "pdf", "none")
@@ -214,9 +215,9 @@ def plan_for_format(file_format: Optional[str], file_key: Optional[str] = None) 
         return FormatPlan(VIEWER_VECTOR_MAP, False, "flatgeobuf", "vector")
     if token in {"flatgeobuf", "pmtiles"}:
         return FormatPlan(VIEWER_VECTOR_MAP, True, token, "none")
-    if token == "cog":
-        return FormatPlan(VIEWER_RASTER_MAP, True, "cog", "none")
-    if token == "geotiff":
+    if token in {"cog", "geotiff"}:
+        # A "cog" label or a "_cog.tif" name is not trusted. Every GeoTIFF is
+        # checked; a real COG with sound georeferencing is served as uploaded.
         return FormatPlan(VIEWER_RASTER_MAP, False, "cog", "cog")
     if token in _IMAGE_TOKENS:
         return FormatPlan(VIEWER_IMAGE, True, token, "none")
@@ -224,7 +225,9 @@ def plan_for_format(file_format: Optional[str], file_key: Optional[str] = None) 
         return FormatPlan(VIEWER_MEDIA, True, token, "none")
     if token in _TEXT_TOKENS:
         return FormatPlan(VIEWER_TEXT, True, token, "none")
-    return FormatPlan(VIEWER_EMBED, True, token, "none")
+    # Archives (zip, rar, 7z), executables, and other unknown formats have no
+    # in-browser viewer. Returning None hides the preview button for them.
+    return None
 
 
 def mime_for_cloud_format(fmt: str) -> str:

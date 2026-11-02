@@ -41,7 +41,7 @@ services:
         condition: service_started
     restart: unless-stopped
     volumes:
-      - /home/ubuntu/.ssl-certs/data.welllabs.org:/etc/letsencrypt/live/data.welllabs.org:ro
+      - /home/ubuntu/.ssl-certs/data.welllabs.org:/etc/data-platform/ssl:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
       interval: 30s

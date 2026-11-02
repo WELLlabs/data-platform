@@ -30,12 +30,19 @@ from models.file import File
 from models.orphaned_s3_object import OrphanedS3Object
 from models.file_download import FileDownloadCount, FileDownloadLog
 from models.user import User
-from schemas.file import CompleteMultipartRequest, FileEditRequest
+from schemas.file import (
+    CompleteMultipartRequest,
+    FileEditRequest,
+    MultipartPartUrlsRequest,
+    MultipartSessionRequest,
+)
 from redis.asyncio import Redis
 from services.auth import AuthService, RedisStrategy, get_auth_service, get_upload_jobs_redis
 from services.dataset import DatasetService, get_dataset_service
 from services.upload import (
-    S3_PUT_OBJECT_MAX_BYTES,
+    MAX_MULTIPART_PARTS,
+    MAX_PART_URLS_PER_REQUEST,
+    MULTIPART_THRESHOLD_BYTES,
     UploadService,
     get_upload_service,
 )
@@ -64,6 +71,25 @@ def _upload_job_ttl() -> int:
 
 async def _redis_set_json(redis: Redis, key: str, obj: Any, ttl: int) -> None:
     await redis.setex(key, ttl, json.dumps(obj, default=str))
+
+
+async def _extend_session(
+    request: Request, response: JSONResponse, auth_service: AuthService
+) -> JSONResponse:
+    """Keep an uploading user signed in.
+
+    Sessions end a fixed time after sign-in. Without this, a long upload can
+    outlive the session and the final save fails with 401.
+    """
+    try:
+        cookie = await auth_service.extend_session(
+            request.cookies.get(settings.COOKIE_NAME) or ""
+        )
+        if cookie is not None:
+            response.set_cookie(**cookie)
+    except Exception as e:
+        logger.warning("Could not extend upload session: %s", e)
+    return response
 
 
 _ZIP32_MAX = 0xFFFFFFFF
@@ -394,7 +420,7 @@ class UploadController:
                 )
 
             file_id = uuid4()
-            use_multipart = file_size > S3_PUT_OBJECT_MAX_BYTES
+            use_multipart = file_size > MULTIPART_THRESHOLD_BYTES
             multipart = None
             url = None
             presigned_data = None
@@ -413,6 +439,7 @@ class UploadController:
                             "upload_id": multipart["upload_id"],
                             "key": file_key,
                             "creator": str(user.id),
+                            "part_count": multipart["part_count"],
                         },
                         ttl,
                     )
@@ -535,10 +562,11 @@ class UploadController:
             results.append(await check_one(entry if isinstance(entry, dict) else {}))
         return JSONResponse(content={"results": results})
 
-    async def complete_multipart(
-        self, body: CompleteMultipartRequest, user: User
-    ) -> JSONResponse:
-        jid = sanitize_input(body.job_id)
+    async def _multipart_session(
+        self, job_id: str, file_id: UUID, upload_id: str, user: User
+    ) -> tuple[str, Dict[str, Any]]:
+        """Return (job_id, multipart record) after checking the caller owns both."""
+        jid = sanitize_input(job_id)
         if not jid or not jid.strip():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid job_id"
@@ -556,32 +584,119 @@ class UploadController:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Job does not belong to this user",
             )
-        raw_mp = await self.redis_jobs.get(f"multipart:{body.file_id}")
+        raw_mp = await self.redis_jobs.get(f"multipart:{file_id}")
         if not raw_mp:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Multipart upload session not found or expired",
             )
         mp = json.loads(raw_mp)
-        if mp.get("job_id") != jid or mp.get("upload_id") != body.upload_id:
+        if (
+            mp.get("job_id") != jid
+            or mp.get("upload_id") != upload_id
+            or str(mp.get("creator")) != str(user.id)
+        ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Multipart upload does not match this job",
             )
+        return jid, mp
+
+    @staticmethod
+    def _require_open(mp: Dict[str, Any]) -> None:
+        if mp.get("completed"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This multipart upload is already complete",
+            )
+
+    async def _keep_job_alive(self, jid: str, file_id: UUID) -> None:
+        """Push back the job's expiry while its parts are still uploading."""
+        ttl = _upload_job_ttl()
+        for key in (f"job:{jid}", f"job:{jid}:events", f"multipart:{file_id}"):
+            await self.redis_jobs.expire(key, ttl)
+
+    async def multipart_part_urls(
+        self, body: MultipartPartUrlsRequest, user: User
+    ) -> JSONResponse:
+        jid, mp = await self._multipart_session(
+            body.job_id, body.file_id, body.upload_id, user
+        )
+        self._require_open(mp)
+        part_count = int(mp.get("part_count") or MAX_MULTIPART_PARTS)
+        numbers = sorted(set(body.part_numbers))
+        if len(numbers) > MAX_PART_URLS_PER_REQUEST or any(
+            n < 1 or n > part_count for n in numbers
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid part numbers",
+            )
+        parts = await self.upload_service.presign_upload_parts(
+            mp["key"], body.upload_id, numbers
+        )
+        await self._keep_job_alive(jid, body.file_id)
+        return JSONResponse(content={"parts": parts}, status_code=status.HTTP_200_OK)
+
+    async def abort_multipart(
+        self, body: MultipartSessionRequest, user: User
+    ) -> JSONResponse:
+        _jid, mp = await self._multipart_session(
+            body.job_id, body.file_id, body.upload_id, user
+        )
+        self._require_open(mp)
+        await self.upload_service.abort_multipart_upload(mp["key"], body.upload_id)
+        await self.redis_jobs.delete(f"multipart:{body.file_id}")
+        await self.session.execute(
+            update(OrphanedS3Object)
+            .where(OrphanedS3Object.file_id == body.file_id)
+            .where(OrphanedS3Object.status == "initiated")
+            .values(status="aborted")
+        )
+        await self.session.commit()
+        return JSONResponse(
+            content={"detail": "multipart upload aborted"},
+            status_code=status.HTTP_200_OK,
+        )
+
+    async def complete_multipart(
+        self, body: CompleteMultipartRequest, user: User
+    ) -> JSONResponse:
+        _jid, mp = await self._multipart_session(
+            body.job_id, body.file_id, body.upload_id, user
+        )
+        done = JSONResponse(
+            content={"detail": "multipart upload completed", "file_id": str(body.file_id)},
+            status_code=status.HTTP_200_OK,
+        )
+        if mp.get("completed"):
+            return done
         parts = [{"part_number": p.part_number, "etag": p.etag} for p in body.parts]
         try:
             await self.upload_service.complete_multipart_upload(
                 mp["key"], body.upload_id, parts
             )
-        except Exception:
-            await self.upload_service.abort_multipart_upload(mp["key"], body.upload_id)
-            await self.redis_jobs.delete(f"multipart:{body.file_id}")
+        except HTTPException as exc:
+            # Keep the session on transient S3 errors so the browser can retry
+            # without uploading every part again.
+            if exc.status_code == status.HTTP_400_BAD_REQUEST:
+                await self.upload_service.abort_multipart_upload(
+                    mp["key"], body.upload_id
+                )
+            if exc.status_code in (
+                status.HTTP_400_BAD_REQUEST,
+                status.HTTP_410_GONE,
+            ):
+                await self.redis_jobs.delete(f"multipart:{body.file_id}")
             raise
-        await self.redis_jobs.delete(f"multipart:{body.file_id}")
-        return JSONResponse(
-            content={"detail": "multipart upload completed", "file_id": str(body.file_id)},
-            status_code=status.HTTP_200_OK,
+        # Kept, not deleted, so a retry after a lost response still succeeds.
+        await _redis_set_json(
+            self.redis_jobs,
+            f"multipart:{body.file_id}",
+            {**mp, "completed": True},
+            _upload_job_ttl(),
         )
+        return done
 
     async def _accessible_file_for_read(
         self,
@@ -1387,6 +1502,7 @@ async def http_job_status(
 
 @router.get("/upload_url")
 async def get_upload_url(
+    request: Request,
     job_id: str = Query(..., description="Upload job UUID"),
     filename: str = Query(..., description="Name of the file to upload"),
     original_filename: Optional[str] = Query(
@@ -1396,10 +1512,15 @@ async def get_upload_url(
     user: User = Depends(get_current_active_user),
     controller: UploadController = Depends(get_upload_controller),
 ):
-    """Get a presigned URL (or multipart part URLs) for uploading a file to S3."""
-    return await controller.get_upload_url(
+    """Get a presigned URL, or a multipart session with its first part URLs.
+
+    Files above the multipart threshold get ``multipart: true``, ``part_count``,
+    and URLs for the first parts only. Fetch the rest from /upload_part_urls.
+    """
+    resp = await controller.get_upload_url(
         job_id, filename, user, file_size, original_filename
     )
+    return await _extend_session(request, resp, controller.auth_service)
 
 
 @router.post("/check_files")
@@ -1423,14 +1544,42 @@ async def check_files(
     return await controller.check_files(user, files)
 
 
+@router.post("/upload_part_urls")
+async def upload_part_urls(
+    body: MultipartPartUrlsRequest,
+    request: Request,
+    user: User = Depends(get_current_active_user),
+    controller: UploadController = Depends(get_upload_controller),
+):
+    """Sign fresh URLs for up to 100 parts of an open multipart upload.
+
+    Also extends the upload job and the session, so a long upload does not
+    expire while its parts are still going up.
+    """
+    resp = await controller.multipart_part_urls(body, user)
+    return await _extend_session(request, resp, controller.auth_service)
+
+
+@router.post("/abort_multipart")
+async def abort_multipart(
+    body: MultipartSessionRequest,
+    user: User = Depends(get_current_active_user),
+    controller: UploadController = Depends(get_upload_controller),
+):
+    """Abort a multipart upload the browser gave up on, freeing its parts."""
+    return await controller.abort_multipart(body, user)
+
+
 @router.post("/complete_multipart")
 async def complete_multipart(
     body: CompleteMultipartRequest,
+    request: Request,
     user: User = Depends(get_current_active_user),
     controller: UploadController = Depends(get_upload_controller),
 ):
     """Complete an S3 multipart upload after all parts have been PUT."""
-    return await controller.complete_multipart(body, user)
+    resp = await controller.complete_multipart(body, user)
+    return await _extend_session(request, resp, controller.auth_service)
 
 
 @router.get("/download_url")

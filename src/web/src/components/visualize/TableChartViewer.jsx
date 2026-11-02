@@ -7,13 +7,6 @@ const CHART_COLOURS = [
   "#2A9BB5", "#B5524A", "#8C8A2E", "#4C5FA8",
 ];
 
-const AGGREGATIONS = [
-  { value: "sum", label: "Sum" },
-  { value: "avg", label: "Average" },
-  { value: "min", label: "Minimum" },
-  { value: "max", label: "Maximum" },
-  { value: "count", label: "Count" },
-];
 
 const compactFmt = new Intl.NumberFormat("en-IN", { notation: "compact", maximumFractionDigits: 1 });
 const fullFmt = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 });
@@ -110,7 +103,7 @@ function D3Chart({ points, series, chartType, yTitle, xTitle }) {
     return <div className="pc-plot pc-plot-empty">Select a Y-axis column.</div>;
   }
   if (!points.length) {
-    return <div className="pc-plot pc-plot-empty">No aggregated values to plot.</div>;
+    return <div className="pc-plot pc-plot-empty">No values to plot.</div>;
   }
 
   const ticks = layout ? layout.y.ticks(6) : [];
@@ -304,7 +297,6 @@ export default function TableChartViewer({ fileId }) {
   const [chartType, setChartType] = useState("bar");
   const [xCol, setXCol] = useState("");
   const [yCol, setYCol] = useState("");
-  const [agg, setAgg] = useState("sum");
   const [chart, setChart] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -315,7 +307,10 @@ export default function TableChartViewer({ fileId }) {
         const resp = await fetch(`${access_file_schema_endpoint}?${new URLSearchParams({ file_id: fileId })}`, {
           credentials: "include",
         });
-        if (!resp.ok) throw new Error("Could not read table schema.");
+        if (!resp.ok) {
+          const j = await resp.json().catch(() => ({}));
+          throw new Error(j.detail ? `Could not read table schema: ${j.detail}` : "Could not read table schema.");
+        }
         const data = await resp.json();
         if (cancelled) return;
         setSchema(data);
@@ -332,6 +327,12 @@ export default function TableChartViewer({ fileId }) {
     })();
     return () => { cancelled = true; };
   }, [fileId]);
+
+  // No aggregation picker: rows sharing an X value are added up when Y is
+  // numeric, and counted when it is not.
+  const columns = schema?.columns || [];
+  const yColumn = columns.find((c) => c.name === yCol);
+  const agg = !yColumn || isNumericType(yColumn.type) ? "sum" : "count";
 
   useEffect(() => {
     if (!xCol || !yCol) return undefined;
@@ -353,12 +354,12 @@ export default function TableChartViewer({ fileId }) {
         });
         if (!resp.ok) {
           const j = await resp.json().catch(() => ({}));
-          throw new Error(j.detail || "Chart aggregation failed.");
+          throw new Error(j.detail || "Could not draw the chart.");
         }
         const data = await resp.json();
         if (!cancelled) setChart(data);
       } catch (e) {
-        if (!cancelled) setError(e.message || "Chart aggregation failed.");
+        if (!cancelled) setError(e.message || "Could not draw the chart.");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -366,16 +367,7 @@ export default function TableChartViewer({ fileId }) {
     return () => { cancelled = true; };
   }, [fileId, xCol, yCol, agg]);
 
-  const columns = schema?.columns || [];
-  const yColumn = columns.find((c) => c.name === yCol);
-  const yNumeric = yColumn ? isNumericType(yColumn.type) : true;
-
-  useEffect(() => {
-    if (!yNumeric && agg !== "count") setAgg("count");
-  }, [yNumeric, agg]);
-
-  const aggLabel =(AGGREGATIONS.find((a) => a.value === agg) || AGGREGATIONS[0]).label;
-  const yTitle = agg === "count" ? `Count of ${yCol}` : `${aggLabel} of ${yCol}`;
+  const yTitle = agg === "count" ? "Number of rows" : yCol;
 
   return (
     <div className="preview-chart">
@@ -411,16 +403,6 @@ export default function TableChartViewer({ fileId }) {
             <span className="pc-label">Y-axis</span>
             <select className="pc-select" value={yCol} onChange={(e) => setYCol(e.target.value)}>
               {columns.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
-            </select>
-          </label>
-          <label className="pc-field">
-            <span className="pc-label">Aggregation</span>
-            <select className="pc-select pc-select-sm" value={agg} onChange={(e) => setAgg(e.target.value)}>
-              {AGGREGATIONS.map((a) => (
-                <option key={a.value} value={a.value} disabled={!yNumeric && a.value !== "count"}>
-                  {a.label}
-                </option>
-              ))}
             </select>
           </label>
           {schema?.row_count != null && (

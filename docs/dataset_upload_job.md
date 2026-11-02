@@ -44,7 +44,18 @@ Tracks S3 objects that exist (or should exist) **before** a row exists in `files
 | `file_key` | S3 object key (e.g. `{user_id}/{filename}`) |
 | `bucket` | Bucket name (typically `S3_BUCKET`) |
 | `created_at` | Timezone-aware timestamp |
-| `status` | Lifecycle: **`initiated`** after presign → **`orphaned`** after S3 verified at completion → **`completed`** after `files` row is written |
+| `status` | Lifecycle: **`initiated`** after presign → **`orphaned`** after S3 verified at completion → **`completed`** after `files` row is written. **`aborted`** when the browser gave up on a multipart upload. Set by the cleanup task: **`deleted`** (object removed) or **`in_use`** (a `files` row uses the key) |
+
+### Orphan cleanup
+
+The Celery beat task `cpu.cleanup_orphaned_uploads` runs hourly on the conversion worker. It selects rows still `initiated`, `orphaned`, or `aborted` that are older than `ORPHANED_UPLOAD_EXPIRY_HOURS` (default 24), and for each one:
+
+- skips it while its upload job is still `open` or `in_progress` in Redis;
+- marks it `in_use` if any `files` row has the same `file_key`;
+- skips it if the same key was presigned again within the window (a re-upload);
+- otherwise aborts unfinished multipart uploads for that exact key, deletes the object, and marks the row `deleted`.
+
+Only keys recorded in this table are touched, so other data in a shared bucket is safe. Disable with `AUTO_REMOVE_ORPHANED_UPLOADS=false`.
 
 ---
 
@@ -64,7 +75,7 @@ flowchart TD
 2. **Create dataset (staged)** — writes `event:dataset` only; **no** `datasets` row yet.
 3. **Upload URL** — presign + insert `orphaned_s3_objects` (`initiated`).
 4. **Add file (staged)** — append `file_N` event; **no** `files` row yet.
-5. **Complete job** — verify S3 for all orphan rows, insert `datasets` / `files`, emails, close job.
+5. **Complete job** — verify S3 for the orphan rows of staged files, insert `datasets` / `files`, emails, close job.
 6. **Job status** — read aggregated Redis state for UI or polling.
 
 ---
@@ -123,11 +134,23 @@ flowchart TD
 3. Sanitize **`filename`**, basename-only (no path segments).
 4. **`UploadService.check_file_exists`** — if file already present for user → **409** `File already exists`.
 5. New **`file_id`** = `uuid4()`.
-6. **`UploadService`** generates a presigned **`put_object`** URL, or starts a multipart upload with per-part URLs when **`file_size`** is greater than 5 GiB. The S3 **`file_key`** is `{user_id}/{sanitized_basename}`.
+6. **`UploadService`** generates a presigned **`put_object`** URL, or starts a multipart upload when **`file_size`** is greater than 64 MiB (`MULTIPART_THRESHOLD_BYTES`). Parts are at least 16 MiB, at most 10,000 per file. The S3 **`file_key`** is `{user_id}/{sanitized_basename}`. URLs are signed for the regional host (`{bucket}.s3.{region}.amazonaws.com`).
 7. **Insert `orphaned_s3_objects`** with `status="initiated"`, `job_id`, `file_key`, `bucket`, `file_id`.
-8. **Response:** `{ "job_id", "file_id", "presigned_upload_url" }` for single PUT, or multipart fields (`upload_id`, `parts`, …). Presigned URLs are generated in-process by the API (boto3), not a separate S3 handler.
+8. **Response:** `{ "job_id", "file_id", "presigned_upload_url" }` for single PUT, or multipart fields (`upload_id`, `part_size`, `part_count`, `parts`). `parts` holds URLs for the first 16 parts only.
 
-Client uploads bytes to the presigned URL **before** calling `add_file` / `complete_upload_job`.
+Client uploads bytes to the presigned URL **before** calling `add_file` / `complete_upload_job`. The session cookie is extended on this call, on `/upload_part_urls`, and on `/complete_multipart`, so a long upload does not outlive the sign-in.
+
+### Multipart endpoints
+
+All take JSON `{ "job_id", "file_id", "upload_id", … }` and require the job creator's session.
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /upload_part_urls` | `part_numbers` (1–100 numbers within `part_count`) → fresh URLs. The browser asks in batches as it goes and again after a 403, because URLs signed with instance-role credentials stop working when the role's token rotates. Also extends the job's Redis TTL. |
+| `POST /complete_multipart` | `parts: [{part_number, etag}]`. Idempotent: a retry after a lost response returns 200. A transient S3 error (502) keeps the session so the browser can retry; rejected parts (400) abort it; an expired session returns 410. |
+| `POST /abort_multipart` | Aborts the S3 upload and marks the orphan row `aborted`. |
+
+The browser (`src/web/src/api/s3Upload.js`) uploads 4 parts at a time, retries each part up to 8 times with backoff, waits while the browser is offline, and aborts a request that has made no progress for 60 seconds.
 
 ---
 
@@ -169,7 +192,8 @@ Client uploads bytes to the presigned URL **before** calling `add_file` / `compl
 
 2. **Orphan + S3 gate**
    - Select all **`orphaned_s3_objects`** with this `job_id`.
-   - For each row, **`upload_service.check_file_status_by_key(file_key)`** — if not in S3 → **400** `file {file_key} has not been uploaded.` (abort)
+   - Rows whose `file_id` has no `file_N` event are skipped: their upload failed, and the cleanup task removes them later.
+   - For each remaining row, **`upload_service.check_file_status_by_key(file_key)`** — if not in S3 → **400** `file {file_key} has not been uploaded.` (abort)
    - Store sizes for later `files.file_size`; set row **`status`** from **`initiated`** → **`orphaned`**.
 
 3. **Process `job:{job_id}:events` in order**
@@ -269,6 +293,8 @@ sequenceDiagram
 | Upload Redis dependency | `src/api/services/auth.py` (`get_upload_jobs_redis`) |
 | Settings | `src/api/core/config.py` |
 | Orphan model | `src/api/models/orphaned_s3_object.py` |
+| Orphan cleanup | `src/api/services/orphan_cleanup.py`, task in `src/api/tasks/cpu.py` |
+| Upload smoke test against a real bucket | `src/api/scripts/s3_upload_smoke.py` |
 | Email task | `src/api/tasks/email.py` |
 
 ---

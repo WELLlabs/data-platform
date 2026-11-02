@@ -74,8 +74,9 @@ def test_vector_and_raster_plans():
     cog = plan_for_format("cog", "scene.tif")
     assert cog is not None
     assert cog.viewer == "raster_map"
-    assert cog.cloud_native is True
-    assert cog.conversion == "none"
+    # Names and labels are not trusted: the file itself is checked.
+    assert cog.cloud_native is False
+    assert cog.conversion == "cog"
     assert cog.target_format == "cog"
 
     assert plan_for_format("shp") is None
@@ -108,3 +109,21 @@ def test_stale_window_matches_conversion_task_limit():
         seconds=CONVERSION_TASK_TIME_LIMIT + 5
     )
     assert service._is_stale(Row()) is True
+
+
+def test_files_without_a_viewer_have_no_preview():
+    for name, fmt in [
+        ("complete_backup.zip", "zip"),
+        ("archive.7z", "7z"),
+        ("setup.exe", "exe"),
+        ("blob", ""),
+        ("data.nc", "netcdf"),
+    ]:
+        assert plan_for_format(fmt, name) is None, name
+
+
+def test_common_files_keep_their_viewer():
+    assert plan_for_format("geojson", "Krishna_River.geojson").viewer == "vector_map"
+    assert plan_for_format("csv", "data.csv").viewer == "table_chart"
+    assert plan_for_format("png", "image (2).png").viewer == "image"
+    assert plan_for_format("tif", "ortho.tif").viewer == "raster_map"

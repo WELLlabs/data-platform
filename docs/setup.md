@@ -90,6 +90,8 @@ The template file is `env.template` (not `.env.template`). Edit `.env` before th
 | `ALLOWED_EMAIL_DOMAIN` | Restricts signup to one or more domains (comma-separated) |
 | Cache TTLs | See `env.template` (`SEARCH_CACHE_AGE_SECONDS`, dataset/homepage caches, etc.) |
 | `TITILER_BASE_URL` | Browser-reachable TiTiler origin. Compose publishes TiTiler on port 8001 and Nginx/CRA proxy it at `/titiler`. Use `/titiler` so raster maps work from the UI. |
+| `RASTER_CRS_CANDIDATES` | Projections tried, in order, when a raster's CRS is missing or mislabelled (for example labelled EPSG:4326 with coordinates in metres). A guess is used only when exactly one candidate places the data inside `RASTER_EXPECTED_REGION`; otherwise the preview says the file cannot be placed. The downloaded file is never changed. |
+| `RASTER_EXPECTED_REGION` | `west,south,east,north` in degrees. Default `60,-5,105,40` covers South Asia. |
 
 Never commit `.env`.
 
@@ -261,7 +263,7 @@ open-data-portal/
 | Backend never healthy | `.env` missing required keys (`POSTGRES_URL`, `REDIS_URL`, `S3_BUCKET`, `SECRET`, email Redis URLs). `docker compose logs backend`. |
 | Empty search / no tag suggest | `TYPESENSE_HOST` and `TYPESENSE_API_KEY`. Run `load_tag_vocabulary` and `reindex_typesense`. Confirm http://localhost:8108/health. |
 | Alembic cannot connect | `POSTGRES_URL` host: `db` inside Compose, `localhost` from the host. |
-| Uploads fail | Bucket name/region, IAM or access keys, CORS on the bucket if the browser PUTs directly to S3. |
+| Uploads fail | Bucket name/region, IAM or access keys, and the bucket CORS rule: every site origin (for example `http://localhost:3000` and `https://data.welllabs.org`) must be allowed `PUT`, `GET`, and `HEAD`, with `AllowedHeaders` `*` and `ExposeHeaders` `ETag`. `uv run python -m scripts.s3_upload_smoke --size 40M --origin <site>` checks all of this against the real bucket. |
 | UI on :3000 cannot call API | Backend on 8000; CRA proxy; CORS origins include `http://localhost:3000`. |
 | No email | `EMAIL_GATEWAY_KEY` / `EMAIL_SENDER`; `email-worker` logs. |
 | HTTP frontend redirects forever | Dev/prod Nginx listens on 443 with certs; use https://localhost or the CRA app on :3000. |

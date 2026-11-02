@@ -128,10 +128,8 @@ class AuthService:
             profile_complete=is_profile_complete(user),
         )
 
-    async def issue_session_cookie(self, user: User) -> dict[str, Any]:
-        token = f"session:{generate_session_token()}"
-        strategy = RedisStrategy(self.redis, settings.COOKIE_MAX_AGE_SECONDS)
-        await strategy.write_token(token, str(user.id))
+    @staticmethod
+    def session_cookie(token: str) -> dict[str, Any]:
         return {
             "key": settings.COOKIE_NAME,
             "value": token,
@@ -139,6 +137,20 @@ class AuthService:
             "httponly": True,
             "samesite": "lax",
         }
+
+    async def issue_session_cookie(self, user: User) -> dict[str, Any]:
+        token = f"session:{generate_session_token()}"
+        strategy = RedisStrategy(self.redis, settings.COOKIE_MAX_AGE_SECONDS)
+        await strategy.write_token(token, str(user.id))
+        return self.session_cookie(token)
+
+    async def extend_session(self, token: str) -> Optional[dict[str, Any]]:
+        """Restart the session lifetime. Returns the cookie to re-send, or None."""
+        if not token or not await self.redis.expire(
+            token, settings.COOKIE_MAX_AGE_SECONDS
+        ):
+            return None
+        return self.session_cookie(token)
 
     async def count_users(self) -> int:
         result = await self.user_db.session.execute(select(func.count()).select_from(User))

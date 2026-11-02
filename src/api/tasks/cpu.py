@@ -25,6 +25,113 @@ def _upload(bucket: str, key: str, src: Path, content_type: str) -> None:
     get_s3_client().upload_file(str(src), bucket, key, ExtraArgs=extra)
 
 
+def _convert_raster(session, row, native, bucket: str) -> dict:
+    """Serve a GeoTIFF as uploaded when it is already sound, else write a fixed COG.
+
+    1. Read only the header with ``gdalinfo`` over a presigned URL. The
+       file is downloaded only when a derivative has to be written.
+    2. Decide (``raster_inspect.plan_raster``): a real COG with sound
+       georeferencing is reused as is, with no conversion. A missing or
+       mislabelled CRS, or GCP-only georeferencing, gets a fixed derivative.
+       A file that cannot be placed is reused and the preview explains why.
+    3. Check the derivative with ``gdalinfo`` before publishing it.
+    """
+    from datetime import datetime, timezone
+
+    from services.cog_check import is_s3_object_cog
+    from services.conversion import ConversionError, _run, convert_cog
+    from services.formats import STATUS_AVAILABLE, mime_for_cloud_format
+    from services.raster_georef import GEOREF_UNPLACEABLE, parse_candidates, parse_region
+    from services.raster_inspect import gdalinfo_json, plan_raster, verify_output
+
+    candidates = parse_candidates(settings.RASTER_CRS_CANDIDATES)
+    region = parse_region(settings.RASTER_EXPECTED_REGION)
+    client = get_s3_client()
+    key = native.file_key
+
+    def finish(file_key: str, decision, reused: bool) -> dict:
+        row.bucket = bucket
+        row.file_key = file_key
+        row.format = "cog"
+        row.status = STATUS_AVAILABLE
+        row.georef_status = decision.status
+        row.georef_note = decision.note or None
+        row.last_accessed = datetime.now(timezone.utc)
+        session.commit()
+        return {
+            "ok": True,
+            "key": file_key,
+            "format": "cog",
+            "reused_native": reused,
+            "georef": decision.status,
+        }
+
+    suffix = Path(key).suffix or ".tif"
+    with tempfile.TemporaryDirectory(prefix="raster-") as tmp:
+        work = Path(tmp)
+        src = work / f"native{suffix}"
+        downloaded = False
+        doc = None
+        try:
+            url = client.generate_presigned_url(
+                "get_object", Params={"Bucket": bucket, "Key": key}, ExpiresIn=3600
+            )
+            doc = gdalinfo_json(f"/vsicurl/{url}", _run, timeout=180)
+        except Exception as exc:
+            # Fall back to a local copy, e.g. when outbound HTTPS to S3 is blocked.
+            logger.warning("Remote raster header read failed for %s: %s", key, exc)
+        if doc is None:
+            _download(bucket, key, src)
+            downloaded = True
+            try:
+                doc = gdalinfo_json(str(src), _run, timeout=180)
+            except Exception as exc:
+                raise ConversionError(f"GDAL cannot read this raster: {exc}") from exc
+
+        plan = plan_raster(
+            doc,
+            lambda: is_s3_object_cog(client, bucket, key),
+            candidates,
+            region,
+        )
+        logger.info(
+            "Raster %s: georef=%s reuse_native=%s assign_crs=%s gcps=%s",
+            key,
+            plan.decision.status,
+            plan.reuse_native,
+            plan.decision.assign_crs,
+            plan.decision.warp_gcps,
+        )
+        if plan.reuse_native:
+            return finish(key, plan.decision, True)
+
+        if not downloaded:
+            _download(bucket, key, src)
+        out = convert_cog(
+            src,
+            work / "out" / "converted.tif",
+            timeout=1700,
+            assign_srs=plan.decision.assign_crs,
+            warp_gcps=plan.decision.warp_gcps,
+        )
+        try:
+            decision = verify_output(
+                gdalinfo_json(str(out), _run, timeout=120),
+                plan.decision,
+                candidates,
+                region,
+            )
+        except Exception:
+            logger.exception("Could not verify the raster derivative for %s", key)
+            decision = plan.decision
+        if decision.status == GEOREF_UNPLACEABLE:
+            return finish(key, decision, True)
+
+        dest_key = f"converted/{native.file_id}/{row.cloud_file_id}.tif"
+        _upload(bucket, dest_key, out, mime_for_cloud_format("cog"))
+        return finish(dest_key, decision, False)
+
+
 @celery_app.task(
     name="cpu.convert_file",
     bind=True,
@@ -46,7 +153,7 @@ def convert_file(self, cloud_file_id: str) -> dict:
         from db.sync_session import SyncSession
         from models.converted_file import ConvertedFile
         from models.file import File
-        from services.conversion import ConversionError, convert_native, is_cog
+        from services.conversion import ConversionError, convert_native
         from services.formats import (
             STATUS_AVAILABLE,
             STATUS_REMOVED,
@@ -75,19 +182,23 @@ def convert_file(self, cloud_file_id: str) -> dict:
             return {"ok": False, "error": "unsupported"}
 
         bucket = native.bucket or settings.S3_BUCKET
+
+        if plan.conversion == "cog":
+            try:
+                return _convert_raster(session, row, native, bucket)
+            except SoftTimeLimitExceeded:
+                raise
+            except ConversionError as exc:
+                logger.exception("Raster conversion failed for %s: %s", cloud_file_id, exc)
+                row.status = STATUS_REMOVED
+                session.commit()
+                return {"ok": False, "error": str(exc)}
+
         suffix = Path(native.file_key).suffix or ".bin"
         with tempfile.TemporaryDirectory(prefix="convert-") as tmp:
             work = Path(tmp)
             src = work / f"native{suffix}"
             _download(bucket, native.file_key, src)
-            if plan.conversion == "cog" and is_cog(src, timeout=120):
-                row.bucket = bucket
-                row.file_key = native.file_key
-                row.format = "cog"
-                row.status = STATUS_AVAILABLE
-                row.last_accessed = datetime.now(timezone.utc)
-                session.commit()
-                return {"ok": True, "key": native.file_key, "format": "cog", "reused_native": True}
             try:
                 out_path, out_fmt = convert_native(
                     src, work / "out", plan.conversion, timeout=1700
@@ -132,6 +243,45 @@ def convert_file(self, cloud_file_id: str) -> dict:
         return {"ok": False, "error": "unexpected"}
     finally:
         session.close()
+
+
+@celery_app.task(name="cpu.cleanup_orphaned_uploads")
+def cleanup_orphaned_uploads() -> dict:
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    import redis
+    from db.sync_session import SyncSession
+    from services.orphan_cleanup import cleanup_orphaned_uploads as run_cleanup
+
+    if not settings.AUTO_REMOVE_ORPHANED_UPLOADS:
+        return {"ok": True, "skipped": True}
+
+    hours = max(1, int(settings.ORPHANED_UPLOAD_EXPIRY_HOURS))
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    jobs = redis.Redis.from_url(settings.UPLOAD_JOBS_BACKEND)
+
+    def job_is_open(job_id) -> bool:
+        raw = jobs.get(f"job:{job_id}")
+        if not raw:
+            return False
+        try:
+            return json.loads(raw).get("status") in ("open", "in_progress")
+        except ValueError:
+            return True
+
+    session = SyncSession()
+    try:
+        counts = run_cleanup(session, get_s3_client(), job_is_open, cutoff)
+        logger.info("Orphaned upload cleanup: %s", counts)
+        return {"ok": True, **counts}
+    except Exception:
+        session.rollback()
+        logger.exception("Orphaned upload cleanup failed")
+        return {"ok": False}
+    finally:
+        session.close()
+        jobs.close()
 
 
 @celery_app.task(name="cpu.purge_expired_converted_files")

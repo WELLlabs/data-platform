@@ -18,8 +18,16 @@ from fastapi import HTTPException, status
 logger = logging.getLogger(__name__)
 
 S3_PUT_OBJECT_MAX_BYTES = 5 * 1024 * 1024 * 1024  # 5 GiB
+# Files above this go up in parts. A single PUT of a few hundred MB on a slow
+# link fails as a whole on any network drop, and the user starts again.
+MULTIPART_THRESHOLD_BYTES = 64 * 1024 * 1024  # 64 MiB
 MIN_MULTIPART_PART_BYTES = 16 * 1024 * 1024  # 16 MiB
 MAX_MULTIPART_PARTS = 10_000
+# Part URLs are signed in batches as the browser needs them. URLs signed with
+# instance-role credentials die with the role's session token, well before
+# ExpiresIn, so signing every part up front breaks long uploads.
+MAX_PART_URLS_PER_REQUEST = 100
+INITIAL_PART_URLS = 16
 
 _s3_client = None
 
@@ -27,9 +35,14 @@ _s3_client = None
 def get_s3_client():
     global _s3_client
     if _s3_client is None:
+        # Regional host: the global s3.amazonaws.com host can answer with a 307
+        # redirect, and browsers refuse redirects on CORS preflight requests.
         kwargs: Dict[str, Any] = {
             "region_name": settings.S3_REGION,
-            "config": BotoConfig(signature_version="s3v4"),
+            "endpoint_url": f"https://s3.{settings.S3_REGION}.amazonaws.com",
+            "config": BotoConfig(
+                signature_version="s3v4", s3={"addressing_style": "virtual"}
+            ),
         }
         key = settings.AWS_ACCESS_KEY_ID.strip()
         secret = settings.AWS_SECRET_ACCESS_KEY.strip()
@@ -205,6 +218,17 @@ class UploadService:
         except (ClientError, BotoCoreError) as e:
             self._raise_s3_error("presign_upload_part", e)
 
+    def _presign_upload_parts_sync(
+        self, file_key: str, upload_id: str, part_numbers: List[int]
+    ) -> List[Dict[str, Any]]:
+        return [
+            {
+                "part_number": n,
+                "url": self._presign_upload_part_sync(file_key, upload_id, n),
+            }
+            for n in part_numbers
+        ]
+
     def _complete_multipart_sync(
         self, file_key: str, upload_id: str, parts: List[Dict[str, Any]]
     ) -> None:
@@ -220,7 +244,26 @@ class UploadService:
                 UploadId=upload_id,
                 MultipartUpload={"Parts": boto_parts},
             )
-        except (ClientError, BotoCoreError) as e:
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "")
+            if code == "NoSuchUpload":
+                # A retried request whose first attempt already completed.
+                if self._head_object_sync(file_key).get("exists"):
+                    return
+                raise HTTPException(
+                    status_code=status.HTTP_410_GONE,
+                    detail="The upload session expired. Please upload the file again.",
+                )
+            if code in ("InvalidPart", "InvalidPartOrder", "EntityTooSmall"):
+                self.logger.warning(
+                    "complete_multipart_upload rejected parts for %s: %s", file_key, code
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Storage rejected the uploaded parts ({code}).",
+                )
+            self._raise_s3_error("complete_multipart_upload", e)
+        except BotoCoreError as e:
             self._raise_s3_error("complete_multipart_upload", e)
 
     def _abort_multipart_sync(self, file_key: str, upload_id: str) -> None:
@@ -306,12 +349,10 @@ class UploadService:
             upload_id = await asyncio.to_thread(
                 self._create_multipart_sync, file_key, content_type
             )
-            parts = []
-            for n in range(1, part_count + 1):
-                url = await asyncio.to_thread(
-                    self._presign_upload_part_sync, file_key, upload_id, n
-                )
-                parts.append({"part_number": n, "url": url})
+            first = list(range(1, min(part_count, INITIAL_PART_URLS) + 1))
+            parts = await asyncio.to_thread(
+                self._presign_upload_parts_sync, file_key, upload_id, first
+            )
             return {
                 "multipart": True,
                 "upload_id": upload_id,
@@ -329,6 +370,13 @@ class UploadService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Error generating multipart upload URLs",
             )
+
+    async def presign_upload_parts(
+        self, file_key: str, upload_id: str, part_numbers: List[int]
+    ) -> List[Dict[str, Any]]:
+        return await asyncio.to_thread(
+            self._presign_upload_parts_sync, file_key, upload_id, part_numbers
+        )
 
     async def complete_multipart_upload(
         self, file_key: str, upload_id: str, parts: List[Dict[str, Any]]

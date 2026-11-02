@@ -28,8 +28,12 @@ class ConversionError(Exception):
     """Raised when a native file cannot be converted."""
 
 
-def _run(cmd: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
-    logger.info("Conversion command: %s", " ".join(cmd))
+def _run(
+    cmd: list[str], timeout: int, env: Optional[dict] = None
+) -> subprocess.CompletedProcess[str]:
+    # Presigned URLs carry credentials in the query string; keep them out of logs.
+    shown = [c.split("?", 1)[0] if c.startswith(("/vsicurl/", "http")) else c for c in cmd]
+    logger.info("Conversion command: %s", " ".join(shown))
     try:
         return subprocess.run(
             cmd,
@@ -37,6 +41,7 @@ def _run(cmd: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=env,
         )
     except subprocess.TimeoutExpired as exc:
         raise ConversionError("Conversion timed out") from exc
@@ -303,31 +308,51 @@ def is_cog(src: Path, timeout: int) -> bool:
     return "LAYOUT=COG" in text
 
 
-def convert_cog(src: Path, dest: Path, timeout: int) -> Path:
+def convert_cog(
+    src: Path,
+    dest: Path,
+    timeout: int,
+    assign_srs: Optional[str] = None,
+    warp_gcps: bool = False,
+) -> Path:
+    """Write a Cloud Optimized GeoTIFF.
+
+    ``assign_srs`` replaces a missing or wrong CRS label without touching the
+    pixels or coordinates. ``warp_gcps`` resamples a GCP-referenced image onto
+    a regular grid, which TiTiler needs.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
-    gdal_translate = shutil.which("gdal_translate")
-    if gdal_translate:
-        _run(
-            [
-                gdal_translate,
-                "-of",
-                "COG",
-                "-co",
-                "COMPRESS=DEFLATE",
-                "-co",
-                "OVERVIEWS=IGNORE_EXISTING",
-                str(src),
-                str(dest),
-            ],
-            timeout=timeout,
-        )
-        return dest
-    try:
-        from rio_cogeo.cogeo import cog_translate
-        from rio_cogeo.profiles import cog_profiles
-    except ImportError as exc:
-        raise ConversionError("Neither gdal_translate nor rio-cogeo is installed") from exc
-    cog_translate(str(src), str(dest), cog_profiles.get("deflate"), in_memory=False, quiet=True)
+    common = [
+        "-of", "COG",
+        "-co", "COMPRESS=DEFLATE",
+        "-co", "BIGTIFF=IF_SAFER",
+        "-co", "NUM_THREADS=ALL_CPUS",
+    ]
+    if warp_gcps:
+        gdalwarp = shutil.which("gdalwarp")
+        if not gdalwarp:
+            raise ConversionError("GDAL gdalwarp is not installed")
+        _run([gdalwarp, *common, "-multi", str(src), str(dest)], timeout=timeout)
+    else:
+        gdal_translate = shutil.which("gdal_translate")
+        if not gdal_translate and assign_srs:
+            raise ConversionError("GDAL gdal_translate is not installed")
+        if gdal_translate:
+            cmd = [gdal_translate, *common, "-co", "OVERVIEWS=IGNORE_EXISTING"]
+            if assign_srs:
+                cmd += ["-a_srs", assign_srs]
+            _run([*cmd, str(src), str(dest)], timeout=timeout)
+        else:
+            try:
+                from rio_cogeo.cogeo import cog_translate
+                from rio_cogeo.profiles import cog_profiles
+            except ImportError as exc:
+                raise ConversionError(
+                    "Neither gdal_translate nor rio-cogeo is installed"
+                ) from exc
+            cog_translate(
+                str(src), str(dest), cog_profiles.get("deflate"), in_memory=False, quiet=True
+            )
     if not dest.exists():
         raise ConversionError("COG conversion failed")
     return dest

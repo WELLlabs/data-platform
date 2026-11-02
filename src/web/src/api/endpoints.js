@@ -28,6 +28,8 @@ export const organization_add_member_endpoint = (id) =>
 export const upload_url_endpoint = "/api/upload_url";
 export const check_files_endpoint = "/api/check_files";
 export const complete_multipart_endpoint = "/api/complete_multipart";
+export const upload_part_urls_endpoint = "/api/upload_part_urls";
+export const abort_multipart_endpoint = "/api/abort_multipart";
 export const create_upload_job_endpoint = "/api/create_upload_job";
 export const complete_upload_job_endpoint = "/api/complete_upload_job";
 export const create_dataset_endpoint = "/api/create_dataset";

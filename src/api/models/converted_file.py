@@ -50,6 +50,11 @@ class ConvertedFile(Base):
         server_default="processing",
         index=True,
     )
+    # Rasters only: ok | assumed | unplaceable. NULL on rows made before the
+    # georeferencing check, which are re-checked on next access.
+    georef_status: Mapped[Optional[str]] = mapped_column(String(length=16), nullable=True)
+    # Plain-language explanation shown in the preview when not "ok".
+    georef_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
 class FileAccessLog(Base):

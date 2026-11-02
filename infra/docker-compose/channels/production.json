@@ -1,0 +1,14 @@
+{
+    "latest": {
+        "version": "X.Y.Z",
+        "docker-compose": "",
+        "update-script": "",
+        "min-version": ""
+    },
+    "X.Y.Z": {
+        "version": "X.Y.Z",
+        "docker-compose": "",
+        "update-script": "",
+        "min-version": ""
+    }
+}

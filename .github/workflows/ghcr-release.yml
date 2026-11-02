@@ -23,11 +23,11 @@ jobs:
       matrix:
         include:
           - name: backend
-            image: ghcr.io/welllabs/data-platform-backend
+            image: ghcr.io/welllabs/data-platform/backend
             context: src/api
             file: src/api/Dockerfile.backend
           - name: frontend
-            image: ghcr.io/welllabs/data-platform-frontend
+            image: ghcr.io/welllabs/data-platform/frontend
             context: src/web
             file: src/web/Dockerfile.frontend
     steps:
@@ -95,7 +95,7 @@ jobs:
         run: |
           set -eu
           SHA_TAG="sha-${GITHUB_SHA::7}"
-          for IMAGE in ghcr.io/welllabs/data-platform-backend ghcr.io/welllabs/data-platform-frontend; do
+          for IMAGE in ghcr.io/welllabs/data-platform/backend ghcr.io/welllabs/data-platform/frontend; do
             TAGS="-t ${IMAGE}:${VERSION}"
             [ "$PRERELEASE" = "false" ] && TAGS="$TAGS -t ${IMAGE}:latest"
             docker buildx imagetools create $TAGS "${IMAGE}:${SHA_TAG}"

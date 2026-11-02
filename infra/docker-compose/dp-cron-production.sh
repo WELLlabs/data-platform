@@ -2,20 +2,21 @@
 # Checks the release channel for a newer Data Platform version and runs that
 # release's update script, rolling back to the running version if it fails.
 #
-# Cron (as root, every Sunday at 03:00):
-#   0 3 * * 0 /opt/data-platform/dp-cron-production.sh
-#
+# Cron (every Sunday at 03:00):
+#   0 3 * * 0 /home/user/dp-cron-production.sh
+# 
+# By default, the logs are written to .dp-cron-files/logs/cron-job.log
 # Requires curl, plus jq or python3 for reading JSON.
 
 CHANNEL_URL="${CHANNEL_URL:-https://raw.githubusercontent.com/WELLlabs/data-platform/refs/heads/master/infra/docker-compose/channels/production.json}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1/api/health}"
-LOG_FILE="${LOG_FILE:-/opt/data-platform/logs/cron-job.log}"
 DP_COMPOSE_FILE="${DP_COMPOSE_FILE:-$HOME/docker-compose.yml}"
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_DIR="$SCRIPT_DIR/.dp-cron-files"
+LOG_FILE="${LOG_FILE:-$STATE_DIR/logs/cron-job.log}"
 LOCK_FILE="$STATE_DIR/dp-cron.lock"
 LOCK_DIR="$STATE_DIR/dp-cron.lock.d"
 STATE_FILE="$STATE_DIR/cron.json"

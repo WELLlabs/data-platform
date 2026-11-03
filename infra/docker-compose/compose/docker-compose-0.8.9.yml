@@ -1,7 +1,7 @@
 # Paste the GHCR image address in this extension block to be used for different containers.
 x-images:
-  frontend: &frontend-image "ghcr.io/welllabs/data-platform/frontend:X.Y.Z"
-  backend:  &backend-image "ghcr.io/welllabs/data-platform/backend:X.Y.Z"
+  frontend: &frontend-image "ghcr.io/welllabs/data-platform/frontend:0.8.9"
+  backend:  &backend-image "ghcr.io/welllabs/data-platform/backend:0.8.9"
 
 volumes:
   typesense_data:

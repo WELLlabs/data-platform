@@ -30,15 +30,16 @@ def _convert_raster(session, row, native, bucket: str) -> dict:
 
     1. Read only the header with ``gdalinfo`` over a presigned URL. The
        file is downloaded only when a derivative has to be written.
-    2. Decide (``raster_inspect.plan_raster``): a real COG with sound
-       georeferencing is reused as is, with no conversion. A missing or
+    2. Decide (``raster_inspect.plan_raster``): a real COG (checked with
+       rio-cogeo's ``cog_validate``) with sound georeferencing is reused as
+       is, with no conversion. A missing or
        mislabelled CRS, or GCP-only georeferencing, gets a fixed derivative.
        A file that cannot be placed is reused and the preview explains why.
     3. Check the derivative with ``gdalinfo`` before publishing it.
     """
     from datetime import datetime, timezone
 
-    from services.cog_check import is_s3_object_cog
+    from services.cog_check import is_s3_object_cog, rio_cog_validate
     from services.conversion import ConversionError, _run, convert_cog
     from services.formats import STATUS_AVAILABLE, mime_for_cloud_format
     from services.raster_georef import GEOREF_UNPLACEABLE, parse_candidates, parse_region
@@ -88,12 +89,15 @@ def _convert_raster(session, row, native, bucket: str) -> dict:
             except Exception as exc:
                 raise ConversionError(f"GDAL cannot read this raster: {exc}") from exc
 
-        plan = plan_raster(
-            doc,
-            lambda: is_s3_object_cog(client, bucket, key),
-            candidates,
-            region,
-        )
+        def structural_cog() -> bool:
+            # rio-cogeo on the local copy when there is one, else over S3.
+            if downloaded:
+                verdict = rio_cog_validate(str(src))
+                if verdict is not None:
+                    return verdict
+            return is_s3_object_cog(client, bucket, key)
+
+        plan = plan_raster(doc, structural_cog, candidates, region)
         logger.info(
             "Raster %s: georef=%s reuse_native=%s assign_crs=%s gcps=%s",
             key,

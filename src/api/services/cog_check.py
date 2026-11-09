@@ -1,10 +1,14 @@
 """Detect Cloud Optimized GeoTIFFs from the start of the file.
 
-Only the TIFF header and image directories are read, through ranged reads,
-so a multi-GB raster never has to be downloaded to answer the question.
-The rules follow GDAL's ``validate_cloud_optimized_geotiff``: the main image
-is tiled, large images carry overviews, and every image directory sits
-before the pixel data.
+The verdict comes from rio-cogeo's ``cog_validate``, which opens the file
+through GDAL over HTTP range requests and reads only the header and image
+directories, so a multi-GB raster never has to be downloaded. A file that
+passes is served to the map as uploaded and is never converted again.
+
+When rio-cogeo is not installed or cannot open the file, a small built-in
+TIFF header parser gives the answer instead. Its rules follow GDAL's
+``validate_cloud_optimized_geotiff``: the main image is tiled, large images
+carry overviews, and every image directory sits before the pixel data.
 """
 
 from __future__ import annotations
@@ -230,10 +234,15 @@ def _memo(read: RangeReader) -> RangeReader:
     return cached
 
 
-def inspect_tiff(read: RangeReader) -> TiffInspection:
-    """COG layout plus grid and EPSG code, from ranged reads only."""
+def inspect_tiff(read: RangeReader, is_cog: Optional[bool] = None) -> TiffInspection:
+    """COG layout plus grid and EPSG code, from ranged reads only.
+
+    ``is_cog`` is a verdict already reached elsewhere (rio-cogeo). When it is
+    None the header parser decides.
+    """
     read = _memo(read)
-    is_cog = is_cog_layout(read)
+    if is_cog is None:
+        is_cog = is_cog_layout(read)
     try:
         tiff = _Tiff(_Source(read))
         main, _next = tiff.ifd(tiff.first_ifd)
@@ -285,8 +294,67 @@ def s3_range_reader(client, bucket: str, key: str) -> RangeReader:
     return read
 
 
+# GDAL settings for reading a presigned S3 URL. A presigned GET URL rejects
+# HEAD requests, and listing the "directory" of a URL is pointless.
+_RIO_GDAL_CONFIG = {
+    "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
+    "CPL_VSIL_CURL_USE_HEAD": "NO",
+    "GDAL_HTTP_MAX_RETRY": "2",
+    "GDAL_HTTP_RETRY_DELAY": "1",
+}
+_PRESIGN_SECONDS = 900
+
+
+def rio_cog_validate(src: str) -> Optional[bool]:
+    """rio-cogeo's verdict on ``src`` (a local path or an HTTP(S) URL).
+
+    Returns None when rio-cogeo is not installed or cannot open the file, so
+    the caller can fall back to the header parser. Warnings (for example a
+    missing overview on a mid-sized image) do not fail the check; errors do.
+    """
+    try:
+        from rio_cogeo.cogeo import cog_validate
+    except ImportError:
+        return None
+    try:
+        is_valid, errors, warnings = cog_validate(
+            src, strict=False, config=_RIO_GDAL_CONFIG, quiet=True
+        )
+    except Exception as exc:
+        logger.info("rio-cogeo could not open %s: %s", _redact(src), exc)
+        return None
+    if errors:
+        logger.info("Not a COG per rio-cogeo (%s): %s", _redact(src), "; ".join(errors))
+    elif warnings:
+        logger.info("COG with warnings per rio-cogeo (%s): %s", _redact(src), "; ".join(warnings))
+    return bool(is_valid)
+
+
+def _redact(src: str) -> str:
+    """Drop the query string so presigned credentials stay out of the logs."""
+    return src.split("?", 1)[0]
+
+
+def rio_s3_cog_validate(client, bucket: str, key: str) -> Optional[bool]:
+    """``rio_cog_validate`` for an S3 object, read through a presigned URL."""
+    try:
+        url = client.generate_presigned_url(
+            "get_object", Params={"Bucket": bucket, "Key": key}, ExpiresIn=_PRESIGN_SECONDS
+        )
+    except Exception:
+        logger.exception("Could not presign s3://%s/%s for the COG check", bucket, key)
+        return None
+    return rio_cog_validate(url)
+
+
 def is_s3_object_cog(client, bucket: str, key: str) -> bool:
-    """Check an S3 object with a few ranged reads. Errors count as "not a COG"."""
+    """Check an S3 object without downloading it. Errors count as "not a COG".
+
+    rio-cogeo decides when it can read the file; otherwise the header parser.
+    """
+    verdict = rio_s3_cog_validate(client, bucket, key)
+    if verdict is not None:
+        return verdict
     try:
         return is_cog_layout(s3_range_reader(client, bucket, key))
     except Exception:
@@ -295,9 +363,14 @@ def is_s3_object_cog(client, bucket: str, key: str) -> bool:
 
 
 def inspect_s3_tiff(client, bucket: str, key: str) -> TiffInspection:
-    """Like ``inspect_tiff`` for an S3 object. Errors count as "not a COG"."""
+    """Like ``inspect_tiff`` for an S3 object. Errors count as "not a COG".
+
+    The COG verdict comes from rio-cogeo when it can read the file. The grid
+    and EPSG code always come from the header parser.
+    """
+    verdict = rio_s3_cog_validate(client, bucket, key)
     try:
-        return inspect_tiff(s3_range_reader(client, bucket, key))
+        return inspect_tiff(s3_range_reader(client, bucket, key), is_cog=verdict)
     except Exception:
         logger.exception("TIFF inspection failed for s3://%s/%s", bucket, key)
-        return TiffInspection(False)
+        return TiffInspection(bool(verdict))

@@ -16,9 +16,10 @@ class Service(VisualizationService):
     def __init__(self):
         super().__init__(FakeSession(), None)
         self.enqueued = []
+        self.rows = []
 
-    async def latest_converted(self, native_file_id):
-        return None
+    async def _rows(self, native_file_id, include_removed=False):
+        return [r for r in self.rows if include_removed or r.status != "removed"]
 
     async def _touch_and_log(self, converted, user):
         pass
@@ -106,27 +107,90 @@ def test_other_formats_never_run_the_cog_check(service, monkeypatch):
     asyncio.run(service.access_file(geotiff("data.parquet", "parquet"), None))
 
 
-def test_raster_previewed_before_the_check_is_rechecked(monkeypatch):
-    native = geotiff()
-    old = ConvertedFile(
+def record(native, key, georef="ok", status=STATUS_AVAILABLE):
+    return ConvertedFile(
         cloud_file_id=uuid4(),
         native_file_id=native.file_id,
         bucket="b",
-        file_key=native.file_key,
+        file_key=key,
         format="cog",
-        status=STATUS_AVAILABLE,
-        georef_status=None,
+        status=status,
+        georef_status=georef,
     )
 
-    class Legacy(Service):
-        async def latest_converted(self, native_file_id):
-            return old
 
-    svc = Legacy()
-    svc.session.refresh = _refresh
-    monkeypatch.setattr("services.upload.get_s3_client", lambda: object())
+def no_s3(monkeypatch):
+    def fail(*args):
+        raise AssertionError("S3 should not be read")
+
+    monkeypatch.setattr(cog_check, "inspect_s3_tiff", fail)
+
+
+def test_cog_found_on_an_earlier_view_is_served_without_reading_s3(service, monkeypatch):
+    native = geotiff()
+    service.rows = [record(native, native.file_key)]
+    no_s3(monkeypatch)
+    body = asyncio.run(service.access_file(native, None))
+    assert body["status"] == STATUS_AVAILABLE and service.enqueued == []
+    assert body["access_url"].endswith(native.file_key)
+
+
+def test_our_converted_copy_is_reused_without_reading_s3(service, monkeypatch):
+    native = geotiff()
+    copy = record(native, f"converted/{native.file_id}/x.tif")
+    service.rows = [copy]
+    no_s3(monkeypatch)
+    body = asyncio.run(service.access_file(native, None))
+    assert service.enqueued == []
+    assert body["access_url"].endswith(copy.file_key)
+
+
+def test_a_newer_failed_attempt_does_not_hide_a_working_copy(service, monkeypatch):
+    native = geotiff()
+    good = record(native, f"converted/{native.file_id}/good.tif")
+    failed = record(native, "", status="removed")
+    service.rows = [failed, good]
+    no_s3(monkeypatch)
+    body = asyncio.run(service.access_file(native, None))
+    assert body["access_url"].endswith("good.tif") and service.enqueued == []
+
+
+def test_running_conversion_is_not_started_twice(service, monkeypatch):
+    serve_fixture(monkeypatch, "striped_wgs84.tif")
+    native = geotiff()
+    running = record(native, "", georef=None, status=STATUS_PROCESSING)
+    from datetime import datetime, timezone
+
+    running.created_on = datetime.now(timezone.utc)
+    service.rows = [running]
+    body = asyncio.run(service.access_file(native, None))
+    assert service.enqueued == [] and body["status"] == STATUS_PROCESSING
+
+
+def test_older_sound_cog_record_is_kept_not_redone(service, monkeypatch):
+    # Recorded before georeferencing was checked; the header shows it is fine.
+    native = geotiff()
+    old = record(native, native.file_key, georef=None)
+    service.rows = [old]
+    serve_fixture(monkeypatch, "cog_utm43.tif")
+    body = asyncio.run(service.access_file(native, None))
+    assert old.status == STATUS_AVAILABLE and old.georef_status == "ok"
+    assert service.enqueued == [] and body["status"] == STATUS_AVAILABLE
+
+
+def test_older_record_with_a_wrong_crs_is_redone(service, monkeypatch):
+    native = geotiff()
+    old = record(native, native.file_key, georef=None)
+    service.rows = [old]
     serve_fixture(monkeypatch, "cog_lcc_labelled_wgs84.tif")
-    body = asyncio.run(svc.access_file(native, None))
+    body = asyncio.run(service.access_file(native, None))
     assert old.status == "removed"
-    assert len(svc.enqueued) == 1
+    assert len(service.enqueued) == 1
     assert body["status"] == STATUS_PROCESSING
+
+
+def test_failed_conversion_is_reported_to_the_polling_preview(service):
+    native = geotiff()
+    service.rows = [record(native, "", georef=None, status="removed")]
+    body = asyncio.run(service.conversion_status(native))
+    assert body["status"] == "removed" and "error" in body

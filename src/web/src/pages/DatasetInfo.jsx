@@ -1629,7 +1629,7 @@ function DatasetInfo() {
                             </span>
                           </button>
                           <div className="fcard-quick">
-                            {canPreview(file) && (
+                            {canPreview(file) && !isOpen && (
                               <button
                                 className="fbtn"
                                 onClick={() => handlePreview(file)}
@@ -1846,6 +1846,15 @@ function DatasetInfo() {
                                     ? "Downloading…"
                                     : "Download file"}
                                 </button>
+                                {canPreview(file) && (
+                                  <button
+                                    className="btn btn-ghost"
+                                    onClick={() => handlePreview(file)}
+                                  >
+                                    <Ic name="eye" size={15} sw={2} />
+                                    View file
+                                  </button>
+                                )}
                                 {privileges.edit && (
                                   <button
                                     className="btn btn-ghost"

@@ -96,13 +96,29 @@ class VisualizationService:
         self.upload_service = upload_service
         self.logger = logging.getLogger(__name__)
 
+    async def _rows(
+        self, native_file_id: UUID, include_removed: bool = False
+    ) -> list[ConvertedFile]:
+        """Cloud-native records for a file, newest first."""
+        query = select(ConvertedFile).where(ConvertedFile.native_file_id == native_file_id)
+        if not include_removed:
+            query = query.where(ConvertedFile.status != STATUS_REMOVED)
+        result = await self.session.execute(query.order_by(ConvertedFile.created_on.desc()))
+        return list(result.scalars().all())
+
     async def latest_converted(self, native_file_id: UUID) -> Optional[ConvertedFile]:
-        result = await self.session.execute(
-            select(ConvertedFile)
-            .where(ConvertedFile.native_file_id == native_file_id)
-            .order_by(ConvertedFile.created_on.desc())
-        )
-        return result.scalars().first()
+        """The record to use: the newest available one, else the newest at all.
+
+        Preferring an available record means a later failed or running
+        attempt never hides a copy that already works.
+        """
+        # Removed records are included so a failed conversion is reported
+        # to the polling preview instead of looking like one still running.
+        rows = await self._rows(native_file_id, include_removed=True)
+        for row in rows:
+            if row.status == STATUS_AVAILABLE:
+                return row
+        return rows[0] if rows else None
 
     async def statuses_for_files(self, file_ids: list[UUID]) -> dict[UUID, str]:
         if not file_ids:
@@ -228,53 +244,65 @@ class VisualizationService:
         return age > limit
 
     async def access_file(self, file_record: File, user: Optional[User]) -> dict[str, Any]:
+        """Return the cloud-optimised file to show, converting only when needed.
+
+        1. Is the upload itself already cloud-optimised? Formats that are
+           cloud-native by nature (PDF, Parquet, FlatGeobuf, PMTiles, images)
+           always are. A GeoTIFF is when it is a valid COG with sound
+           georeferencing. It is then shown as uploaded, never converted.
+        2. Has the platform already converted it? An available record in
+           converted_files is reused. (Checked before reading the upload's
+           header, since a converted file is by definition not a COG.)
+        3. Otherwise, is a conversion already running? Wait for it.
+        4. Otherwise, convert it once.
+
+        The answer to step 1 is stored as a record pointing at the uploaded
+        file, so the header is read from S3 only on the first view.
+        """
         plan = self._plan(file_record)
-        converted = await self.latest_converted(file_record.file_id)
-
-        if (
-            converted
-            and converted.status == STATUS_AVAILABLE
-            and plan.viewer == "raster_map"
-            and converted.georef_status is None
-        ):
-            # Made before rasters were checked for a missing or mislabelled
-            # CRS. Check again so files such as NRSC LULC exports that say
-            # EPSG:4326 but use metres get placed correctly.
-            await self._supersede(converted, file_record)
-            converted = None
-
-        if converted and converted.status == STATUS_AVAILABLE:
-            await self._touch_and_log(converted, user)
-            extra = await self._presign(converted)
-            return self._payload(file_record, plan, converted, extra)
-
-        if converted and converted.status == STATUS_PROCESSING:
-            if self._is_stale(converted):
-                converted.status = STATUS_REMOVED
-                await self.session.commit()
-            else:
-                return self._payload(file_record, plan, converted)
-
         bucket = file_record.bucket or settings.S3_BUCKET
-        fast_raster = await self._sound_native_cog(plan, bucket, file_record)
-        if plan.cloud_native or fast_raster:
+        native_key = file_record.file_key
+        rows = await self._rows(file_record.file_id)
+        available = [r for r in rows if r.status == STATUS_AVAILABLE]
+
+        # Step 1a: the upload was already found to be cloud-optimised.
+        native_row = next((r for r in available if r.file_key == native_key), None)
+        if native_row is not None and await self._still_sound(native_row, plan, file_record):
+            return await self._serve(file_record, plan, native_row, user)
+
+        # Step 2: a copy the platform already optimised. If one exists, the
+        # upload was already found not to be cloud-optimised, so its header
+        # is not read again.
+        for row in available:
+            if row.file_key == native_key:
+                continue
+            if await self._still_sound(row, plan, file_record):
+                return await self._serve(file_record, plan, row, user)
+
+        # Step 1b: first view; check the upload itself.
+        sound_cog = await self._sound_native_cog(plan, bucket, file_record)
+        if plan.cloud_native or sound_cog:
             row = ConvertedFile(
                 cloud_file_id=uuid4(),
                 native_file_id=file_record.file_id,
                 bucket=bucket,
-                file_key=file_record.file_key,
+                file_key=native_key,
                 format=plan.target_format,
                 status=STATUS_AVAILABLE,
                 last_accessed=datetime.now(timezone.utc),
-                georef_status=GEOREF_OK if fast_raster else None,
+                georef_status=GEOREF_OK if sound_cog else None,
             )
             self.session.add(row)
             await self.session.commit()
             await self.session.refresh(row)
-            await self._touch_and_log(row, user)
-            extra = await self._presign(row)
-            return self._payload(file_record, plan, row, extra)
+            return await self._serve(file_record, plan, row, user)
 
+        # Step 3: a conversion already under way.
+        running = await self._running_conversion(file_record.file_id)
+        if running is not None:
+            return self._payload(file_record, plan, running)
+
+        # Step 4: convert once.
         row = ConvertedFile(
             cloud_file_id=uuid4(),
             native_file_id=file_record.file_id,
@@ -289,6 +317,68 @@ class VisualizationService:
         self._enqueue_conversion(row.cloud_file_id)
         return self._payload(file_record, plan, row)
 
+    async def _serve(
+        self,
+        file_record: File,
+        plan: FormatPlan,
+        row: ConvertedFile,
+        user: Optional[User],
+    ) -> dict[str, Any]:
+        await self._touch_and_log(row, user)
+        extra = await self._presign(row)
+        return self._payload(file_record, plan, row, extra)
+
+    async def _running_conversion(self, native_file_id: UUID) -> Optional[ConvertedFile]:
+        """A live processing record, after retiring any that timed out.
+
+        On PostgreSQL a per-file advisory lock is taken first, so two people
+        opening a new file at the same moment start one conversion, not two.
+        The lock is released by the commit that follows.
+        """
+        await self._lock_file(native_file_id)
+        running = None
+        for row in await self._rows(native_file_id):
+            if row.status != STATUS_PROCESSING:
+                continue
+            if self._is_stale(row):
+                row.status = STATUS_REMOVED
+                await self.session.commit()
+                await self._lock_file(native_file_id)
+            elif running is None:
+                running = row
+        return running
+
+    async def _lock_file(self, native_file_id: UUID) -> None:
+        bind = getattr(self.session, "bind", None)
+        dialect = getattr(getattr(bind, "dialect", None), "name", "")
+        if dialect != "postgresql":
+            return
+        from sqlalchemy import text
+
+        await self.session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"convert:{native_file_id}"},
+        )
+
+    async def _still_sound(
+        self, row: ConvertedFile, plan: FormatPlan, file_record: File
+    ) -> bool:
+        """True when an available record can be shown as it is.
+
+        Raster records made before the georeferencing check (georef_status
+        NULL) are checked again from their header, which costs a few ranged
+        reads, not a conversion. A sound one is marked and reused; only one
+        whose location is wrong is retired so it can be fixed.
+        """
+        if plan.viewer != "raster_map" or row.georef_status is not None:
+            return True
+        if await self._sound_cog_at(row.bucket or settings.S3_BUCKET, row.file_key):
+            row.georef_status = GEOREF_OK
+            await self.session.commit()
+            return True
+        await self._supersede(row, file_record)
+        return False
+
     async def _sound_native_cog(
         self, plan: FormatPlan, bucket: str, file_record: File
     ) -> bool:
@@ -302,6 +392,12 @@ class VisualizationService:
         """
         if plan.conversion != "cog":
             return False
+        return await self._sound_cog_at(bucket, file_record.file_key)
+
+    async def _sound_cog_at(self, bucket: str, key: str) -> bool:
+        """COG layout, an EPSG code, and coordinates that fit it, from the header."""
+        if not key:
+            return False
         from services import cog_check
         from services.raster_georef import (
             RasterGeoref,
@@ -311,9 +407,7 @@ class VisualizationService:
         )
         from services.upload import get_s3_client
 
-        found = await asyncio.to_thread(
-            cog_check.inspect_s3_tiff, get_s3_client(), bucket, file_record.file_key
-        )
+        found = await asyncio.to_thread(cog_check.inspect_s3_tiff, get_s3_client(), bucket, key)
         if not found.is_cog or found.epsg is None or found.geotransform is None:
             return False
         decision = assess(

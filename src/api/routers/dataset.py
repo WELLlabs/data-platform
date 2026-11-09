@@ -30,6 +30,7 @@ from services.dataset import DatasetService, get_dataset_service
 from services.organization import OrganizationService, get_organization_service
 from services.upload import UploadService, get_upload_service
 from services.user import UserService, get_user_service
+from services.stats import invalidate_homepage_stats_cache
 from services.typesense_index import safe_delete_dataset_documents
 from sqlalchemy import delete, select, update
 from utils.security import sanitize_input
@@ -921,6 +922,7 @@ class DatasetController:
             )
             await self.dataset_service.session.commit()
             await safe_delete_dataset_documents(dataset_id)
+            await invalidate_homepage_stats_cache()
 
             # 7. Verify deletion
             dataset_result = await self.dataset_service.session.execute(

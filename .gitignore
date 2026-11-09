@@ -2,3 +2,5 @@
 .cursorrules
 *.txt
 *.pem
+# Local test rasters (large; not part of the app)
+sample_raster/

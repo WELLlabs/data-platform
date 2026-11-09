@@ -33,6 +33,7 @@ dev = [
 visualization = [
     "duckdb>=1.2.0",
     "pyproj>=3.6.0",
+    "rio-cogeo>=5.4",
 ]
 
 [tool.pytest.ini_options]

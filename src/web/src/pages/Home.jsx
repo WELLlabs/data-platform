@@ -137,13 +137,17 @@ export default function Home() {
                 <b className="display">{loading ? "…" : fmt(stats?.total_open_datasets)}</b>
                 <span>total datasets</span>
               </Link>
+              <Link className="stat" to="/datasets">
+                <b className="display">{loading ? "…" : fmt(stats?.total_public_datasets)}</b>
+                <span>open datasets</span>
+              </Link>
               <Link className="stat" to="/orgsearch?sort=top">
-                <b className="display">{loading ? "…" : fmt(orgs.length)}</b>
-                <span>top organizations</span>
+                <b className="display">{loading ? "…" : fmt(stats?.total_organizations ?? orgs.length)}</b>
+                <span>no. of organizations</span>
               </Link>
               <Link className="stat" to="/contributors">
-                <b className="display">{loading ? "…" : fmt(contributors.length)}</b>
-                <span>top contributors</span>
+                <b className="display">{loading ? "…" : fmt(stats?.total_contributors ?? contributors.length)}</b>
+                <span>no. of contributors</span>
               </Link>
               <div className="stat">
                 <b className="display">{loading ? "…" : fmtBytes(stats?.total_file_size)}</b>
@@ -254,7 +258,9 @@ export default function Home() {
               <div className="oi">{String(o.organization_name || "?").slice(0, 2).toUpperCase()}</div>
               <span className="rank-chip">#{i + 1}</span>
               <b>{o.organization_name}</b>
-              <span>{fmt(o.contributions)} contributions</span>
+              <span>
+                {fmt(o.contributions)} ({fmt(o.open_contributions ?? 0)}) contribution{o.contributions === 1 ? "" : "s"}
+              </span>
             </Link>
           ))}
           {!loading && !orgs.length && <div className="empty" style={{ padding: "40px 0" }}><p>Contribution data is not available yet.</p></div>}

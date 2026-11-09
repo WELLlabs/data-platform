@@ -1492,6 +1492,9 @@ class UserService:
             dataset.approved_by = approver.id
             await self.session.commit()
             await self.session.refresh(dataset)
+            from services.stats import invalidate_homepage_stats_cache
+
+            await invalidate_homepage_stats_cache()
 
             self.logger.info(
                 "Dataset approved successfully: approver_id=%s dataset_id=%s",
@@ -1513,6 +1516,7 @@ class UserService:
 
     async def reject_dataset(self, actor: User, dataset_id: UUID) -> None:
         """Reject an unapproved dataset by deleting it."""
+        from services.stats import invalidate_homepage_stats_cache
         from services.typesense_index import safe_delete_dataset_documents
 
         has_high_role = await self.check_if_high_role_by_id(actor.id)
@@ -1546,6 +1550,7 @@ class UserService:
         await self.session.delete(dataset)
         await self.session.commit()
         await safe_delete_dataset_documents(dataset_id)
+        await invalidate_homepage_stats_cache()
 
 
 # Dependency function to get user service

@@ -145,10 +145,10 @@ export default function Home() {
                 <b className="display">{loading ? "…" : fmt(stats?.total_organizations ?? orgs.length)}</b>
                 <span>no. of organizations</span>
               </Link>
-              <Link className="stat" to="/contributors">
+              <div className="stat">
                 <b className="display">{loading ? "…" : fmt(stats?.total_contributors ?? contributors.length)}</b>
                 <span>no. of contributors</span>
-              </Link>
+              </div>
               <div className="stat">
                 <b className="display">{loading ? "…" : fmtBytes(stats?.total_file_size)}</b>
                 <span>total file sizes</span>
@@ -213,7 +213,6 @@ export default function Home() {
       <section className="wrap" id="top-contributors" style={{ padding: "var(--s8) 0 0" }}>
         <div className="section-head">
           <div><span className="eyebrow">Ranked</span><h2 className="section-title" style={{ marginTop: 8 }}>Top contributors</h2></div>
-          <Link className="link-arrow" to="/contributors">View all <Ic name="arrow" size={16} /></Link>
         </div>
         <div className="contrib-grid">
           {contributors.slice(0, 12).map((c, i) => {

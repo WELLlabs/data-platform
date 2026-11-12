@@ -145,10 +145,10 @@ export default function Home() {
                 <b className="display">{loading ? "…" : fmt(stats?.total_organizations ?? orgs.length)}</b>
                 <span>no. of organizations</span>
               </Link>
-              <Link className="stat" to="/contributors">
+              {/* <Link className="stat" to="/contributors">
                 <b className="display">{loading ? "…" : fmt(stats?.total_contributors ?? contributors.length)}</b>
                 <span>no. of contributors</span>
-              </Link>
+              </Link> */}
               <div className="stat">
                 <b className="display">{loading ? "…" : fmt(stats?.total_contributors ?? contributors.length)}</b>
                 <span>no. of contributors</span>

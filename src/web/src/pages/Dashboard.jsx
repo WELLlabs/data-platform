@@ -1,12 +1,13 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import { user_datasets_endpoint, user_dataset_counts_endpoint, send_verify_email_endpoint, organization_by_id_endpoint } from "../api/endpoints";
+import { user_datasets_endpoint, user_dataset_counts_endpoint, organization_by_id_endpoint } from "../api/endpoints";
 import Ic from "../components/wd/Icons";
 import Pagination, { PAGE_SIZE_OPTIONS } from "../components/wd/Pagination";
 import Contour from "../components/wd/Contour";
-import { useToast } from "../components/wd/Toast";
 import { DatasetRow, DatasetCard } from "../components/wd/DatasetItems";
+import AlertBanner from "../components/AlertBanner";
+import { PendingApprovalNotice, isPendingOrgApproval } from "../components/PendingApproval";
 
 function greeting() {
   const h = new Date().getHours();
@@ -20,8 +21,6 @@ function Dashboard() {
   const [currentPage, setCurrentPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [totalCount, setTotalCount] = useState(null);
-  const [verificationMessage, setVerificationMessage] = useState("");
-  const [sendingVerification, setSendingVerification] = useState(false);
   const [wsTab, setWsTab] = useState("published");
   const [view, setView] = useState("list");
   const [counts, setCounts] = useState({ published: 0, pending: 0, owned: 0 });
@@ -29,7 +28,6 @@ function Dashboard() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user, isAuthenticated, verifyUser } = useAuth();
-  const toast = useToast();
   const paramsSetRef = useRef(false);
   const lastFetchedUserIdRef = useRef(null);
   const lastFocusTimeRef = useRef(0);
@@ -124,6 +122,13 @@ function Dashboard() {
       }
     };
 
+    // Members awaiting organisation approval see a blank workspace.
+    if (isPendingOrgApproval(user)) {
+      setDatasets([]);
+      setDatasetsLoading(false);
+      return;
+    }
+
     if (user?.id) {
       if (lastFetchedUserIdRef.current !== user.id) {
         setCurrentPage(1);
@@ -154,7 +159,8 @@ function Dashboard() {
         })
         .catch(() => {});
     }
-  }, [user?.id, user?.organization, currentPage, wsTab, limit]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, user?.organization, user?.verified, user?.is_superuser, currentPage, wsTab, limit]);
 
   // Third useEffect: Refresh user data when window regains focus
   // This ensures user verification status is updated after email verification
@@ -198,61 +204,24 @@ function Dashboard() {
   }
 
 
-  const handleSendVerificationEmail = async () => {
-    if (!user?.email) return;
-
-    setSendingVerification(true);
-    setVerificationMessage("");
-
-    try {
-      const response = await fetch(send_verify_email_endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ email: user.email }),
-        credentials: "include",
-      });
-
-      if (response.ok) {
-        setVerificationMessage("Verification email sent! Please check your inbox.");
-        toast("Verification email sent — check your inbox.");
-      } else {
-        let errorMessage = "Failed to send verification email. Please try again.";
-        try {
-          const contentType = response.headers.get("content-type");
-          if (contentType && contentType.includes("application/json")) {
-            const errorData = await response.json();
-            errorMessage = errorData?.detail || errorMessage;
-          } else {
-            const text = await response.text();
-            errorMessage = text || errorMessage;
-          }
-        } catch (parseError) {
-          console.error("Error parsing error response:", parseError);
-          // Use default error message
-        }
-        setVerificationMessage(errorMessage);
-      }
-    } catch (err) {
-      console.error("Error sending verification email:", err);
-      setVerificationMessage(
-        "Network error. Please check your connection and try again."
-      );
-    } finally {
-      setSendingVerification(false);
-    }
-  };
-
-  // Check if user is not verified (check only is_verified field)
-  // User is unverified if is_verified is not explicitly true
-  const isUnverified = user && user.is_verified !== true;
   // Approvers only: Admin (role 1), Reviewer (role 2), or super admin.
   const isApprover =
     !!user &&
     (Number(user.role) === 1 ||
       Number(user.role) === 2 ||
       user.is_superuser === true);
+
+  // Not yet approved by the organisation admin: banner plus a blank interface.
+  if (isPendingOrgApproval(user)) {
+    return (
+      <div className="page">
+        <div className="wrap">
+          <AlertBanner user={user} />
+          <PendingApprovalNotice />
+        </div>
+      </div>
+    );
+  }
 
   // Derived presentation values (no change to fetching/state)
   const firstName =
@@ -292,6 +261,7 @@ function Dashboard() {
   return (
     <div className="page">
       <div className="wrap">
+        <AlertBanner user={user} />
         <section className="ws-hero" style={{ position: "relative" }}>
           <Contour op={0.35} />
           <span className="eyebrow">Your workspace</span>
@@ -339,7 +309,7 @@ function Dashboard() {
           </div>
         </div>
 
-        {isApprover && (pendingCount > 0 || isUnverified) && (
+        {isApprover && pendingCount > 0 && (
           <>
             <div className="sec-label" style={{ marginBottom: 14 }}>
               Needs your attention
@@ -367,30 +337,6 @@ function Dashboard() {
                 </div>
               )}
 
-              {isUnverified && (
-                <div
-                  className="attn-card info"
-                  onClick={handleSendVerificationEmail}
-                  style={{ cursor: sendingVerification ? "default" : "pointer" }}
-                >
-                  <div className="aic">
-                    <Ic name="info" size={18} sw={2} />
-                  </div>
-                  <div>
-                    <b>Verify your email address</b>
-                    <p>
-                      {sendingVerification
-                        ? "Sending verification email…"
-                        : verificationMessage
-                        ? verificationMessage
-                        : "Confirm your email to unlock publishing and approvals."}
-                    </p>
-                  </div>
-                  <span className="go">
-                    <Ic name="arrow" size={16} />
-                  </span>
-                </div>
-              )}
             </div>
           </>
         )}

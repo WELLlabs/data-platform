@@ -34,6 +34,7 @@ import Search from "./pages/Search";
 import Approvals from "./pages/Approvals";
 import CompleteProfile from "./pages/CompleteProfile";
 import ProfileCompleteGate from "./components/ProfileCompleteGate";
+import RequireOrgApproval from "./components/PendingApproval";
 
 const ApiDocs = () => (
   <div className="page"><section className="wrap" style={{ padding: "72px 0", maxWidth: 720 }}>
@@ -78,14 +79,14 @@ function AppShell() {
                   <Route path="/orgsearch" element={<OrgSearch />} />
                   <Route path="/contributors" element={<Contributors />} />
                   <Route path="/dashboard" element={<Dashboard />} />
-                  <Route path="/approvals" element={<Approvals />} />
+                  <Route path="/approvals" element={<RequireOrgApproval><Approvals /></RequireOrgApproval>} />
                   <Route path="/profile" element={<Profile />} />
                   <Route path="/createorg" element={<CreateOrg />} />
                   <Route path="/createorgsuccess" element={<CreateOrgSuccess />} />
                   <Route path="/organisation" element={<Organization />} />
-                  <Route path="/create-dataset" element={<CreateDataset />} />
+                  <Route path="/create-dataset" element={<RequireOrgApproval><CreateDataset /></RequireOrgApproval>} />
                   <Route path="/dataset-info" element={<DatasetInfo />} />
-                  <Route path="/add-file" element={<AddFile />} />
+                  <Route path="/add-file" element={<RequireOrgApproval><AddFile /></RequireOrgApproval>} />
                   <Route path="/file-preview" element={<FilePreview />} />
                   <Route path="/faq" element={<FAQ />} />
                   <Route path="/terms" element={<Terms />} />

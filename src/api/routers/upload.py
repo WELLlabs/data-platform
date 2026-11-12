@@ -1471,6 +1471,11 @@ async def http_complete_upload_job(
     auth_service: AuthService = Depends(get_auth_service),
 ):
     """Persist datasets/files from Redis job events; requires job status open and matching creator."""
+    if not (user.verified and user.is_verified):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="email address verification and/or organization approval pending.",
+        )
     return await complete_upload_job(
         job_id=job_id,
         user=user,

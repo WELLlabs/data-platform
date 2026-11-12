@@ -9,6 +9,7 @@ from typing import Any, Optional
 from uuid import UUID
 
 import httpx
+from core.availability import effective_viewer
 from core.config import settings
 from models.dataset import Dataset
 from models.dataset_owner import DatasetOwner
@@ -485,6 +486,7 @@ def _grouped_or_flat_hits(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 def typesense_filter_by(user: Optional[User], organization_id: Optional[str]) -> str:
     parts = ["approved:true"]
+    user = effective_viewer(user)
     if user is None:
         vis = "availability:=0"
     elif user.is_superuser:

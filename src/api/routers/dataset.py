@@ -11,7 +11,11 @@ from uuid import UUID, uuid4
 
 from redis.asyncio import Redis
 from redis.exceptions import ResponseError
-from core.availability import clamp_availability_for_org, parse_availability
+from core.availability import (
+    clamp_availability_for_org,
+    effective_viewer,
+    parse_availability,
+)
 from core.config import settings
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.encoders import jsonable_encoder
@@ -1390,6 +1394,8 @@ async def user_datasets(
                     select(User).where(User.id == user_data["id"])
                 )
                 requesting_user = user_result.scalar_one_or_none()
+        # Members awaiting organisation approval only see public datasets.
+        requesting_user = effective_viewer(requesting_user)
 
         return await controller.get_user_datasets(
             user_uuid, limit, offset, requesting_user, scope=scope
@@ -1436,6 +1442,8 @@ async def user_dataset_counts(
                     select(User).where(User.id == user_data["id"])
                 )
                 requesting_user = user_result.scalar_one_or_none()
+        # Members awaiting organisation approval only see public datasets.
+        requesting_user = effective_viewer(requesting_user)
         counts = await controller.dataset_service.get_user_dataset_counts(
             user_uuid, requesting_user
         )

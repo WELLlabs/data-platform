@@ -50,6 +50,22 @@ def clamp_availability_for_org(availability: int, org_is_private: bool) -> int:
     return level
 
 
+def viewer_is_org_approved(viewer: Optional[User]) -> bool:
+    """True when the viewer is a superuser or an organisation-approved member.
+
+    Members whose organisation admin has not yet approved them (``verified`` is
+    False) are treated like anonymous visitors: they only see public datasets.
+    """
+    if viewer is None:
+        return False
+    return bool(viewer.is_superuser or viewer.verified)
+
+
+def effective_viewer(viewer: Optional[User]) -> Optional[User]:
+    """Return the viewer for visibility checks, or None when not yet approved."""
+    return viewer if viewer_is_org_approved(viewer) else None
+
+
 def viewer_can_see_dataset(
     *,
     availability: int,
@@ -62,6 +78,7 @@ def viewer_can_see_dataset(
     level = parse_availability(availability)
     if level == AVAILABILITY_PUBLIC:
         return True
+    viewer = effective_viewer(viewer)
     if viewer is None:
         return False
     if viewer.is_superuser or viewer.id == creator_id:
@@ -82,6 +99,7 @@ def viewer_can_see_dataset(
 def approved_dataset_visibility_clause(user: Optional[User]) -> ColumnElement:
     """SQLAlchemy filter for listing approved datasets a viewer may see."""
     public = Dataset.availability == AVAILABILITY_PUBLIC
+    user = effective_viewer(user)
     if user is None:
         return public
     if user.is_superuser:
@@ -115,6 +133,7 @@ def approved_dataset_visibility_clause(user: Optional[User]) -> ColumnElement:
 
 def search_visibility_sql(user: Optional[User]) -> tuple[str, dict]:
     """SQL fragment and bind params for global_search_index visibility."""
+    user = effective_viewer(user)
     if user is None:
         return "global_search_index.availability = 0", {}
     if user.is_superuser:

@@ -7,6 +7,9 @@ import { clearOrganizationNamesCache } from "../components/wd/DatasetItems";
 import Contour from "../components/wd/Contour";
 import Ic from "../components/wd/Icons";
 
+const PERMISSION_DENIED =
+  "You don't have the permission to access this page.";
+
 function CreateOrg() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -102,9 +105,8 @@ function CreateOrg() {
         if (response.status === 200) {
           const userData = response.data;
 
-          // Check if user is superuser
           if (!userData.is_superuser) {
-            setError("Access denied. You must be a superuser to create organizations.");
+            setError(PERMISSION_DENIED);
             setUser(null);
             return;
           }
@@ -118,13 +120,7 @@ function CreateOrg() {
         localStorage.removeItem("user");
         sessionStorage.clear();
 
-        if (err.response?.status === 401) {
-          setError("Session expired. Please sign in again.");
-        } else if (err.response?.status === 403) {
-          setError("Access denied. You must be a superuser to create organizations.");
-        } else {
-          setError("Authentication failed. Please sign in again.");
-        }
+        setError(PERMISSION_DENIED);
 
         setUser(null);
       } finally {
@@ -253,7 +249,7 @@ function CreateOrg() {
             <div className="auth-card">
               <span className="eyebrow">Organizations</span>
               <h1 className="display">Access denied</h1>
-              <p className="auth-sub">{error}</p>
+              <p className="auth-sub">{PERMISSION_DENIED}</p>
               <div style={{ marginTop: 22 }}>
                 <button className="btn btn-ghost" onClick={() => navigate("/")}>
                   Go home

@@ -37,6 +37,11 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
         DateTime(timezone=True), nullable=True, onupdate=func.now()
     )
     verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    approved_by: Mapped[Optional[UUID]] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     apikey: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
 
     # One-to-one: contribution count lives in user_contributions table

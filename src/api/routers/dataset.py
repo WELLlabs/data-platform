@@ -586,6 +586,9 @@ class DatasetController:
                 "owners": await self.dataset_service.list_owners(dataset_id),
             }
 
+            uploader_names = await self.dataset_service.get_user_names(
+                [f.uploaded_by for f in files]
+            )
             files_arr = []
             for f in files:
                 plan = plan_for_format(f.file_format, f.file_key)
@@ -618,6 +621,12 @@ class DatasetController:
                         "created_at": f.created_at.isoformat()
                         if f.created_at
                         else None,
+                        "uploaded_by": str(f.uploaded_by) if f.uploaded_by else None,
+                        "uploader_name": (
+                            uploader_names.get(str(f.uploaded_by))
+                            if f.uploaded_by
+                            else None
+                        ),
                         "modified_at": f.modified_at.isoformat()
                         if getattr(f, "modified_at", None)
                         else None,

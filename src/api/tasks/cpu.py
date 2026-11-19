@@ -30,9 +30,9 @@ def _convert_raster(session, row, native, bucket: str) -> dict:
 
     1. Read only the header with ``gdalinfo`` over a presigned URL. The
        file is downloaded only when a derivative has to be written.
-    2. Decide (``raster_inspect.plan_raster``): a real COG (checked with
-       rio-cogeo's ``cog_validate``) with sound georeferencing is reused as
-       is, with no conversion. A missing or
+    2. Decide (``raster_inspect.plan_raster``): a real COG (``gdal dataset
+       identify --detailed`` reports ``layout=COG``) with sound georeferencing
+       is reused as is, with no conversion. A missing or
        mislabelled CRS, or GCP-only georeferencing, gets a fixed derivative.
        A file that cannot be placed is reused and the preview explains why.
     3. Check the derivative with ``gdalinfo`` before publishing it.
@@ -40,7 +40,7 @@ def _convert_raster(session, row, native, bucket: str) -> dict:
     from datetime import datetime, timezone
 
     from services.cog_check import is_s3_object_cog, rio_cog_validate
-    from services.conversion import ConversionError, _run, convert_cog
+    from services.conversion import ConversionError, _run, convert_cog, identify_cog
     from services.formats import STATUS_AVAILABLE, mime_for_cloud_format
     from services.raster_georef import GEOREF_UNPLACEABLE, parse_candidates, parse_region
     from services.raster_inspect import gdalinfo_json, plan_raster, verify_output
@@ -73,6 +73,7 @@ def _convert_raster(session, row, native, bucket: str) -> dict:
         src = work / f"native{suffix}"
         downloaded = False
         doc = None
+        url = None
         try:
             url = client.generate_presigned_url(
                 "get_object", Params={"Bucket": bucket, "Key": key}, ExpiresIn=3600
@@ -90,7 +91,13 @@ def _convert_raster(session, row, native, bucket: str) -> dict:
                 raise ConversionError(f"GDAL cannot read this raster: {exc}") from exc
 
         def structural_cog() -> bool:
-            # rio-cogeo on the local copy when there is one, else over S3.
+            # GDAL 3.13: `gdal dataset identify <file> --detailed` prints
+            # layout=COG when the GeoTIFF is already cloud optimized.
+            source = str(src) if downloaded else (f"/vsicurl/{url}" if url else None)
+            if source is not None:
+                identified = identify_cog(source, timeout=120)
+                if identified is not None:
+                    return identified
             if downloaded:
                 verdict = rio_cog_validate(str(src))
                 if verdict is not None:

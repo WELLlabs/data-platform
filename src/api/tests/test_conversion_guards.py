@@ -39,17 +39,43 @@ def test_is_cog_reads_layout(monkeypatch, tmp_path):
     src.write_bytes(b"not-a-real-tiff")
     monkeypatch.setattr(
         "services.conversion.shutil.which",
-        lambda name: "/usr/bin/gdalinfo" if name == "gdalinfo" else None,
+        lambda name: "/usr/bin/gdal" if name == "gdal" else None,
     )
+    seen = {}
 
-    def _run(cmd, timeout):
-        return subprocess.CompletedProcess(cmd, 0, stdout="LAYOUT=COG\n", stderr="")
+    def _run(cmd, timeout, env=None):
+        seen["cmd"] = cmd
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=f"{src}: GTiff, layout=COG, has CRS, has geotransform\n",
+            stderr="",
+        )
 
     monkeypatch.setattr("services.conversion._run", _run)
     assert is_cog(src, 30) is True
+    assert seen["cmd"][:4] == ["/usr/bin/gdal", "dataset", "identify", str(src)]
+    assert seen["cmd"][-1] == "--detailed"
 
 
-def test_is_cog_is_false_without_gdalinfo(monkeypatch, tmp_path):
+def test_is_cog_is_false_for_a_plain_geotiff(monkeypatch, tmp_path):
+    src = tmp_path / "scene.tif"
+    src.write_bytes(b"x")
+    monkeypatch.setattr(
+        "services.conversion.shutil.which",
+        lambda name: "/usr/bin/gdal" if name == "gdal" else None,
+    )
+
+    def _run(cmd, timeout, env=None):
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout=f"{src}: GTiff, has CRS, has geotransform\n", stderr=""
+        )
+
+    monkeypatch.setattr("services.conversion._run", _run)
+    assert is_cog(src, 30) is False
+
+
+def test_is_cog_is_false_without_gdal(monkeypatch, tmp_path):
     src = tmp_path / "scene.tif"
     src.write_bytes(b"x")
     monkeypatch.setattr("services.conversion.shutil.which", lambda name: None)

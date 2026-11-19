@@ -1682,6 +1682,23 @@ function DatasetInfo() {
                               <div className="fmeta">
                                 <div className="fm">
                                   <div className="fml">
+                                    <Ic name="org" size={12} sw={2} />
+                                    Uploaded by
+                                  </div>
+                                  <div className="fmv">
+                                    {file.uploaded_by ? (
+                                      <Link
+                                        to={`/profile?id=${encodeURIComponent(file.uploaded_by)}`}
+                                      >
+                                        {file.uploader_name || "View uploader"}
+                                      </Link>
+                                    ) : (
+                                      "—"
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="fm">
+                                  <div className="fml">
                                     <Ic name="file" size={12} sw={2} />
                                     File name
                                   </div>

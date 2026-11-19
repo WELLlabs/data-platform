@@ -341,6 +341,7 @@ async def complete_upload_job(
                 temporal_from=tf,
                 temporal_to=tt,
                 geography=ev.get("geography"),
+                uploaded_by=user.id,
             )
             session.add(nf)
             # The download-count row references files.file_id. Flush the file

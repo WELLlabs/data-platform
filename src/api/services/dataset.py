@@ -826,6 +826,7 @@ class DatasetService:
                 temporal_from=dataset_data.temporal_from,
                 temporal_to=dataset_data.temporal_to,
                 geography=sanitized_geography,
+                uploaded_by=dataset_data.creator,
             )
             self.session.add(file)
             self.session.add(

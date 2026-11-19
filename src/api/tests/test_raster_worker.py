@@ -57,6 +57,23 @@ def records():
     return native, row
 
 
+def test_identify_reports_cog_and_skips_conversion(world, monkeypatch):
+    calls, docs = world
+    docs["remote"] = doc(cog=False)
+    seen = {}
+
+    def identify_cog(source, timeout):
+        seen["source"] = source
+        return True
+
+    monkeypatch.setattr("services.conversion.identify_cog", identify_cog)
+    native, row = records()
+    out = cpu._convert_raster(Session(), row, native, "b")
+    assert out["reused_native"] and row.file_key == native.file_key
+    assert calls["download"] == 0 and calls["convert"] == []
+    assert seen["source"].startswith("/vsicurl/https://s3.example/u/lulc_cog.tif?")
+
+
 def test_sound_cog_is_reused_without_download(world):
     calls, docs = world
     docs["remote"] = doc()

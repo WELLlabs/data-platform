@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import OrgSearch from "../OrgSearch";
 import { useAuth } from "../../contexts/AuthContext";
-import { jsonResponse, stubFetch, signedInAuth } from "../../testUtils";
+import { guestAuth, jsonResponse, stubFetch, signedInAuth } from "../../testUtils";
 
 jest.mock("../../contexts/AuthContext", () => ({
   useAuth: jest.fn(),
@@ -37,5 +37,19 @@ describe("Organization directory", () => {
     expect(screen.getByText("New Research Lab")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /your organization/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /create organization/i })).toBeInTheDocument();
+  });
+
+  test.each([
+    ["guests", guestAuth],
+    ["members", signedInAuth({ role: 0, is_superuser: false })],
+    ["reviewers", signedInAuth({ role: 2, is_superuser: false })],
+    ["admins", signedInAuth({ role: 1, is_superuser: false })],
+  ])("hides Create organization from %s", async (_label, auth) => {
+    useAuth.mockReturnValue(auth);
+    renderOrgSearch();
+    expect(await screen.findByText("WELL Labs")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /create organization/i })
+    ).not.toBeInTheDocument();
   });
 });

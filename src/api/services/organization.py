@@ -584,6 +584,7 @@ class OrganizationService:
         target.organization = org_uuid
         target.role = role
         target.verified = bool(approve_now)
+        target.approved_by = actor.id if approve_now else None
         uc_result = await self.session.execute(
             select(UserContribution).where(UserContribution.user_id == target.id)
         )

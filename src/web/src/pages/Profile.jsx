@@ -9,6 +9,7 @@ import {
   user_datasets_endpoint,
   auth_apikey_endpoint,
   homepage_stats_endpoint,
+  change_user_role_endpoint,
 } from "../api/endpoints";
 import Ic from "../components/wd/Icons";
 import Pagination, { PAGE_SIZE_OPTIONS } from "../components/wd/Pagination";
@@ -31,6 +32,12 @@ function rankBadge(rank) {
   if (rank === 3) return { cls: "place bronze", icon: "medal", label: "3rd place" };
   return { cls: "public", icon: "star", label: `${ordinal(rank)} place` };
 }
+
+const ROLE_OPTIONS = [
+  { value: 0, label: "Member" },
+  { value: 1, label: "Admin" },
+  { value: 2, label: "Reviewer" },
+];
 
 function Profile() {
   const [loading, setLoading] = useState(true);
@@ -65,6 +72,11 @@ function Profile() {
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editError, setEditError] = useState("");
   const [profileRefreshTrigger, setProfileRefreshTrigger] = useState(0);
+
+  const [showRoleModal, setShowRoleModal] = useState(false);
+  const [roleDraft, setRoleDraft] = useState(0);
+  const [roleSubmitting, setRoleSubmitting] = useState(false);
+  const [roleError, setRoleError] = useState("");
 
   // Handle authentication and query parameters
   useEffect(() => {
@@ -313,6 +325,47 @@ function Profile() {
   //   }
   // };
 
+  const canChangeRole = Boolean(
+    isAuthenticated &&
+      user &&
+      profileData &&
+      (user.is_superuser === true || Number(user.role) === 1) &&
+      (user.is_superuser === true ||
+        String(user.organization) === String(profileData.organization))
+  );
+
+  const openChangeRole = () => {
+    setRoleDraft(Number(profileData?.role) || 0);
+    setRoleError("");
+    setShowRoleModal(true);
+  };
+
+  const handleChangeRole = async (e) => {
+    e.preventDefault();
+    if (!profileData?.id) return;
+    setRoleError("");
+    setRoleSubmitting(true);
+    try {
+      const response = await fetch(
+        change_user_role_endpoint(profileData.id, roleDraft),
+        { method: "PUT", credentials: "include" }
+      );
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        const detail = data?.detail ?? response.statusText;
+        throw new Error(
+          typeof detail === "string" ? detail : "Failed to change role"
+        );
+      }
+      setShowRoleModal(false);
+      setProfileRefreshTrigger((k) => k + 1);
+    } catch (err) {
+      setRoleError(err?.message ?? "Failed to change role");
+    } finally {
+      setRoleSubmitting(false);
+    }
+  };
+
   const editEmailValid =
     /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(editEmail.trim());
 
@@ -446,22 +499,36 @@ function Profile() {
                 </p>
               </div>
             </div>
-            {profileData.privileges?.edit && (
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => {
-                  setEditFullName(profileData.full_name ?? "");
-                  setEditEmail(profileData.email ?? "");
-                  setEditDesignation(profileData.designation ?? "");
-                  setEditOrganization(profileData.organization ?? "");
-                  setEditError("");
-                  setShowEditModal(true);
-                }}
-                aria-label="Edit profile"
-              >
-                Edit profile
-              </button>
+            {(canChangeRole || profileData.privileges?.edit) && (
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {canChangeRole && (
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={openChangeRole}
+                    aria-label="Change role"
+                  >
+                    Change role
+                  </button>
+                )}
+                {profileData.privileges?.edit && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      setEditFullName(profileData.full_name ?? "");
+                      setEditEmail(profileData.email ?? "");
+                      setEditDesignation(profileData.designation ?? "");
+                      setEditOrganization(profileData.organization ?? "");
+                      setEditError("");
+                      setShowEditModal(true);
+                    }}
+                    aria-label="Edit profile"
+                  >
+                    Edit profile
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </section>
@@ -470,11 +537,11 @@ function Profile() {
         <div className="rail-card" style={{ marginTop: 22 }}>
           <div className="rrow">
             <span>Email</span>
-            <span>
+            <span style={{ display: "inline-flex", alignItems: "center" }}>
               {profileData.email || "N/A"}
               {profileData.is_verified !== undefined && (
                 <span
-                  style={{ marginLeft: 8, verticalAlign: "middle", color: profileData.is_verified ? "var(--green, #2e7d32)" : "var(--red, #c62828)" }}
+                  style={{ display: "inline-flex", alignItems: "center", marginLeft: 8, verticalAlign: "middle", color: profileData.is_verified ? "var(--green, #2e7d32)" : "var(--red, #c62828)" }}
                   title={profileData.is_verified ? "Verified" : "Not Verified"}
                 >
                   {profileData.is_verified
@@ -490,7 +557,7 @@ function Profile() {
           </div>
           <div className="rrow">
             <span>Organization</span>
-            <span>
+            <span style={{ display: "inline-flex", alignItems: "center" }}>
               {profileData.organization_name ? (
                 <>
                   <Link
@@ -501,7 +568,7 @@ function Profile() {
                   </Link>
                   {profileData.verified !== undefined && (
                     <span
-                      style={{ marginLeft: 8, verticalAlign: "middle", color: profileData.verified ? "var(--green, #2e7d32)" : "var(--red, #c62828)" }}
+                      style={{ display: "inline-flex", alignItems: "center", marginLeft: 8, verticalAlign: "middle", color: profileData.verified ? "var(--green, #2e7d32)" : "var(--red, #c62828)" }}
                       title={profileData.verified ? "Approved" : "Not Approved"}
                     >
                       {profileData.verified
@@ -519,6 +586,19 @@ function Profile() {
             <span>Role</span>
             <span>{roleLabel}</span>
           </div>
+          {profileData.approved_by && (
+            <div className="rrow">
+              <span>Approved by</span>
+              <span>
+                <Link
+                  className="link-arrow"
+                  to={`/profile?id=${encodeURIComponent(profileData.approved_by)}`}
+                >
+                  {profileData.approver_name || "View approver"}
+                </Link>
+              </span>
+            </div>
+          )}
           <div className="rrow">
             <span>Contributions</span>
             <span>{profileData.contributions ?? 0}</span>
@@ -711,6 +791,66 @@ function Profile() {
                       }
                     >
                       {editSubmitting ? "Updating…" : "Submit"}
+                    </button>
+                  </form>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )}
+
+        {showRoleModal &&
+          createPortal(
+            <div
+              className="cmdk-overlay show"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="changeRoleModalTitle"
+              onClick={(e) => {
+                if (e.target === e.currentTarget && !roleSubmitting) {
+                  setShowRoleModal(false);
+                }
+              }}
+            >
+              <div className="modal-card">
+                <div className="modal-head">
+                  <h3 id="changeRoleModalTitle">Change role</h3>
+                  <p>
+                    Update the organisation role for{" "}
+                    {profileData.full_name || "this user"}.
+                  </p>
+                </div>
+                <div className="modal-body">
+                  {roleError && (
+                    <div className="attn-card warn" role="alert" style={{ marginBottom: 14 }}>
+                      <div><b>{roleError}</b></div>
+                    </div>
+                  )}
+                  <form onSubmit={handleChangeRole}>
+                    <div className="field">
+                      <label htmlFor="profile-role">Role</label>
+                      <select
+                        id="profile-role"
+                        aria-label="Role"
+                        value={roleDraft}
+                        onChange={(e) => setRoleDraft(Number(e.target.value))}
+                        disabled={roleSubmitting}
+                        style={{ width: "100%" }}
+                      >
+                        {ROLE_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <button
+                      type="submit"
+                      className="btn btn-primary"
+                      style={{ width: "100%" }}
+                      disabled={roleSubmitting}
+                    >
+                      {roleSubmitting ? "Updating…" : "Save role"}
                     </button>
                   </form>
                 </div>

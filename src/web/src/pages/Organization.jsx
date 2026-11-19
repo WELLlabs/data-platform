@@ -5,18 +5,8 @@ import Ic from '../components/wd/Icons';
 import Contour from '../components/wd/Contour';
 import {
   organization_by_id_endpoint,
-  approve_user_endpoint,
-  reject_user_endpoint,
-  change_user_role_endpoint,
-  delete_user_endpoint,
   organization_add_member_endpoint,
 } from '../api/endpoints';
-
-const ROLE_OPTIONS = [
-  { value: 0, label: 'Member' },
-  { value: 1, label: 'Admin' },
-  { value: 2, label: 'Reviewer' },
-];
 
 const roleClass = (role) => {
   if (Number(role) === 1) return 'admin';
@@ -54,11 +44,7 @@ const Organization = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const [membersEditOpen, setMembersEditOpen] = useState(false);
-  const [selectedMemberId, setSelectedMemberId] = useState(null);
-  const [roleDraft, setRoleDraft] = useState(0);
   const [membersActionLoading, setMembersActionLoading] = useState(false);
-  const [membersModalError, setMembersModalError] = useState(null);
   const [addMemberEmail, setAddMemberEmail] = useState('');
   const [addMemberError, setAddMemberError] = useState(null);
 
@@ -131,31 +117,6 @@ const Organization = () => {
     }
   };
 
-  const handleOpenMembersEdit = () => {
-    const members = organization?.members || [];
-    const first = members[0];
-    setSelectedMemberId(first ? first.id : null);
-    setRoleDraft(first != null ? Number(first.role) : 0);
-    setMembersModalError(null);
-    setMembersEditOpen(true);
-  };
-
-  const handleCloseMembersEdit = () => {
-    if (membersActionLoading) return;
-    setMembersEditOpen(false);
-    setMembersModalError(null);
-  };
-
-  const handleSelectMemberChange = (e) => {
-    const id = e.target.value;
-    setSelectedMemberId(id);
-    const m = organization?.members?.find((x) => x.id === id);
-    if (m) setRoleDraft(Number(m.role));
-  };
-
-  const selectedMember =
-    organization?.members?.find((m) => m.id === selectedMemberId) ?? null;
-
   const isOrgAdmin =
     isAuthenticated &&
     user &&
@@ -189,90 +150,6 @@ const Organization = () => {
       await fetchOrganization();
     } catch (err) {
       setAddMemberError(err.message || 'Failed to add member.');
-    } finally {
-      setMembersActionLoading(false);
-    }
-  };
-
-  const handleApproveMember = async () => {
-    if (!selectedMember) return;
-    try {
-      setMembersActionLoading(true);
-      setMembersModalError(null);
-      const response = await fetch(
-        approve_user_endpoint(selectedMember.id, roleDraft),
-        { method: 'PUT', credentials: 'include' }
-      );
-      if (!response.ok) {
-        throw new Error(await parseApiError(response, 'Failed to approve user.'));
-      }
-      await fetchOrganization();
-    } catch (err) {
-      setMembersModalError(err.message || 'Failed to approve user.');
-    } finally {
-      setMembersActionLoading(false);
-    }
-  };
-
-  const handleRejectMember = async () => {
-    if (!selectedMember) return;
-    try {
-      setMembersActionLoading(true);
-      setMembersModalError(null);
-      const response = await fetch(reject_user_endpoint(selectedMember.id), {
-        method: 'DELETE',
-        credentials: 'include',
-      });
-      if (!response.ok) {
-        throw new Error(await parseApiError(response, 'Failed to reject user.'));
-      }
-      setMembersEditOpen(false);
-      await fetchOrganization();
-    } catch (err) {
-      setMembersModalError(err.message || 'Failed to reject user.');
-    } finally {
-      setMembersActionLoading(false);
-    }
-  };
-
-  const handleChangeMemberRole = async () => {
-    if (!selectedMember) return;
-    try {
-      setMembersActionLoading(true);
-      setMembersModalError(null);
-      const response = await fetch(
-        change_user_role_endpoint(selectedMember.id, roleDraft),
-        { method: 'PUT', credentials: 'include' }
-      );
-      if (!response.ok) {
-        throw new Error(
-          await parseApiError(response, 'Failed to update user role.')
-        );
-      }
-      await fetchOrganization();
-    } catch (err) {
-      setMembersModalError(err.message || 'Failed to update user role.');
-    } finally {
-      setMembersActionLoading(false);
-    }
-  };
-
-  const handleDeleteMember = async () => {
-    if (!selectedMember) return;
-    try {
-      setMembersActionLoading(true);
-      setMembersModalError(null);
-      const response = await fetch(delete_user_endpoint(selectedMember.id), {
-        method: 'DELETE',
-        credentials: 'include',
-      });
-      if (!response.ok) {
-        throw new Error(await parseApiError(response, 'Failed to delete user.'));
-      }
-      setMembersEditOpen(false);
-      await fetchOrganization();
-    } catch (err) {
-      setMembersModalError(err.message || 'Failed to delete user.');
     } finally {
       setMembersActionLoading(false);
     }
@@ -392,27 +269,16 @@ const Organization = () => {
                 <span className="badge public dot">Public organization</span>
               )}
             </div>
-            {(user?.is_superuser || organization.privileges?.edit) && (
+            {organization.privileges?.edit && (
               <div className="org-actions">
-                {user?.is_superuser && (
-                  <button
-                    className="btn btn-primary"
-                    onClick={() => navigate('/createorg')}
-                  >
-                    <Ic name="plus" size={15} sw={2} />
-                    Create organization
-                  </button>
-                )}
-                {organization.privileges?.edit && (
-                  <button
-                    className="btn btn-ghost"
-                    onClick={() => {
-                      console.log('Edit organization clicked');
-                    }}
-                  >
-                    Edit
-                  </button>
-                )}
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => {
+                    console.log('Edit organization clicked');
+                  }}
+                >
+                  Edit
+                </button>
               </div>
             )}
           </div>
@@ -440,16 +306,6 @@ const Organization = () => {
                 this organization
               </span>
             </div>
-            {isOrgAdmin && (
-              <button
-                className="btn btn-ghost"
-                onClick={handleOpenMembersEdit}
-                aria-label="Edit organization members"
-              >
-                <Ic name="verified" size={15} sw={2} />
-                Manage members
-              </button>
-            )}
           </div>
           {isOrgAdmin && (
             <form
@@ -556,153 +412,6 @@ const Organization = () => {
         </section>
       )}
 
-      {membersEditOpen && (
-        <div
-          className="cmdk-overlay show"
-          role="dialog"
-          aria-modal="true"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) handleCloseMembersEdit();
-          }}
-        >
-          <div className="modal-card">
-            <div className="modal-head">
-              <h3>Edit members</h3>
-              <p>Approve, update or remove organization members.</p>
-            </div>
-            <div className="modal-body">
-              {membersModalError && (
-                <p className="muted" style={{ color: 'var(--danger, #c0392b)' }}>
-                  {membersModalError}
-                </p>
-              )}
-              {organization.members && organization.members.length > 0 ? (
-                <>
-                  <div className="field">
-                    <label htmlFor="org-member-select">Select member</label>
-                    <select
-                      id="org-member-select"
-                      value={selectedMemberId || ''}
-                      onChange={handleSelectMemberChange}
-                      aria-label="Select organization member"
-                      disabled={membersActionLoading}
-                      style={{ width: '100%' }}
-                    >
-                      {organization.members.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.full_name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  {selectedMember && (
-                    <>
-                      <div className="field-row">
-                        <div className="field">
-                          <label>Name</label>
-                          <input value={selectedMember.full_name} readOnly />
-                        </div>
-                        <div className="field">
-                          <label>Email</label>
-                          <input
-                            value={selectedMember.email || 'N/A'}
-                            readOnly
-                          />
-                        </div>
-                      </div>
-                      <div className="field-row">
-                        <div className="field">
-                          <label>Designation</label>
-                          <input
-                            value={selectedMember.designation || 'N/A'}
-                            readOnly
-                          />
-                        </div>
-                        <div className="field">
-                          <label htmlFor="org-member-role">Role</label>
-                          <select
-                            id="org-member-role"
-                            value={roleDraft}
-                            onChange={(e) => setRoleDraft(Number(e.target.value))}
-                            aria-label="Member role"
-                            disabled={membersActionLoading}
-                            style={{ width: '100%' }}
-                          >
-                            {ROLE_OPTIONS.map((opt) => (
-                              <option key={opt.value} value={opt.value}>
-                                {opt.label}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                      <div
-                        style={{
-                          display: 'flex',
-                          flexWrap: 'wrap',
-                          gap: 8,
-                          marginTop: 6,
-                        }}
-                      >
-                        {selectedMember.verified === false ? (
-                          <>
-                            <button
-                              className="btn btn-primary"
-                              onClick={handleApproveMember}
-                              disabled={membersActionLoading}
-                              aria-label="Approve member"
-                            >
-                              Approve
-                            </button>
-                            <button
-                              className="btn btn-ghost"
-                              onClick={handleRejectMember}
-                              disabled={membersActionLoading}
-                              aria-label="Reject member"
-                            >
-                              Reject
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              className="btn btn-primary"
-                              onClick={handleChangeMemberRole}
-                              disabled={membersActionLoading}
-                              aria-label="Change member role"
-                            >
-                              Change
-                            </button>
-                            <button
-                              className="btn btn-ghost"
-                              onClick={handleDeleteMember}
-                              disabled={membersActionLoading}
-                              aria-label="Delete member"
-                            >
-                              Delete
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </>
-                  )}
-                </>
-              ) : (
-                <p className="muted">No members to edit.</p>
-              )}
-            </div>
-            <div className="modal-foot">
-              <button
-                className="btn btn-ghost"
-                onClick={handleCloseMembersEdit}
-                disabled={membersActionLoading}
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

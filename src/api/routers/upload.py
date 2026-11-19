@@ -149,17 +149,17 @@ async def _invalidate_dataset_cache(
 def _validate_permissions(
     permissions: Optional[str], log: logging.Logger
 ) -> str:
-    """Normalize permissions to an allowed CC license or default to CC0."""
+    """Normalize permissions to an allowed CC license or default to CC BY."""
     sanitized = sanitize_input(permissions)
     if sanitized is None or not sanitized.strip():
-        return "CC0: Public Domain"
+        return "CC BY: Attribution"
     stripped = sanitized.strip()
     if stripped not in ALLOWED_PERMISSIONS:
         log.warning(
-            "Invalid permissions value '%s', defaulting to 'CC0: Public Domain'",
+            "Invalid permissions value '%s', defaulting to 'CC BY: Attribution'",
             stripped,
         )
-        return "CC0: Public Domain"
+        return "CC BY: Attribution"
     return stripped
 
 

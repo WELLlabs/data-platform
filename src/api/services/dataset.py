@@ -760,7 +760,7 @@ class DatasetService:
             if permissions_value is None or (
                 isinstance(permissions_value, str) and not permissions_value.strip()
             ):
-                sanitized_permissions = "CC0: Public Domain"
+                sanitized_permissions = "CC BY: Attribution"
             else:
                 permissions_stripped = (
                     permissions_value.strip()
@@ -769,10 +769,10 @@ class DatasetService:
                 )
                 if permissions_stripped not in allowed_permissions:
                     self.logger.warning(
-                        "Invalid permissions value '%s', defaulting to 'CC0: Public Domain'",
+                        "Invalid permissions value '%s', defaulting to 'CC BY: Attribution'",
                         permissions_stripped,
                     )
-                    sanitized_permissions = "CC0: Public Domain"
+                    sanitized_permissions = "CC BY: Attribution"
                 else:
                     sanitized_permissions = permissions_stripped
 

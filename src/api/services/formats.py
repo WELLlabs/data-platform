@@ -211,10 +211,15 @@ def plan_for_format(file_format: Optional[str], file_key: Optional[str] = None) 
         return FormatPlan(VIEWER_TABLE_CHART, False, "parquet", "parquet")
     if token == "parquet":
         return FormatPlan(VIEWER_TABLE_CHART, True, "parquet", "none")
-    if token in {"geojson", "geopackage", "geoparquet"}:
-        return FormatPlan(VIEWER_VECTOR_MAP, False, "flatgeobuf", "vector")
-    if token in {"flatgeobuf", "pmtiles"}:
+    if token in {"flatgeobuf", "pmtiles", "geoparquet"}:
+        # Already a cloud-native vector. Served as uploaded.
         return FormatPlan(VIEWER_VECTOR_MAP, True, token, "none")
+    if token in {"geojson"}:
+        return FormatPlan(VIEWER_VECTOR_MAP, False, "flatgeobuf", "vector")
+    if token == "geopackage":
+        # A GeoPackage may hold a raster or vectors. The worker inspects it
+        # and writes a COG or a FlatGeobuf.
+        return FormatPlan(VIEWER_VECTOR_MAP, False, "flatgeobuf", "geopackage")
     if token in {"cog", "geotiff"}:
         # A "cog" label or a "_cog.tif" name is not trusted. Every GeoTIFF is
         # checked; a real COG with sound georeferencing is served as uploaded.

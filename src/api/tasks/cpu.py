@@ -143,6 +143,31 @@ def _convert_raster(session, row, native, bucket: str) -> dict:
         return finish(dest_key, decision, False)
 
 
+def _convert_geopackage(session, row, native, bucket: str) -> dict:
+    """Raster GeoPackage becomes a COG. Vector GeoPackage becomes FlatGeobuf."""
+    from datetime import datetime, timezone
+
+    from services.conversion import convert_vector, source_has_raster
+    from services.formats import STATUS_AVAILABLE, mime_for_cloud_format
+
+    suffix = Path(native.file_key).suffix or ".gpkg"
+    with tempfile.TemporaryDirectory(prefix="gpkg-") as tmp:
+        src = Path(tmp) / f"native{suffix}"
+        _download(bucket, native.file_key, src)
+        if source_has_raster(src, 180):
+            return _convert_raster(session, row, native, bucket)
+        out_path, out_fmt = convert_vector(src, Path(tmp) / "out", timeout=1700)
+        dest_key = f"converted/{native.file_id}/{row.cloud_file_id}{out_path.suffix}"
+        _upload(bucket, dest_key, out_path, mime_for_cloud_format(out_fmt))
+        row.bucket = bucket
+        row.file_key = dest_key
+        row.format = out_fmt
+        row.status = STATUS_AVAILABLE
+        row.last_accessed = datetime.now(timezone.utc)
+        session.commit()
+        return {"ok": True, "key": dest_key, "format": out_fmt}
+
+
 @celery_app.task(
     name="cpu.convert_file",
     bind=True,
@@ -201,6 +226,17 @@ def convert_file(self, cloud_file_id: str) -> dict:
                 raise
             except ConversionError as exc:
                 logger.exception("Raster conversion failed for %s: %s", cloud_file_id, exc)
+                row.status = STATUS_REMOVED
+                session.commit()
+                return {"ok": False, "error": str(exc)}
+
+        if plan.conversion == "geopackage":
+            try:
+                return _convert_geopackage(session, row, native, bucket)
+            except SoftTimeLimitExceeded:
+                raise
+            except ConversionError as exc:
+                logger.exception("GeoPackage conversion failed for %s: %s", cloud_file_id, exc)
                 row.status = STATUS_REMOVED
                 session.commit()
                 return {"ok": False, "error": str(exc)}

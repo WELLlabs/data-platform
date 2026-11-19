@@ -17,6 +17,8 @@ from services.formats import (
     STATUS_AVAILABLE,
     STATUS_PROCESSING,
     STATUS_REMOVED,
+    VIEWER_RASTER_MAP,
+    VIEWER_VECTOR_MAP,
     FormatPlan,
     mime_for_cloud_format,
     plan_for_format,
@@ -206,10 +208,19 @@ class VisualizationService:
         extra: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         status_value = converted.status if converted else STATUS_PROCESSING
+        viewer = plan.viewer
+        if converted is not None and converted.format == "cog":
+            viewer = VIEWER_RASTER_MAP
+        elif converted is not None and converted.format in {
+            "flatgeobuf",
+            "pmtiles",
+            "geoparquet",
+        }:
+            viewer = VIEWER_VECTOR_MAP
         body: dict[str, Any] = {
             "native_file_id": str(file_record.file_id),
             "cloud_file_id": str(converted.cloud_file_id) if converted else None,
-            "viewer": plan.viewer,
+            "viewer": viewer,
             "format": converted.format if converted else plan.target_format,
             "status": status_value,
             "cloud_native": plan.cloud_native or status_value == STATUS_AVAILABLE,
@@ -218,7 +229,7 @@ class VisualizationService:
             body.update(extra)
         if status_value == STATUS_AVAILABLE and converted is not None:
             titiler = (settings.TITILER_BASE_URL or "").rstrip("/")
-            if plan.viewer == "raster_map" and titiler:
+            if viewer == "raster_map" and titiler:
                 body["titiler_url"] = f"{titiler}/cog"
                 body["bidx"] = 1
                 # The viewer computes the stretch from the raster's own
@@ -226,7 +237,7 @@ class VisualizationService:
                 # rasters (indices, rainfall, temperature) one flat colour.
                 body["rescale"] = None
                 body["colormap_name"] = "viridis"
-            if plan.viewer == "raster_map":
+            if viewer == "raster_map":
                 body["georef_status"] = converted.georef_status or GEOREF_OK
                 body["georef_note"] = converted.georef_note or ""
         return body
@@ -246,18 +257,14 @@ class VisualizationService:
     async def access_file(self, file_record: File, user: Optional[User]) -> dict[str, Any]:
         """Return the cloud-optimised file to show, converting only when needed.
 
-        1. Is the upload itself already cloud-optimised? Formats that are
-           cloud-native by nature (PDF, Parquet, FlatGeobuf, PMTiles, images)
-           always are. A GeoTIFF is when it is a valid COG with sound
-           georeferencing. It is then shown as uploaded, never converted.
-        2. Has the platform already converted it? An available record in
-           converted_files is reused. (Checked before reading the upload's
-           header, since a converted file is by definition not a COG.)
-        3. Otherwise, is a conversion already running? Wait for it.
-        4. Otherwise, convert it once.
-
-        The answer to step 1 is stored as a record pointing at the uploaded
-        file, so the header is read from S3 only on the first view.
+        1. A row in converted_files whose object is still in S3 is reused.
+        2. Otherwise the native type decides:
+           GeoTIFF — a COG with sound georeferencing is served as uploaded.
+           A plain GeoTIFF, or a raster GeoPackage, is converted to COG.
+           Vector — FlatGeobuf, GeoParquet and PMTiles are served as uploaded.
+           GeoJSON and a vector GeoPackage are converted to FlatGeobuf.
+        3. A conversion already running is left to finish.
+        4. Otherwise one conversion is started.
         """
         plan = self._plan(file_record)
         bucket = file_record.bucket or settings.S3_BUCKET
@@ -265,16 +272,10 @@ class VisualizationService:
         rows = await self._rows(file_record.file_id)
         available = [r for r in rows if r.status == STATUS_AVAILABLE]
 
-        # Step 1a: the upload was already found to be cloud-optimised.
-        native_row = next((r for r in available if r.file_key == native_key), None)
-        if native_row is not None and await self._still_sound(native_row, plan, file_record):
-            return await self._serve(file_record, plan, native_row, user)
-
-        # Step 2: a copy the platform already optimised. If one exists, the
-        # upload was already found not to be cloud-optimised, so its header
-        # is not read again.
+        # Step 1: converted_files, and the object must still be in the bucket.
         for row in available:
-            if row.file_key == native_key:
+            if not await self._object_in_bucket(row):
+                await self._supersede(row, file_record)
                 continue
             if await self._still_sound(row, plan, file_record):
                 return await self._serve(file_record, plan, row, user)
@@ -359,6 +360,26 @@ class VisualizationService:
             text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
             {"key": f"convert:{native_file_id}"},
         )
+
+    async def _object_in_bucket(self, row: ConvertedFile) -> bool:
+        """True when the conversion-table key is still stored in S3.
+
+        Tests construct the service without an upload client. A missing
+        client is treated as present so those checks stay about format,
+        not about storage.
+        """
+        if not row.file_key:
+            return False
+        if self.upload_service is None:
+            return True
+        try:
+            found = await self.upload_service.check_file_status_by_key(row.file_key)
+        except Exception:
+            self.logger.warning(
+                "Could not confirm converted object %s is in S3", row.file_key
+            )
+            return False
+        return bool(found.get("exists"))
 
     async def _still_sound(
         self, row: ConvertedFile, plan: FormatPlan, file_record: File

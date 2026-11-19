@@ -143,7 +143,7 @@ function CreateDataset() {
             format: extension.replace(INVALID_CHARS_G, "").slice(0, 20),
             provenance: "",
             source: "",
-            permissions: "CC0: Public Domain",
+            permissions: "CC BY: Attribution",
             citeAs: "",
             groundtruthed: "no",
             temporalFrom: "",

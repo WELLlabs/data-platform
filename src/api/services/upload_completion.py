@@ -336,7 +336,7 @@ async def complete_upload_job(
                 source=src,
                 cite_as=ev.get("cite_as"),
                 groundtruthed=ev.get("groundtruthed"),
-                permissions=ev.get("permissions") or "CC0: Public Domain",
+                permissions=ev.get("permissions") or "CC BY: Attribution",
                 duration=_safe_int(ev.get("duration"), 0),
                 temporal_from=tf,
                 temporal_to=tt,

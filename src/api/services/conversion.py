@@ -326,6 +326,20 @@ def identify_cog(source: Union[str, Path], timeout: int) -> Optional[bool]:
     return False
 
 
+def source_has_raster(src: Path, timeout: int) -> bool:
+    """True when GDAL can read ``src`` as a raster (GeoTIFF or raster GeoPackage)."""
+    try:
+        from services.raster_inspect import gdalinfo_json
+
+        doc = gdalinfo_json(str(src), _run, timeout=min(timeout, 120))
+    except Exception:
+        return False
+    bands = doc.get("bands") or []
+    size = doc.get("size") or []
+    width = int(size[0]) if len(size) == 2 else 0
+    return bool(bands) or width > 0
+
+
 def is_cog(src: Path, timeout: int) -> bool:
     """True when GDAL reports the file is already a Cloud Optimized GeoTIFF."""
     return identify_cog(src, timeout) is True

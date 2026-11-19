@@ -488,12 +488,22 @@ async def add_organization_member(
 async def update_organization(
     org_id: UUID,
     org_data: OrganizationUpdate,
+    current_user: User = Depends(get_current_active_user),
     controller: OrganizationController = Depends(get_organization_controller),
     redis: Redis = Depends(get_redis),
 ):
     """
-    Update an existing organization.
+    Update an existing organization. Superusers and admins of this organization.
     """
+    if not current_user.is_superuser:
+        is_admin = await controller.user_service.check_if_admin_by_id(
+            org_id, current_user.id
+        )
+        if not is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only organization admins can edit this organization",
+            )
     response = await controller.update_organization(org_id, org_data)
     if response.status_code == status.HTTP_200_OK:
         await invalidate_organization_list_cache(redis)

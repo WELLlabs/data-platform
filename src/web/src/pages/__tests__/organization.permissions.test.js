@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import Organization from "../Organization";
 import { useAuth } from "../../contexts/AuthContext";
@@ -53,5 +53,27 @@ describe("Organization page permissions", () => {
       screen.queryByRole("button", { name: /manage members/i })
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /add member/i })).toBeInTheDocument();
+  });
+
+  test("opens an edit form and saves organisation changes", async () => {
+    renderOrganization();
+    expect(screen.queryByLabelText(/organisation name/i)).not.toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: /^edit$/i }));
+    const name = screen.getByLabelText(/organisation name/i);
+    expect(name).toHaveValue("WELL Labs");
+    fireEvent.change(name, { target: { value: "WELL Labs Updated" } });
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        `/api/organizations/${ORG_ID}`,
+        expect.objectContaining({
+          method: "PUT",
+          credentials: "include",
+          body: expect.stringContaining("WELL Labs Updated"),
+        })
+      );
+    });
   });
 });

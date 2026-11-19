@@ -39,6 +39,7 @@ def upgrade() -> None:
         FROM datasets AS d
         WHERE f.dataset_id = d.dataset_id
           AND f.uploaded_by IS NULL
+          AND d.creator IS NOT NULL
         """
     )
 

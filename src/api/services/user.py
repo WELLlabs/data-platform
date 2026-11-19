@@ -1090,6 +1090,7 @@ class UserService:
 
             target_user.verified = True
             target_user.role = assigned_role
+            target_user.approved_by = approver.id
             await self.session.commit()
             await self.session.refresh(target_user)
 
@@ -1116,10 +1117,12 @@ class UserService:
         self, actor: User, target_user_id: UUID, new_role: int
     ) -> User:
         """
-        Change an existing user's role within the actor's organization (verified users).
+        Change an existing user's role. Organisation admins may change roles
+        inside their own organisation. Superusers may change roles in any
+        organisation.
 
         Args:
-            actor: Signed-in org admin performing the change
+            actor: Signed-in org admin or superuser performing the change
             target_user_id: UUID of the user whose role is updated
             new_role: New role (0=Member, 1=Admin, 2=Reviewer)
 
@@ -1128,6 +1131,18 @@ class UserService:
                 404 user not found
         """
         try:
+            if not actor.is_superuser and actor.role != 1:
+                self.logger.warning(
+                    "Change user role denied for actor_id=%s role=%s superuser=%s",
+                    actor.id,
+                    actor.role,
+                    actor.is_superuser,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Unauthorized to change user role",
+                )
+
             if new_role not in (0, 1, 2):
                 self.logger.warning(
                     "Change user role validation failed: invalid new_role=%s",
@@ -1159,7 +1174,10 @@ class UserService:
                     detail="User not found",
                 )
 
-            if target_user.organization != actor.organization:
+            if (
+                target_user.organization != actor.organization
+                and not actor.is_superuser
+            ):
                 self.logger.warning(
                     "Change role denied due to organization mismatch: actor_id=%s target_user_id=%s",
                     actor.id,

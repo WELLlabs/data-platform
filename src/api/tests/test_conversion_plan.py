@@ -44,11 +44,15 @@ def test_vector_and_raster_plans():
     gpkg = plan_for_format("gpkg", "layer.gpkg")
     assert gpkg is not None
     assert gpkg.viewer == "vector_map"
-    assert gpkg.conversion == "vector"
+    assert gpkg.conversion == "geopackage"
+    assert gpkg.cloud_native is False
 
-    geoparquet = plan_for_format("geoparquet")
+    geoparquet = plan_for_format("geoparquet", "grid.geoparquet")
     assert geoparquet is not None
-    assert geoparquet.conversion == "vector"
+    assert geoparquet.viewer == "vector_map"
+    assert geoparquet.cloud_native is True
+    assert geoparquet.conversion == "none"
+    assert geoparquet.target_format == "geoparquet"
 
     flat = plan_for_format("flatgeobuf", "roads.fgb")
     assert flat is not None

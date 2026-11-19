@@ -55,6 +55,7 @@ def test_a_failed_upload_does_not_block_the_files_that_worked():
     assert status["events"] == [{"file_1": "completed"}]
     saved = [obj for obj in session.added if isinstance(obj, File)]
     assert [f.file_key for f in saved] == [ok.file_key]
+    assert saved[0].uploaded_by == user.id
     assert ok.status == "completed"
     assert failed.status == "initiated"
 

@@ -30,9 +30,9 @@ def _convert_raster(session, row, native, bucket: str) -> dict:
 
     1. Read only the header with ``gdalinfo`` over a presigned URL. The
        file is downloaded only when a derivative has to be written.
-    2. Decide (``raster_inspect.plan_raster``): a real COG (checked with
-       rio-cogeo's ``cog_validate``) with sound georeferencing is reused as
-       is, with no conversion. A missing or
+    2. Decide (``raster_inspect.plan_raster``): a real COG (``gdal dataset
+       identify --detailed`` reports ``layout=COG``) with sound georeferencing
+       is reused as is, with no conversion. A missing or
        mislabelled CRS, or GCP-only georeferencing, gets a fixed derivative.
        A file that cannot be placed is reused and the preview explains why.
     3. Check the derivative with ``gdalinfo`` before publishing it.
@@ -40,7 +40,7 @@ def _convert_raster(session, row, native, bucket: str) -> dict:
     from datetime import datetime, timezone
 
     from services.cog_check import is_s3_object_cog, rio_cog_validate
-    from services.conversion import ConversionError, _run, convert_cog
+    from services.conversion import ConversionError, _run, convert_cog, identify_cog
     from services.formats import STATUS_AVAILABLE, mime_for_cloud_format
     from services.raster_georef import GEOREF_UNPLACEABLE, parse_candidates, parse_region
     from services.raster_inspect import gdalinfo_json, plan_raster, verify_output
@@ -73,6 +73,7 @@ def _convert_raster(session, row, native, bucket: str) -> dict:
         src = work / f"native{suffix}"
         downloaded = False
         doc = None
+        url = None
         try:
             url = client.generate_presigned_url(
                 "get_object", Params={"Bucket": bucket, "Key": key}, ExpiresIn=3600
@@ -90,7 +91,13 @@ def _convert_raster(session, row, native, bucket: str) -> dict:
                 raise ConversionError(f"GDAL cannot read this raster: {exc}") from exc
 
         def structural_cog() -> bool:
-            # rio-cogeo on the local copy when there is one, else over S3.
+            # GDAL 3.13: `gdal dataset identify <file> --detailed` prints
+            # layout=COG when the GeoTIFF is already cloud optimized.
+            source = str(src) if downloaded else (f"/vsicurl/{url}" if url else None)
+            if source is not None:
+                identified = identify_cog(source, timeout=120)
+                if identified is not None:
+                    return identified
             if downloaded:
                 verdict = rio_cog_validate(str(src))
                 if verdict is not None:
@@ -134,6 +141,31 @@ def _convert_raster(session, row, native, bucket: str) -> dict:
         dest_key = f"converted/{native.file_id}/{row.cloud_file_id}.tif"
         _upload(bucket, dest_key, out, mime_for_cloud_format("cog"))
         return finish(dest_key, decision, False)
+
+
+def _convert_geopackage(session, row, native, bucket: str) -> dict:
+    """Raster GeoPackage becomes a COG. Vector GeoPackage becomes FlatGeobuf."""
+    from datetime import datetime, timezone
+
+    from services.conversion import convert_vector, source_has_raster
+    from services.formats import STATUS_AVAILABLE, mime_for_cloud_format
+
+    suffix = Path(native.file_key).suffix or ".gpkg"
+    with tempfile.TemporaryDirectory(prefix="gpkg-") as tmp:
+        src = Path(tmp) / f"native{suffix}"
+        _download(bucket, native.file_key, src)
+        if source_has_raster(src, 180):
+            return _convert_raster(session, row, native, bucket)
+        out_path, out_fmt = convert_vector(src, Path(tmp) / "out", timeout=1700)
+        dest_key = f"converted/{native.file_id}/{row.cloud_file_id}{out_path.suffix}"
+        _upload(bucket, dest_key, out_path, mime_for_cloud_format(out_fmt))
+        row.bucket = bucket
+        row.file_key = dest_key
+        row.format = out_fmt
+        row.status = STATUS_AVAILABLE
+        row.last_accessed = datetime.now(timezone.utc)
+        session.commit()
+        return {"ok": True, "key": dest_key, "format": out_fmt}
 
 
 @celery_app.task(
@@ -194,6 +226,17 @@ def convert_file(self, cloud_file_id: str) -> dict:
                 raise
             except ConversionError as exc:
                 logger.exception("Raster conversion failed for %s: %s", cloud_file_id, exc)
+                row.status = STATUS_REMOVED
+                session.commit()
+                return {"ok": False, "error": str(exc)}
+
+        if plan.conversion == "geopackage":
+            try:
+                return _convert_geopackage(session, row, native, bucket)
+            except SoftTimeLimitExceeded:
+                raise
+            except ConversionError as exc:
+                logger.exception("GeoPackage conversion failed for %s: %s", cloud_file_id, exc)
                 row.status = STATUS_REMOVED
                 session.commit()
                 return {"ok": False, "error": str(exc)}

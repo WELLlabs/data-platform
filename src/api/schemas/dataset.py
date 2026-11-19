@@ -138,16 +138,16 @@ class DatasetCreate(BaseModel):
             "CC BY-NC-ND: Attribution-NonCommercial-NoDerivatives",
         ]
         
-        # If None or empty, default to "CC0: Public Domain"
+        # If None or empty, default to CC BY Attribution.
         if v is None or (isinstance(v, str) and not v.strip()):
-            return "CC0: Public Domain"
+            return "CC BY: Attribution"
         
         # Strip whitespace and validate
         v_stripped = v.strip() if isinstance(v, str) else str(v).strip()
         
-        # If not in allowed list, default to "CC0: Public Domain"
+        # If not in allowed list, default to CC BY Attribution.
         if v_stripped not in allowed_permissions:
-            return "CC0: Public Domain"
+            return "CC BY: Attribution"
         
         return v_stripped
 

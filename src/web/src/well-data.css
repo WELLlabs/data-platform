@@ -489,6 +489,8 @@ a.stat:hover b{color:var(--blue-deep)}
 .cmdk-foot{border-top:1px solid var(--line);padding:10px 16px;font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:16px}
 .cmdk-foot kbd,.cmdk-empty kbd,.cmdk-input kbd{font-family:system-ui,-apple-system,sans-serif;font-size:11px;font-weight:600;color:#000;border:1px solid var(--line-strong);border-radius:4px;padding:1px 6px;background:var(--paper);line-height:1.2}
 .cmdk-input kbd{font-size:11px;padding:2px 6px}
+.cmdk-search-btn{padding:7px 12px;font-size:13px;flex:none}
+.cmdk-search-btn:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
 .cmdk-spin{width:14px;height:14px;border:2px solid var(--line-strong);border-top-color:var(--blue);border-radius:50%;animation:cmdkspin .7s linear infinite;flex:none}
 @keyframes cmdkspin{to{transform:rotate(360deg)}}
 
@@ -1221,3 +1223,21 @@ body.chart-preview .footer{display:none}
 .alert-banner-msg{flex:1;min-width:200px;font-size:14px;font-weight:500;color:var(--navy)}
 .alert-banner .btn{padding:6px 14px;font-size:13px}
 .alert-banner .btn:disabled{opacity:.6;cursor:default}
+
+/* Edit organisation modal: wider card, scrolling body, fixed head and foot */
+.org-edit-overlay{padding:4vh 16px;align-items:flex-start;overflow-y:auto}
+.modal-card.modal-lg{width:min(720px,100%);max-height:92vh;display:flex;flex-direction:column}
+.modal-card.modal-lg>form{display:flex;flex-direction:column;min-height:0;flex:1}
+.modal-card.modal-lg .modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex:none}
+.modal-card.modal-lg .modal-body{overflow-y:auto;flex:1;min-height:0;overscroll-behavior:contain}
+.modal-card.modal-lg .modal-foot{flex:none}
+.org-edit-foot{justify-content:space-between;align-items:center;flex-wrap:wrap}
+.org-edit-foot .fa-note{font-size:12.5px;color:var(--muted)}
+.modal-x{flex:none;width:32px;height:32px;border-radius:8px;border:1px solid transparent;background:none;color:var(--muted);font-size:22px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.modal-x:hover{background:var(--bg-tint);border-color:var(--line);color:var(--navy)}
+.modal-x:disabled{opacity:.5;cursor:default}
+@media (max-width:640px){
+  .org-edit-overlay{padding:0}
+  .modal-card.modal-lg{max-height:100vh;height:100%;border-radius:0}
+  .modal-card.modal-lg .field-row{grid-template-columns:1fr}
+}

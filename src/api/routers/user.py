@@ -120,6 +120,11 @@ class UserController:
             # Get contributions from user_contributions table
             contributions = await self.user_service.get_contributions_for_user(user_id)
 
+            approver_name = None
+            if user.approved_by:
+                approver = await self.auth_service.user_db.get(user.approved_by)
+                approver_name = approver.full_name if approver else None
+
             # Build response data
             response_data = {
                 "full_name": user.full_name,
@@ -128,6 +133,8 @@ class UserController:
                 "designation": user.designation,
                 "organization": user.organization,
                 "verified": user.verified,
+                "approved_by": str(user.approved_by) if user.approved_by else None,
+                "approver_name": approver_name,
                 "role": user.role,
                 "contributions": contributions,
                 "created_at": user.created_at.isoformat() if user.created_at else None,
@@ -560,7 +567,8 @@ class UserController:
         self, signed_in_user: User, user_id: str, new_role: int
     ) -> JSONResponse:
         """
-        Change role for a user in the signed-in admin's organization (verified members).
+        Change role for a user. Organisation admins (role 1) may change roles
+        in their own organisation. Superusers may change roles in any organisation.
         """
         self.logger.info(
             "Change user role request: actor_id=%s target_user_id=%s new_role=%s",
@@ -581,30 +589,32 @@ class UserController:
                     detail="Invalid user_id UUID format",
                 )
 
-            is_user_verified = await self.user_service.check_if_user_verified_by_id(
-                signed_in_user.id
-            )
-            if not is_user_verified:
-                self.logger.warning(
-                    "Change user role access blocked for unverified user_id=%s role=%s",
-                    signed_in_user.id,
-                    signed_in_user.role,
+            if not signed_in_user.is_superuser:
+                is_user_verified = await self.user_service.check_if_user_verified_by_id(
+                    signed_in_user.id
                 )
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Verified account required",
-                )
+                if not is_user_verified:
+                    self.logger.warning(
+                        "Change user role access blocked for unverified user_id=%s role=%s",
+                        signed_in_user.id,
+                        signed_in_user.role,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Verified account required",
+                    )
 
-            if signed_in_user.role != 1:
-                self.logger.warning(
-                    "Change user role denied for non-admin actor_id=%s role=%s",
-                    signed_in_user.id,
-                    signed_in_user.role,
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Unauthorized to change user role",
-                )
+                if signed_in_user.role != 1:
+                    self.logger.warning(
+                        "Change user role denied for non-admin actor_id=%s role=%s superuser=%s",
+                        signed_in_user.id,
+                        signed_in_user.role,
+                        signed_in_user.is_superuser,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Unauthorized to change user role",
+                    )
 
             if type(new_role) is not int or new_role not in (0, 1, 2):
                 self.logger.warning(
@@ -1091,8 +1101,9 @@ async def change_user_role(
     controller: UserController = Depends(get_user_controller),
 ):
     """
-    Change a member's role in the signed-in admin's organization (0/1/2).
-    Requires a valid session cookie; signed-in user must be org admin (role 1).
+    Change a member's role (0/1/2).
+    Requires a valid session cookie. The signed-in user must be an organisation
+    admin (role 1) in the same organisation, or a superuser.
     """
     try:
         return await controller.change_user_role(user, user_id, role)

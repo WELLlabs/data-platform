@@ -8,10 +8,11 @@ from __future__ import annotations
 import csv
 import logging
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Union
 
 from services.formats import VECTOR_FEATURE_LIMIT
 from services.spreadsheet_header import (
@@ -295,17 +296,53 @@ def convert_vector(src: Path, dest_dir: Path, timeout: int) -> tuple[Path, str]:
     return dest, "flatgeobuf"
 
 
-def is_cog(src: Path, timeout: int) -> bool:
-    """True when gdalinfo reports the file is already a Cloud Optimized GeoTIFF."""
-    gdalinfo = shutil.which("gdalinfo")
-    if not gdalinfo:
-        return False
+_COG_LAYOUT = re.compile(r"layout\s*[=:]\s*['\"]?COG\b", re.IGNORECASE)
+
+
+def identify_cog(source: Union[str, Path], timeout: int) -> Optional[bool]:
+    """Ask ``gdal dataset identify <file> --detailed`` whether ``source`` is a COG.
+
+    A cloud-optimized GeoTIFF is reported as ``layout=COG``. Returns None when
+    the ``gdal`` command is missing or cannot identify the file, so the caller
+    can fall back to another check.
+    """
+    gdal = shutil.which("gdal")
+    if not gdal:
+        return None
+    from services.raster_inspect import GDAL_HTTP_ENV
+
     try:
-        proc = _run([gdalinfo, str(src)], timeout=min(timeout, 120))
+        proc = _run(
+            [gdal, "dataset", "identify", str(source), "--detailed"],
+            timeout=min(timeout, 120),
+            env={**os.environ, **GDAL_HTTP_ENV},
+        )
     except ConversionError:
-        return False
+        return None
     text = f"{proc.stdout or ''}\n{proc.stderr or ''}"
-    return "LAYOUT=COG" in text
+    if _COG_LAYOUT.search(text):
+        return True
+    # The command ran. No COG layout means this is not already optimized.
+    return False
+
+
+def source_has_raster(src: Path, timeout: int) -> bool:
+    """True when GDAL can read ``src`` as a raster (GeoTIFF or raster GeoPackage)."""
+    try:
+        from services.raster_inspect import gdalinfo_json
+
+        doc = gdalinfo_json(str(src), _run, timeout=min(timeout, 120))
+    except Exception:
+        return False
+    bands = doc.get("bands") or []
+    size = doc.get("size") or []
+    width = int(size[0]) if len(size) == 2 else 0
+    return bool(bands) or width > 0
+
+
+def is_cog(src: Path, timeout: int) -> bool:
+    """True when GDAL reports the file is already a Cloud Optimized GeoTIFF."""
+    return identify_cog(src, timeout) is True
 
 
 def convert_cog(

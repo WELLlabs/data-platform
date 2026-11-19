@@ -103,7 +103,7 @@ const initialFileEdit = {
   source: "",
   citeAs: "",
   groundtruthed: false,
-  permissions: "CC0: Public Domain",
+  permissions: "CC BY: Attribution",
   duration: 0,
   temporalFrom: "",
   temporalTo: "",
@@ -125,7 +125,7 @@ function fileEditReducer(state, action) {
         source: action.payload.source ?? "",
         citeAs: action.payload.citeAs ?? "",
         groundtruthed: action.payload.groundtruthed ?? false,
-        permissions: action.payload.permissions ?? "CC0: Public Domain",
+        permissions: action.payload.permissions ?? "CC BY: Attribution",
         duration: action.payload.duration ?? 0,
         temporalFrom: action.payload.temporalFrom ?? "",
         temporalTo: action.payload.temporalTo ?? "",
@@ -1098,7 +1098,7 @@ function DatasetInfo() {
         permissions:
           file.permissions && file.permissions.trim()
             ? file.permissions
-            : "CC0: Public Domain",
+            : "CC BY: Attribution",
         duration:
           file.duration !== undefined && file.duration !== null
             ? Number(file.duration)
@@ -1680,6 +1680,23 @@ function DatasetInfo() {
                                 </p>
                               )}
                               <div className="fmeta">
+                                <div className="fm">
+                                  <div className="fml">
+                                    <Ic name="org" size={12} sw={2} />
+                                    Uploaded by
+                                  </div>
+                                  <div className="fmv">
+                                    {file.uploaded_by ? (
+                                      <Link
+                                        to={`/profile?id=${encodeURIComponent(file.uploaded_by)}`}
+                                      >
+                                        {file.uploader_name || "View uploader"}
+                                      </Link>
+                                    ) : (
+                                      "—"
+                                    )}
+                                  </div>
+                                </div>
                                 <div className="fm">
                                   <div className="fml">
                                     <Ic name="file" size={12} sw={2} />

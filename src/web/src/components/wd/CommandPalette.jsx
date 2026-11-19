@@ -227,6 +227,13 @@ export function CommandPalette({ children }) {
     navigate(item.href);
   };
 
+  const goToSearch = () => {
+    const term = q.trim();
+    if (!term) return;
+    close();
+    navigate(`/search?q=${encodeURIComponent(term)}`);
+  };
+
   const onInputKey = (e) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -236,11 +243,7 @@ export function CommandPalette({ children }) {
       setSel((s) => Math.max(s - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (rows[sel]) goTo(rows[sel]);
-      else if (q.trim()) {
-        close();
-        navigate(`/search?q=${encodeURIComponent(q.trim())}`);
-      }
+      goToSearch();
     }
   };
 
@@ -286,7 +289,16 @@ export function CommandPalette({ children }) {
               aria-autocomplete="list"
               tabIndex={visible ? 0 : -1}
             />
-            {loading ? <span className="cmdk-spin" aria-hidden="true" /> : <kbd>esc</kbd>}
+            {loading && <span className="cmdk-spin" aria-hidden="true" />}
+            <button
+              type="button"
+              className="btn btn-primary cmdk-search-btn"
+              onClick={goToSearch}
+              disabled={!q.trim()}
+            >
+              <Ic name="search" size={15} sw={2} />
+              Search
+            </button>
           </div>
           {/* <div className="cmdk-modes" aria-hidden="true">
             <span>Instant prefix</span>
@@ -334,7 +346,7 @@ export function CommandPalette({ children }) {
           </div>
           <div className="cmdk-foot">
             <span><kbd>↑</kbd> <kbd>↓</kbd> navigate</span>
-            <span><kbd>↵</kbd> open</span>
+            <span><kbd>↵</kbd> search</span>
             <span><kbd>esc</kbd> close</span>
           </div>
         </div>

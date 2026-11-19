@@ -174,11 +174,12 @@ export default function FileAccordionList({
                     <label>Permissions / licence</label>
                     <select
                       value={item.permissions}
+                      
                       onChange={(e) => onField(item.key, "permissions", e.target.value)}
                       disabled={disabled}
                     >
                       {PERMISSION_OPTIONS.map((opt) => (
-                        <option key={opt} value={opt}>
+                        <option key={opt} value={opt} selected={opt === PERMISSION_OPTIONS[1]}>
                           {opt}
                         </option>
                       ))}

@@ -237,6 +237,9 @@ class VisualizationService:
                 # rasters (indices, rainfall, temperature) one flat colour.
                 body["rescale"] = None
                 body["colormap_name"] = "viridis"
+            if viewer == "raster_map":
+                body["georef_status"] = converted.georef_status or GEOREF_OK
+                body["georef_note"] = converted.georef_note or ""
         return body
 
     def _is_stale(self, converted: ConvertedFile) -> bool:
@@ -252,9 +255,34 @@ class VisualizationService:
         return age > limit
 
     async def access_file(self, file_record: File, user: Optional[User]) -> dict[str, Any]:
+        """Return the cloud-optimised file to show, converting only when needed.
+
+        1. A row in converted_files whose object is still in S3 is reused.
+        2. Otherwise the native type decides:
+           GeoTIFF — a COG with sound georeferencing is served as uploaded.
+           A plain GeoTIFF, or a raster GeoPackage, is converted to COG.
+           Vector — FlatGeobuf, GeoParquet and PMTiles are served as uploaded.
+           GeoJSON and a vector GeoPackage are converted to FlatGeobuf.
+        3. A conversion already running is left to finish.
+        4. Otherwise one conversion is started.
+        """
         plan = self._plan(file_record)
         bucket = file_record.bucket or settings.S3_BUCKET
-        if plan.cloud_native:
+        native_key = file_record.file_key
+        rows = await self._rows(file_record.file_id)
+        available = [r for r in rows if r.status == STATUS_AVAILABLE]
+
+        # Step 1: converted_files, and the object must still be in the bucket.
+        for row in available:
+            if not await self._object_in_bucket(row):
+                await self._supersede(row, file_record)
+                continue
+            if await self._still_sound(row, plan, file_record):
+                return await self._serve(file_record, plan, row, user)
+
+        # Step 1b: first view; check the upload itself.
+        sound_cog = await self._sound_native_cog(plan, bucket, file_record)
+        if plan.cloud_native or sound_cog:
             row = ConvertedFile(
                 cloud_file_id=uuid4(),
                 native_file_id=file_record.file_id,
@@ -289,6 +317,138 @@ class VisualizationService:
         await self.session.refresh(row)
         self._enqueue_conversion(row.cloud_file_id)
         return self._payload(file_record, plan, row)
+
+    async def _serve(
+        self,
+        file_record: File,
+        plan: FormatPlan,
+        row: ConvertedFile,
+        user: Optional[User],
+    ) -> dict[str, Any]:
+        await self._touch_and_log(row, user)
+        extra = await self._presign(row)
+        return self._payload(file_record, plan, row, extra)
+
+    async def _running_conversion(self, native_file_id: UUID) -> Optional[ConvertedFile]:
+        """A live processing record, after retiring any that timed out.
+
+        On PostgreSQL a per-file advisory lock is taken first, so two people
+        opening a new file at the same moment start one conversion, not two.
+        The lock is released by the commit that follows.
+        """
+        await self._lock_file(native_file_id)
+        running = None
+        for row in await self._rows(native_file_id):
+            if row.status != STATUS_PROCESSING:
+                continue
+            if self._is_stale(row):
+                row.status = STATUS_REMOVED
+                await self.session.commit()
+                await self._lock_file(native_file_id)
+            elif running is None:
+                running = row
+        return running
+
+    async def _lock_file(self, native_file_id: UUID) -> None:
+        bind = getattr(self.session, "bind", None)
+        dialect = getattr(getattr(bind, "dialect", None), "name", "")
+        if dialect != "postgresql":
+            return
+        from sqlalchemy import text
+
+        await self.session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"convert:{native_file_id}"},
+        )
+
+    async def _object_in_bucket(self, row: ConvertedFile) -> bool:
+        """True when the conversion-table key is still stored in S3.
+
+        Tests construct the service without an upload client. A missing
+        client is treated as present so those checks stay about format,
+        not about storage.
+        """
+        if not row.file_key:
+            return False
+        if self.upload_service is None:
+            return True
+        try:
+            found = await self.upload_service.check_file_status_by_key(row.file_key)
+        except Exception:
+            self.logger.warning(
+                "Could not confirm converted object %s is in S3", row.file_key
+            )
+            return False
+        return bool(found.get("exists"))
+
+    async def _still_sound(
+        self, row: ConvertedFile, plan: FormatPlan, file_record: File
+    ) -> bool:
+        """True when an available record can be shown as it is.
+
+        Raster records made before the georeferencing check (georef_status
+        NULL) are checked again from their header, which costs a few ranged
+        reads, not a conversion. A sound one is marked and reused; only one
+        whose location is wrong is retired so it can be fixed.
+        """
+        if plan.viewer != "raster_map" or row.georef_status is not None:
+            return True
+        if await self._sound_cog_at(row.bucket or settings.S3_BUCKET, row.file_key):
+            row.georef_status = GEOREF_OK
+            await self.session.commit()
+            return True
+        await self._supersede(row, file_record)
+        return False
+
+    async def _sound_native_cog(
+        self, plan: FormatPlan, bucket: str, file_record: File
+    ) -> bool:
+        """True when an uploaded GeoTIFF can be served as is, with no conversion.
+
+        Reads only the TIFF header (a few ranged GETs). The file must be a
+        COG, name an EPSG code, and convert cleanly to longitude/latitude.
+        Anything less certain (no CRS, a user-defined CRS, coordinates that
+        do not match the CRS) goes to the conversion worker, where GDAL reads
+        the full definition and fixes what it can.
+        """
+        if plan.conversion != "cog":
+            return False
+        return await self._sound_cog_at(bucket, file_record.file_key)
+
+    async def _sound_cog_at(self, bucket: str, key: str) -> bool:
+        """COG layout, an EPSG code, and coordinates that fit it, from the header."""
+        if not key:
+            return False
+        from services import cog_check
+        from services.raster_georef import (
+            RasterGeoref,
+            assess,
+            parse_candidates,
+            parse_region,
+        )
+        from services.upload import get_s3_client
+
+        found = await asyncio.to_thread(cog_check.inspect_s3_tiff, get_s3_client(), bucket, key)
+        if not found.is_cog or found.epsg is None or found.geotransform is None:
+            return False
+        decision = assess(
+            RasterGeoref(found.width, found.height, found.geotransform, f"EPSG:{found.epsg}"),
+            parse_candidates(settings.RASTER_CRS_CANDIDATES),
+            parse_region(settings.RASTER_EXPECTED_REGION),
+        )
+        return decision.status == GEOREF_OK
+
+    async def _supersede(self, converted: ConvertedFile, file_record: File) -> None:
+        """Retire a derivative so the file is processed again."""
+        converted.status = STATUS_REMOVED
+        await self.session.commit()
+        if converted.file_key and converted.file_key != file_record.file_key:
+            try:
+                await self.upload_service.delete_object(converted.file_key)
+            except Exception:
+                self.logger.warning(
+                    "Could not delete superseded derivative %s", converted.file_key
+                )
 
     def _enqueue_conversion(self, cloud_file_id: UUID) -> None:
         from core.celery import celery_app
